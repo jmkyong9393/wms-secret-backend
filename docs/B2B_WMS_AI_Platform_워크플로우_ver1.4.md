@@ -13,32 +13,35 @@
 새 책은 다이렉트로 입고 처리되며, 중고/반품 서적은 4-Agent AI 검수대로 향하는 WMS 입고 첫 관문 라우팅 구조입니다.
 
 ```mermaid
-graph TD
-    Dock(["물류 센터 입고장 도착"]) --> Check{도서 구분}
+sequenceDiagram
+    participant Worker as 현장 작업자
+    participant FE as Frontend (Next.js/Jotai)
+    participant BE as FastAPI
+    participant Redis as Redis Broker
+    participant Celery as Celery Worker
+    participant Graph as LangGraph (4-Agents)
+    participant DB as PostgreSQL
+
+    Worker->>FE: 1. 스마트폰 카메라 촬영 (WebRTC)
+    FE->>FE: 2. Canvas 압축 & 흔들림 검출 (Edge AI 대체)
+    FE->>FE: 3. Jotai 큐 PENDING 추가 (낙관적 UI 전환)
+    Worker->>Worker: 4. 다음 도서 찰영 진행 (Non-blocking)
+    FE->>BE: 5. 비동기 POST /api/v1/inspections
+    BE->>DB: 6. 상태 PENDING 저장
+    BE->>Redis: 7. Task 큐 적재
+    BE-->>FE: 8. 202 Accepted 응답
     
-    Check -->|새 책  - 출판사 직납| NewBook["1. 바코드 스캔 및 입고 승인"]
-    NewBook --> NewZone[(새 책 전용 로케이션 적재)]
-    NewZone --> WMS[(WMS 가상 재고 +1)]
-    
-    Check -->|반품/중고 매입| UsedBook["2. 4-Agent AI 검수대 이동"]
-    
-    subgraph "LangGraph Supervisor 파이프라인 (Star Topology)"
-        direction TB
-        UsedBook --> SUP{Supervisor Agent}
-        SUP <--> Vision["Vision Agent: BBox 상대 비율 측정"]
-        SUP <--> Policy["Policy Agent: RAG 규정 매칭"]
-        SUP <--> Critic["Critic Agent: 로직 검증 및 HITL"]
-        SUP <--> Report["Report Agent: CS 페르소나 발급"]
-        SUP -->|Fast-track  - MINT| AutoRefund[Auto-Refund 자동 환불]
+    loop 3초 주기 비동기 폴링 (Polling)
+        FE->>BE: 9. GET /api/v1/inspections/{id}
     end
     
-    AutoRefund --> UsedZone[(중고/반품 전용 로케이션 적재)]
-    Report --> UsedZone
-    UsedZone --> WMS
+    Redis->>Celery: 10. Worker가 Task 수신
+    Celery->>Graph: 11. Multi-Agent 파이프라인 실행
+    Graph->>Graph: 12. Vision -> Policy -> Critic -> Report
+    Graph->>DB: 13. 상태 COMPLETED 및 결과 업데이트
     
-    style NewBook fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style UsedBook fill:#ffebee,stroke:#d32f2f,stroke-width:2px
-    style WMS fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    BE-->>FE: 14. Polling 완료 응답 (COMPLETED)
+    FE->>FE: 15. Jotai 큐 체크마크(✓) 업데이트
 ```
 
 ### 2.3 반품/중고 서적 전용 4-Agent AI 검수 워크플로우 (System Architecture & Workflow)
@@ -50,14 +53,14 @@ graph TD
 ```mermaid
 graph TD
     subgraph "Client Layer (Vercel / Next.js)"
-        A[작업자 모바일 PWA 신간 반품 / 중고 매입 모드] -->|1. 도서 가이드 촬영  - 중고 모드는 속지 N장 추가| B(HTML5 Canvas 리사이징)
+        A[작업자 WebRTC/WASM 등 4대 극한 최적화 기술이 적용된 고성능 PWA 신간 반품 / 중고 매입 모드] -->|1. 도서 가이드 촬영  - 중고 모드는 속지 N장 추가| B(HTML5 Canvas 리사이징)
         F[관리자 대시보드 Web] -->|7. 에이전트 로그 확인 및 승인| G((상태 모니터링))
     end
 
     subgraph "API & Orchestration (AWS EKS / FastAPI & Worker)"
         C[FastAPI Router] -->|3. Redis 브로커 및 Celery Worker 기반 비동기 큐 INSERT & 202 반환| E[(AWS RDS PostgreSQL)]
         C -->|클라이언트 SSE 실시간 푸시| A
-        E -->|4. Celery 큐 비동기 폴링| W[Worker Daemon]
+        E -->|4. Celery/Redis 비동기 폴링 비동기 폴링| W[Worker Daemon]
         W -->|5. Multi-Agent 위임| D[LangGraph Workflow]
         D -->|6. 에이전트 로그 및 결과 DB 저장| E
     end
@@ -105,9 +108,9 @@ sequenceDiagram
     %% [3] Redis 브로커 및 Celery Worker 기반 비동기 큐 & Worker (Decoupling)
     API->>DB: 8. INSERT PENDING 상태 저장
     API-->>Worker: 9. 202 Accepted (API 응답 종료)
-    DB->>WorkerDaemon: 10. FOR UPDATE Celery 큐 큐 폴링
+    DB->>WorkerDaemon: 10. Celery/Redis 비동기 폴링 큐 폴링
     %% [4] LangGraph Supervisor Star Topology 처리
-    DB->>Graph(Supervisor): 11. Celery 큐 워커 할당
+    DB->>Graph(Supervisor): 11. Celery/Redis 비동기 폴링 워커 할당
     Graph(Supervisor)->>Graph(Vision): 12. [Vision Agent] 외관/내지 불량 탐지 지시
     Graph(Vision)-->>Graph(Supervisor): 13. 불량 유무 및 BBox 결과 보고
     
@@ -211,7 +214,7 @@ graph TD
 
 ### 🛑 4. 비용 상승 방어 (Cost Optimization)
 * **Risk:** 최고 성능 모델인 GPT-4o를 모든 곳에 쓰면 1건당 추론 비용이 30~50원을 넘어갈 수 있습니다.
-* **Mitigation:** 가장 중요한 이미지 객체 인식(Vision Agent)에만 **GPT-4o**를 투입하고, 환불 규정과 텍스트를 다루는 3개의 에이전트(Policy, Critic, Report)는 저렴한 **GPT-4o-mini**를 사용하여 건당 30원 미만의 KPI를 방어합니다.
+* **Mitigation:** 가장 중요한 이미지 객체 인식(Vision Agent)에만 **GPT-4o**를 투입하고, 환불 규정과 텍스트를 다루는 3개의 에이전트(Policy, Critic, Report)는 저렴한 **GPT-4o-mini**를 사용하여 건당 내부 기준의 KPI를 방어합니다.
 
 ### 🛑 5. 리포트 서버 부하 방어 (FDS & 데이터 통계)
 * **Risk:** 무거운 Pandas 및 Scikit-learn 연산을 API 서버 메모리 위에서 구동하면 K8s OOM(Out Of Memory) 킬이 발생해 실시간 트래픽이 마비됩니다.
