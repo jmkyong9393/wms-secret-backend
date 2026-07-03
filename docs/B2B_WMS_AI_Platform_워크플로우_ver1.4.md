@@ -22,10 +22,10 @@ sequenceDiagram
     participant Graph as LangGraph (4-Agents)
     participant DB as PostgreSQL
 
-    Worker->>FE: 1. 도서 바코드 스캔 및 훼손 촬영 (WebRTC)
+    Worker->>FE: 1. 스마트폰 카메라 촬영 (WebRTC)
     FE->>FE: 2. Canvas 압축 & 흔들림 검출 (Edge AI 대체)
     FE->>FE: 3. Jotai 큐 PENDING 추가 (낙관적 UI 전환)
-    Worker->>Worker: 4. 도서를 대기함(Pending Bin)에 적재 후 즉시 다음 도서 촬영
+    Worker->>Worker: 4. 다음 도서 찰영 진행 (Non-blocking)
     FE->>BE: 5. 비동기 POST /api/v1/inspections
     BE->>DB: 6. 상태 PENDING 저장
     BE->>Redis: 7. Task 큐 적재
@@ -42,8 +42,6 @@ sequenceDiagram
     
     BE-->>FE: 14. Polling 완료 응답 (COMPLETED)
     FE->>FE: 15. Jotai 큐 체크마크(✓) 업데이트
-    Worker->>Worker: 16. 분류 작업: 대기함의 도서 바코드 재스캔
-    Worker->>FE: 17. 0.1초 만에 분류 결과 확인 및 박스 적재
 ```
 
 ### 2.3 반품/중고 서적 전용 4-Agent AI 검수 워크플로우 (System Architecture & Workflow)
