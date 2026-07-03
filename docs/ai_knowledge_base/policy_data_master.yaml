@@ -1,0 +1,930 @@
+- chunk_id: kyobo_tos_art19
+  platform: Kyobo
+  authority_level: Contract
+  doc_title: "교보문고 이용약관"
+  clause_ref: "제19조 (배송)"
+  category: [Delivery]
+  parent_context: "교보문고 재화의 배송 수단, 기간 및 비용 부담에 관한 기본 원칙"
+  content: "회사는 이용자가 구매한 재화에 대해 배송수단, 수단별 배송비용 부담자, 수단별 배송기간 등을 명시합니다. 단, 회사의 고의 또는 과실로 약정 배송기간을 초과한 경우에는 그로 인한 이용자의 손해를 배상합니다."
+
+- chunk_id: kyobo_tos_art20
+  platform: Kyobo
+  authority_level: Contract
+  doc_title: "교보문고 이용약관"
+  clause_ref: "제20조 (반품, 교환, 환불, 취소)"
+  category: [Return, Refund, Cancellation]
+  parent_context: "교보문고 단순변심 및 하자 발견 시 반품 기간과 비용 부담, 반품 불가 품목"
+  content: |
+    이용자는 상품을 배송받은 날로부터 7일 이내에 반품 또는 교환을 요청할 수 있습니다.
+    재화 등의 내용이 표시·광고 내용과 다르거나 계약내용과 다르게 이행된 경우에는 그 사실을 안 날부터 30일 이내(늦어도 수령일로부터 3개월 이내) 청약철회를 할 수 있습니다.
+    이용자의 단순변심 등 제2항에 해당하지 않는 사유로 배송된 재화를 반환하는 경우 반품 비용 및 발송비 일체를 이용자가 부담해야 합니다.
+    이용자가 개봉한 소프트웨어 및 음반, 만화책 및 단시간 내에 필독이 가능한 잡지, 영상 화보집의 경우는 상품의 가치가 현저히 감소하여 재판매가 곤란하므로 반품 및 환불이 불가합니다.
+    비닐 래핑이 있는 책은 래핑을 벗기지 않은 상태여야 반품이 가능합니다. 타 도서로 교환은 불가하며 반품 후 재주문해야 합니다.
+
+- chunk_id: kyobo_tos_art20_overseas
+  platform: Kyobo
+  authority_level: Contract
+  doc_title: "교보문고 이용약관"
+  clause_ref: "제20조 제16항 [해외주문도서에 대한 특칙]"
+  category: [Return, Refund, Overseas_Book]
+  parent_context: "교보문고 해외주문도서 반품 및 취소 시 적용되는 수수료 비율"
+  content: "해외주문 반품/취소 수수료는 서양도서의 경우 판매정가의 12%, 일본도서의 경우 판매정가의 7%를 적용합니다. 이는 이용자의 요청에 의한 개인주문상품이므로 단순 변심에 의한 반품/취소 시 위약금 성격으로 공제됩니다."
+
+- chunk_id: kyobo_policy_delivery
+  platform: Kyobo
+  authority_level: Policy
+  doc_title: "교보문고 배송 안내"
+  clause_ref: "N/A"
+  category: [Delivery, Dispatch]
+  parent_context: "교보문고 무료배송 기준 금액 및 당일/새벽/바로드림 배송 서비스"
+  content: |
+    무료배송 기준: 일반/외국도서 15,000원 이상 (미만 2,500원 부과). 만화/잡지 15,000원, 핫트랙스 음반/DVD 20,000원 이상.
+    배송 서비스:
+    당일 배송: 평일 낮 12시 주문 시 당일 배송.
+    새벽 배송: 평일 밤 10시 주문 시 다음 날 새벽 배송.
+    휴일 배송: 토요일 저녁 8시 주문 시 주말/휴일 배송.
+    바로드림: 온라인 가격 주문 후 매장 즉시 픽업.
+    전담 택배사: CJ대한통운 (기본), 한진택배 (일부 매장).
+
+- chunk_id: yes24_tos_art13
+  platform: YES24
+  authority_level: Contract
+  doc_title: "예스24 서비스 이용약관"
+  clause_ref: "제13조 (배송)"
+  category: [Delivery, Delay_Compensation]
+  parent_context: "YES24 배송 기간 초과 시 손해배상 책임 및 지연 보상 근거"
+  content: "회사는 이용자가 구매한 재화 등에 대해 배송수단, 수단별 배송비용 부담자, 수단별 배송기간 등을 명시합니다. 회사의 고의 또는 과실로 약정 배송기간을 초과한 경우에는 그로 인한 이용자의 손해를 배상합니다. (배송지연 보상제 등의 운영정책 근거)"
+
+- chunk_id: yes24_tos_art14
+  platform: YES24
+  authority_level: Contract
+  doc_title: "예스24 서비스 이용약관"
+  clause_ref: "제14조 (반품, 교환, 환불, 취소)"
+  category: [Return, Refund, Cancellation]
+  parent_context: "YES24 재화 공급일 기준 반품 기간, 디지털 상품 및 개봉 매체 반품 제한"
+  content: |
+    이용자는 재화 등을 공급받거나 공급이 시작된 날로부터 7일 이내에 반품 또는 교환을 요청할 수 있습니다. (운영상 10일 이내 접수 안내)
+    계약내용과 다르게 이행된 경우, 사실을 안 날부터 30일 이내(늦어도 수령일로부터 3개월 이내) 청약철회 가능.
+    단순변심 반품 시 반품 비용 및 발송비 일체 이용자 부담.
+    개봉한 S/W, 음반, 만화책, 단시간 필독 가능 잡지 등은 반품 불가.
+    파본/오발송 시 무료 교환 가능하며, 회수와 재발송은 CJ대한통운 방문 회수로 별도 진행.
+
+- chunk_id: yes24_policy_delivery
+  platform: YES24
+  authority_level: Policy
+  doc_title: "YES24 배송 및 보상 안내"
+  clause_ref: "N/A"
+  category: [Delivery, Dispatch, Delay_Compensation]
+  parent_context: "YES24 무료배송 기준, 총알배송 및 배송지연 보상제"
+  content: |
+    무료배송: 도서 및 YES24배송 중고도서 15,000원 이상 (미달 시 2,500원). 음반/DVD/문구 단독 구매 시 20,000원 이상 (도서 1권 포함 시 15,000원 기준 적용). 도서산간/제주 추가배송비 면제.
+    총알배송: 당일배송, 아침배송, 하루배송, 저녁특급.
+    배송지연 보상제: 약속 도착일 지연 시 주문 건당 YES포인트 2,000원 즉시 보상.
+    전담 택배사: CJ대한통운 (기본/새벽), 롯데택배/D.D.로지스 (당일).
+
+- chunk_id: yes24_policy_overseas
+  platform: YES24
+  authority_level: Policy
+  doc_title: "YES24 해외주문 안내"
+  clause_ref: "N/A"
+  category: [Return, Refund, Overseas_Book]
+  parent_context: "YES24 해외 직수입 도서 취소 수수료 비율"
+  content: "해외 직수입 도서(서양/일본도서 등) 단순 변심 취소 시 판매가의 20% 취소 수수료가 부과됩니다."
+
+- chunk_id: yes24_policy_used_grading
+  platform: YES24
+  authority_level: Policy
+  doc_title: "YES24 중고 바이백 운영정책"
+  clause_ref: "N/A"
+  category: [Used_Inspection]
+  parent_context: "YES24 중고 바이백 세부 검수 등급 및 매입 불가 기준"
+  content: |
+    등급 판정:
+    [최상] 새 상품 수준, 변색/얼룩/찢어짐/낙서 없음, 양장본 재킷 보관.
+    [상] 약간의 사용감, 1cm 이내 희미한 변색/얼룩, 약간의 모서리 해짐.
+    [중] 사용감 많음, 전체적 변색/모서리 해짐, 2cm 이하 찢어짐/오염, 5쪽 이하 필기.
+    [판매불가] 독서 지장, 심한 오염(2cm 초과), 물젖음/곰팡이, 제본 탈착, 5쪽 초과 필기.
+    매입 불가: 도서관/대여점 바코드, 비매품/교사용 도장, 표지/내지 이름 낙서, 부록 누락, 임의 제본 개조(스프링/분철), 불법복제본.
+
+- chunk_id: aladin_tos_art14
+  platform: Aladin
+  authority_level: Contract
+  doc_title: "알라딘 이용약관"
+  clause_ref: "제14조 (환급, 반품 및 교환)"
+  category: [Return, Refund, Cancellation]
+  parent_context: "알라딘 신간, 중고, 전자제품별 상이한 반품 요구 기한 및 파본 발견 시 특례"
+  content: |
+    신간 도서 단순 변심 반품: 수령 후 20일 이내 (법정 7일보다 관대).
+    중고매장 구매상품 및 전자제품류: 배송일로부터 7일 이내.
+    파본 등 하자: 수령 후 20일 이내, 단 발견이 어려운 파본은 문제점 발견 후 30일 (최대 수령일로부터 3개월) 이내.
+    단순변심 반품 시 비용 이용자 부담. 래핑 제거, 케이스/부록 폐기 등 재판매가 불가능한 상태는 불가.
+    해외주문 상품은 단순 변심 반품 불가 (제14조 제4항).
+    교환 불가: 반품 후 환불받고 새 주문해야 함.
+
+- chunk_id: aladin_tos_art26
+  platform: Aladin
+  authority_level: Contract
+  doc_title: "알라딘 이용약관"
+  clause_ref: "제26조 (분쟁해결)"
+  category: [Used_Inspection, Dispute]
+  parent_context: "알라딘 중고 거래 간 하자 및 반품 책임 소재 (판매자 귀책 사유)"
+  content: "이용자(판매자) 간 분쟁 시 사진/판매글과 다른 아이템 발송, 판매 상품 페이지와 채팅을 통해 주요 하자 사실(고장, 얼룩, 구성품 없음 등)을 명확히 알리지 않은 경우, 배송 중 고장/분실(택배사 귀책 시 보상 가능) 등은 판매자 귀책으로 간주하여 반품 및 환불 책임을 판매자에게 부과합니다."
+
+- chunk_id: aladin_policy_delivery
+  platform: Aladin
+  authority_level: Policy
+  doc_title: "알라딘 배송 안내"
+  clause_ref: "N/A"
+  category: [Delivery, Dispatch]
+  parent_context: "알라딘 무료배송 기준, 양탄자배송 및 제주도 추가 비용"
+  content: |
+    무료배송: 도서류(중고 제외) 15,000원 이상 (미달 시 2,500원). 음반/DVD 단독 20,000원 이상 (도서 포함 시 15,000원 기준). 중고매장(우주점) 동일 점포 20,000원 이상.
+    제주도 추가비용: 기본 정책과 무관하게 무조건 2,500원 부과.
+    양탄자배송: 평일 수도권 당일배송(0~13시 주문 → 18~23시 도착), 출근 전 아침배송(15~22시 → 익일 7시 전), 주말특급.
+    전담 택배사: 한진택배(지방), UBEX(수도권), SLX(양탄자배송), 우체국택배.
+
+- chunk_id: coupang_tos_art22
+  platform: Coupang
+  authority_level: Contract
+  doc_title: "쿠팡 이용약관"
+  clause_ref: "제22조 (상품 등의 공급)"
+  category: [Delivery, Dispatch]
+  parent_context: "쿠팡 리테일 서비스 기본 배송 기간 및 공급 시기"
+  content: |
+    회사는 회원이 청약을 한 날로부터 7일 이내에 상품 등을 배송할 수 있도록 필요한 조치를 취합니다. 단, 대금의 전부 또는 일부를 받은 경우에는 대금을 받은 날부터 3영업일 이내에 조치를 취합니다.
+    회사는 회원이 구매한 상품 등에 대해 배송수단, 수단별 배송비용, 부담자, 수단별 배송예상기간 등을 명시합니다.
+
+- chunk_id: coupang_tos_art24
+  platform: Coupang
+  authority_level: Contract
+  doc_title: "쿠팡 이용약관"
+  clause_ref: "제24조 (청약철회 등) [리테일 서비스]"
+  category: [Return, Refund, Cancellation]
+  parent_context: "쿠팡 직매입(로켓배송 등) 상품의 청약철회 기간 및 불가 사유"
+  content: |
+    기본 기간: 계약내용에 관한 서면을 받은 날(또는 상품 등을 공급받기 시작한 날)부터 7일 이내 청약철회 가능.
+    반품/교환 불가 사유: 회원 책임 있는 사유로 멸실/훼손, 사용/일부 소비로 가치 현저히 감소, 시간 경과로 재판매 곤란, 복제 가능 상품 포장 훼손, 디지털콘텐츠 제공 개시, 개별 생산 상품 등.
+    하자 시 특례: 상품의 내용이 표시·광고 내용과 다르거나 계약내용과 다르게 이행된 때에는 공급받은 날부터 3개월 이내, 그 사실을 안 날부터 30일 이내 청약철회 가능.
+
+- chunk_id: coupang_tos_art26
+  platform: Coupang
+  authority_level: Contract
+  doc_title: "쿠팡 이용약관"
+  clause_ref: "제26조 (반품 거절 및 반품 상품의 구매 등)"
+  category: [Return, Refund]
+  parent_context: "쿠팡 반품 불가 상품에 대한 회사의 조건부 구매 정책"
+  content: |
+    회원이 반품 및 교환이 불가능한 상품을 회사에 반품한 경우, 회사는 회사의 판단에 따라 회원의 반품을 거절하거나, 대상 상품의 판매가에 일정 비율을 계산한 금액(구매 비용)을 지급하는 조건으로 해당 상품을 회사가 구매할 수 있습니다.
+    구매 비용 산정 기준 및 지급 방식 등 세부적인 사항은 회사의 관련 웹페이지, 상품판매페이지 등을 통하여 공지합니다.
+
+- chunk_id: coupang_tos_art30
+  platform: Coupang
+  authority_level: Contract
+  doc_title: "쿠팡 이용약관"
+  clause_ref: "제30조 (청약철회 등) [마켓플레이스 서비스]"
+  category: [Return, Refund, Marketplace]
+  parent_context: "쿠팡 오픈마켓(입점판매자) 상품의 청약철회, 배송비 부담 및 효력 상실"
+  content: |
+    기본 기간: 상품 등을 배송 받은 날로부터 7일 이내. (하자 시 공급받은 날부터 3개월, 안 날부터 30일)
+    배송비 부담: 반품이나 교환에 필요한 배송비 및 기타 비용은 귀책사유가 있는 당사자가 부담. (하자/오배송: 판매자 부담, 단순 변심: 회원 부담)
+    효력 상실: 회원이 교환 또는 반품신청을 한 날로부터 14일이 지날 때까지 이미 수령한 상품을 판매자에게 반환하지 아니 하거나 전화, 전자우편 등으로 연락되지 아니하는 경우, 해당 회원의 교환 또는 반품 신청은 효력을 상실합니다.
+
+- chunk_id: coupang_tos_art25_30_refund
+  platform: Coupang
+  authority_level: Contract
+  doc_title: "쿠팡 이용약관"
+  clause_ref: "제25조, 제30조 제11항 및 제12항"
+  category: [Refund, Payment]
+  parent_context: "쿠팡 환불 시점, 지연이자 및 쿠페이머니 환불 특례"
+  content: |
+    환불 시점: 회사는 상품 등을 반환 받은 날(또는 청약철회를 한 날)로부터 3영업일 이내에 대금을 환급합니다. 지연 시 전자상거래법 시행령에 따른 지연이자를 지급합니다.
+    결제 수단별 환불: 신용카드는 결제 취소(현금 환불 불가).
+    쿠페이머니 환불 특례: 원결제취소가 불가능하고 회원의 등록된 환불계좌가 없는 경우에는 '쿠페이머니'로 환불할 수 있습니다. 단, 쿠페이머니 한도를 초과하는 금액은 대기 상태로 보관 후 자동 발행되거나 인출 가능합니다.
+
+- chunk_id: coupang_policy_return
+  platform: Coupang
+  authority_level: Policy
+  doc_title: "쿠팡 반품 및 와우 멤버십 안내"
+  clause_ref: "N/A"
+  category: [Return, Refund]
+  parent_context: "쿠팡 압도적 긴 반품 기간 및 와우 멤버십별 반품 배송비"
+  content: |
+    반품 기간: 단순 변심 및 판매자 상품 모두 수령 후 30일 이내 (약관상 7일이나 운영정책으로 30일 보장).
+    반품 배송비:
+    와우 멤버십 회원: 무료 반품.
+    비 와우 회원: 결제금액 19,800원 미만 시 5,000원 부담 / 19,800원 이상 시 2,500원 부담.
+    상품 불량/오배송: 고객 부담 없음 (무료).
+    환불 시점: 쿠페이/캐시 당일, 신용/체크카드 3~7일 이내.
+
+- chunk_id: coupang_policy_delivery
+  platform: Coupang
+  authority_level: Policy
+  doc_title: "쿠팡 로켓배송 및 와우 멤버십 안내"
+  clause_ref: "N/A"
+  category: [Delivery, Dispatch]
+  parent_context: "쿠팡 로켓배송 무료 기준 및 실결제액 개편 사항"
+  content: |
+    무료배송 기준:
+    와우 회원: 구매 수량, 가격 제한 없이 무조건 무료 로켓배송.
+    일반 회원: 최소 주문 금액 19,800원 이상.
+    정책 변경(2026.04): 쿠폰/즉시 할인 적용 후 구매자가 실제로 부담하는 '실제 결제 금액' 기준 19,800원 이상이어야 무료배송 적용.
+    로켓배송: 밤 12시 전 주문 시 익일 아침 7시 전 새벽배송 및 낮 배송. 도서산간 추가배송비 면제.
+    전담 택배사: 쿠팡로지스틱스서비스(CLS) 자체 직매입/직배송망.
+
+- chunk_id: youngpoong_policy_return
+  platform: Youngpoong
+  authority_level: Policy
+  doc_title: "영풍문고 반품 안내"
+  clause_ref: "N/A"
+  category: [Return, Refund, Overseas_Book]
+  parent_context: "영풍문고 반품 기간 및 해외주문 도서 수수료"
+  content: |
+    반품 기간: 단순 변심 수령 후 7일 이내 / 하자 발견 30일 (최대 3개월).
+    해외 주문 도서: 단순 변심 시 도서 판매가의 20% 일괄 공제.
+    교보문고와 약관 조항이 매우 유사하며, 파본/훼손/오배송 시 30일 이내 접수 필요.
+
+- chunk_id: youngpoong_policy_delivery
+  platform: Youngpoong
+  authority_level: Policy
+  doc_title: "영풍문고 배송 안내"
+  clause_ref: "N/A"
+  category: [Delivery, Dispatch]
+  parent_context: "영풍문고 무료배송 기준 및 나우드림, 배민 퀵배송"
+  content: |
+    무료배송: 온라인서점 도서 10,000원 이상 (미달 시 2,000원). 신간도서(출간일 1년 6개월 미만) 1권 포함 시 금액 무관 전액 무료.
+    배송 서비스:
+    나우드림: 온라인 구매 후 오프라인 매장 즉시 수령.
+    배달의민족 퀵: 배민스토어 입점, 매장 인근 최대 1시간 내 오토바이 퀵배송.
+    전담 택배사: CJ대한통운.
+
+- chunk_id: amazon_guide_condition
+  platform: Amazon
+  authority_level: Guideline
+  doc_title: "Amazon Seller Central Condition Guidelines"
+  clause_ref: "N/A"
+  category: [Used_Inspection, Prohibited_Items]
+  parent_context: "아마존 도서 및 일반 상품 상태 가이드라인 및 리스팅 금지 아이템"
+  content: |
+    새 상품(New): 원래 포장 온전, 표지/페이지 표식 없음.
+    중고(Like New/Very Good/Good/Acceptable): 사소한 외관 결함, 수축포장/케이스 누락 허용. 양호(Acceptable)는 텍스트 읽기 가능 수준의 물 손상/메모 허용.
+    수집품(Collectibles): 초판, 서명본, 절판본 등. 미교정본/도서관도서 제외.
+    허용 안 됨(Unacceptable): 누락된 페이지, 읽을 수 없는 텍스트, 미교정 교정쇄, 시판 전 견본.
+    리스팅 금지: 깨끗하지 않음(곰팡이, 심한 얼룩/부식), 사용 불가 손상, 필수 부품 누락, 수리 필요, 모사품/위조품, 만료일 경과/조작.
+
+- chunk_id: common_policy_packaging
+  platform: Common
+  authority_level: Guideline
+  doc_title: "택배사별 물류 특성 및 도서 포장 가이드"
+  clause_ref: "N/A"
+  category: [Delivery, Packaging, Dispatch]
+  parent_context: "일반 택배망, 쿠팡 직배송, 수도권 당일배송망의 도서 맞춤형 박스 및 포장 추천"
+  content: |
+    일반 대기업 택배망 (CJ, 한진, 롯데 / 교보, YES24, 알라딘 지방):
+    특징: 메가 허브 휠소터 낙하 충격으로 '모서리 찌그러짐' 빈번.
+    추천: 최소 B골(3mm) 이상. 테이프 없는 '황색 십자형 도서 박스'(접착식 래핑) 권장. 일반 A형 박스 사용 시 에어캡/종이 완충재로 빈틈 채움 필수.
+    쿠팡 직배송망 (CLS):
+    특징: 허브 낙하 적고 탑차 적재 압축 응력 발생.
+    추천: 소형 단행본은 '에어캡 일체형 안전봉투(폴리백)'. 박스 적용 시 두께 얇고 인장강도 높은 원터치 납작형 크라프트 박스 (높이 낮을수록 적재 찌그러짐 방지).
+    수도권 당일배송망 (알라딘 양탄자 - SLX):
+    특징: 오토바이/다마스 배송으로 날씨(눈/비) 영향 큼.
+    추천: 발수/방수 코팅(라미네이팅) 박스 또는 내부 비닐 래핑 1차 밀봉. 내부 완충보다 방수 초점 슬림 패키징.
+
+- chunk_id: common_policy_media_restrictions
+  platform: Common
+  authority_level: Policy
+  doc_title: "전몰 공통 카테고리별 반품 제한 안내"
+  clause_ref: "N/A"
+  category: [Return, Refund, Digital_Content]
+  parent_context: "음반, 만화, 수험서, 전자책, 해외직구 등 미디어 및 특수 상품군 반품 제한"
+  content: |
+    음반/DVD/S/W: 포장 미개봉 및 하자 시 가능 / 포장 개봉 시 변심 반품 불가.
+    만화/잡지/화보집: 하자 시 가능 / 포장 해체 후 단시간 열독 가능하여 변심 불가.
+    수험서/사전/법령집: 하자 시 가능 / 성격상 변심 반품 불가.
+    전자책(eBook): 다운로드/열람 전 가능 / 시작 시 즉시 불가.
+    해외 직구/주문: 오배송/파본 등 하자 시 가능 / 단순 변심, 번역 불만, 통관 지체 불가.
+
+- chunk_id: common_policy_refund_methods
+  platform: Common
+  authority_level: Policy
+  doc_title: "전몰 공통 결제수단별 환불 처리 안내"
+  clause_ref: "N/A"
+  category: [Return, Refund, Payment]
+  parent_context: "신용카드, 무통장입금, 휴대폰 결제, 포인트 등 결제수단별 환불 처리 원칙"
+  content: |
+    신용/체크카드: 반품 확정 후 즉시 승인 취소 또는 3~7일 내 카드사 청구 취소 (현금 환불 불가).
+    무통장/계좌이체: 검수 완료 후 고객 명의 실명 계좌로 환불.
+    휴대폰 결제: 당월 취소는 결제 취소 / 익월 취소는 현금 환불 불가하여 몰별 포인트(예치금, YES머니, 쿠페이머니 등)로 환불.
+    포인트/적립금: 주문 시 사용분은 차감 후 환불 / 적립된 포인트는 회수 또는 유효기간 내 재사용.
+    연락 두절 시: 본인 확인 안전성을 위해 실제 결제액을 몰의 예치금(포인트)으로 환불 처리 원칙.
+
+- chunk_id: ssg_tos_art18
+  platform: SSG
+  authority_level: Contract
+  doc_title: "SSG닷컴 이용약관"
+  clause_ref: "제18조 (포인트 및 SSG MONEY 등의 운영)"
+  category: [Refund, Point]
+  parent_context: "SSG닷컴 적립금(SSG MONEY) 및 제휴포인트의 환불 및 소멸 규정"
+  content: |
+    환불 원칙: 주문 취소 시 사용한 결제수단으로 환불. 불가능할 경우 '충전 SSG MONEY' 또는 '적립 SSG MONEY'로 구분 적립.
+    소멸 안내: 유효기간 설정된 적립금은 소멸 3일 전과 1일 전에 안내.
+    탈퇴 시 처리: 당사가 부여한 무상 혜택은 탈퇴 시 소멸(발행사 약관 따라 보존 가능 경우 있음). 미결제 채무 정산 필요.
+
+- chunk_id: ssg_policy_delivery
+  platform: SSG
+  authority_level: Policy
+  doc_title: "SSG닷컴 배송 안내"
+  clause_ref: "N/A"
+  category: [Delivery, Dispatch]
+  parent_context: "SSG닷컴 무료배송 기준 및 쓱배송 서비스"
+  content: |
+    무료배송 기준: 일반적으로 15,000원 이상 (카테고리별 상이, 신선식품 등 별도 기준 적용).
+    쓱배송: SSG닷컴 자체 물류망을 통한 빠른 배송 서비스 (새벽배송, 당일배송 등).
+    전담 택배사: SSG로지스틱스(쓱배송), CJ대한통운, 한진택배 등.
+
+- chunk_id: tenbaiten_tos_art15
+  platform: Tenbaiten
+  authority_level: Contract
+  doc_title: "텐바이텐 이용약관"
+  clause_ref: "제15조 (청약 철회 등)"
+  category: [Return, Refund, Cancellation]
+  parent_context: "텐바이텐 일반 상품의 청약철회 기간 및 반품 불가 사유"
+  content: |
+    기본 기간: 수신확인 통지를 받은 날(또는 재화 공급일)부터 7일 이내 청약철회 가능.
+    반품/교환 불가 사유: 사용/소비로 가치 현저히 감소, 시간 경과로 재판매 곤란, 복제 가능 상품 포장 훼손.
+    하자 시 특례: 내용이 표시·광고와 다르거나 계약과 다르게 이행된 경우 공급받은 날부터 3개월 이내, 안 날부터 30일 이내 청약철회 가능.
+
+- chunk_id: tenbaiten_tos_art16
+  platform: Tenbaiten
+  authority_level: Contract
+  doc_title: "텐바이텐 이용약관"
+  clause_ref: "제16조 (청약 철회 등의 효과)"
+  category: [Refund]
+  parent_context: "텐바이텐 환불 시점 및 지연이자 지급 규정"
+  content: |
+    환불 시점: 재화 반환 받은 후 3영업일 이내에 대금 환급. 지연 시 공정거래위원회 고시 지연이자율 적용.
+    배송비 부담: 단순 변심 시 이용자가 부담, 하자/오배송 시 회사가 부담.
+
+- chunk_id: tenbaiten_tos_art21_26
+  platform: Tenbaiten
+  authority_level: Contract
+  doc_title: "텐바이텐 이용약관"
+  clause_ref: "제21조~제26조 (부가서비스)"
+  category: [Point, Coupon]
+  parent_context: "텐바이텐 마일리지, 예치금, 기프트카드, 쿠폰의 유효기간 및 소멸 규정"
+  content: |
+    마일리지: 부여일로부터 5년간 유효하며, 미사용 시 소멸. 탈퇴 시 소멸. 현금 환불 불가.
+    예치금: 유효기간 없음. 회원 탈퇴 시 소멸되나 환급 청구 가능(소멸시효 5년).
+    Gift카드: 유효기간 5년. 잔액 조건 충족 시 예치금 전환 가능.
+    쿠폰(상품/보너스): 유효기간 내 사용. 탈퇴 시 소멸. 타인 양도 불가.
+
+- chunk_id: tenbaiten_policy_delivery
+  platform: Tenbaiten
+  authority_level: Policy
+  doc_title: "텐바이텐 배송 안내"
+  clause_ref: "N/A"
+  category: [Delivery, Dispatch]
+  parent_context: "텐바이텐 무료배송 기준 및 배송 정책"
+  content: |
+    무료배송 기준: 일반적으로 30,000원 이상 (프로모션 및 카테고리별 상이).
+    배송 서비스: 일반 택배 배송.
+    전담 택배사: CJ대한통운, 롯데택배 등 주요 택배사 활용.
+
+- chunk_id: munguland_tos_art13
+  platform: MunguLand
+  authority_level: Contract
+  doc_title: "문구랜드 이용약관"
+  clause_ref: "제13조 (재화등의 공급)"
+  category: [Delivery, Dispatch]
+  parent_context: "문구랜드 재화의 배송 기간 및 공급 조치"
+  content: |
+    "몰"은 이용자와 재화등의 공급시기에 관하여 별도의 약정이 없는 이상, 이용자가 청약을 한 날부터 7일 이내에 재화 등을 배송할 수 있도록 필요한 조치를 취합니다.
+    다만, "몰"이 이미 재화 등의 대금의 전부 또는 일부를 받은 경우에는 대금의 전부 또는 일부를 받은 날부터 2영업일 이내에 조치를 취합니다.
+    "몰"은 이용자가 구매한 재화에 대해 배송수단, 수단별 배송비용 부담자, 수단별 배송기간 등을 명시합니다. 약정 배송기간을 초과한 경우에는 그로 인한 이용자의 손해를 배상하여야 합니다.
+
+- chunk_id: munguland_tos_art15
+  platform: MunguLand
+  authority_level: Contract
+  doc_title: "문구랜드 이용약관"
+  clause_ref: "제15조 (청약철회 등)"
+  category: [Return, Refund, Cancellation]
+  parent_context: "문구랜드 청약철회 기간 및 반품 불가 사유"
+  content: |
+    기본 기간: 수신확인의 통지를 받은 날부터 7일 이내에는 청약의 철회를 할 수 있습니다.
+    반품/교환 불가 사유: 이용자에게 책임 있는 사유로 멸실/훼손, 사용/일부 소비로 가치 현저히 감소, 시간 경과로 재판매 곤란, 복제 가능 재화등 포장 훼손.
+    하자 시 특례: 재화등의 내용이 표시·광고 내용과 다르거나 계약내용과 다르게 이행된 때에는 당해 재화등을 공급받은 날부터 3월이내, 그 사실을 안 날 또는 알 수 있었던 날부터 30일 이내에 청약철회 등을 할 수 있습니다.
+
+- chunk_id: munguland_tos_art16
+  platform: MunguLand
+  authority_level: Contract
+  doc_title: "문구랜드 이용약관"
+  clause_ref: "제16조 (청약철회 등의 효과)"
+  category: [Return, Refund]
+  parent_context: "문구랜드 환불 시점 및 배송비 부담 원칙"
+  content: |
+    환불 시점: "몰"은 이용자로부터 재화 등을 반환받은 경우 3영업일 이내에 이미 지급받은 재화등의 대금을 환급합니다. 지연 시 공정거래위원회 고시 지연이자율 적용.
+    배송비 부담: 청약철회등의 경우 공급받은 재화등의 반환에 필요한 비용은 이용자가 부담합니다. 다만 재화등의 내용이 표시·광고 내용과 다르거나 계약내용과 다르게 이행되어 청약철회등을 하는 경우 재화등의 반환에 필요한 비용은 "몰"이 부담합니다.
+
+- chunk_id: naver_smartstore_tos_art24
+  platform: NaverSmartStore
+  authority_level: Contract
+  doc_title: "네이버 스마트스토어 판매회원 이용약관"
+  clause_ref: "제24조 (상품의 배송)"
+  category: [Delivery, Dispatch, Seller_Obligation]
+  parent_context: "스마트스토어 판매회원의 상품 발송 기한 및 지연 시 제재"
+  content: |
+    발송 기한: 판매회원은 구매회원의 결제일로부터 3 영업일 이내에 상품의 발송을 완료하여야 하며, 판매자센터에 송장번호 등의 발송 관련 정보를 입력하여 발송이 완료되었음을 증명하여야 합니다.
+    발송 지연: 기한 내 발송하지 못할 경우 발송지연사유 및 발송예정일을 입력해야 하며, 미입력 또는 예정일 초과 시 페널티 부여 및 구매자 취소 요청 시 승인 없이 자동 환불처리 됩니다.
+    배송 책임: 구매회원의 귀책사유 없이 배송지 오류 등으로 정상 수령하지 못하거나 배송과정에서 하자가 발생한 경우 판매회원이 모든 책임을 부담합니다.
+
+- chunk_id: naver_smartstore_tos_art25
+  platform: NaverSmartStore
+  authority_level: Contract
+  doc_title: "네이버 스마트스토어 판매회원 이용약관"
+  clause_ref: "제25조 (취소, 반품, 교환, 환불)"
+  category: [Return, Refund, Seller_Obligation]
+  parent_context: "스마트스토어 판매회원의 반품/환불 처리 기한 및 배송비 부담 원칙"
+  content: |
+    환불 처리 기한: 판매회원은 반품상품 수령일로부터 3영업일 이내에 환불 또는 필요한 조치를 취하여야 합니다. 3영업일 내 미조치 시 자동 환불 될 수 있습니다.
+    반품 배송비: 상품하자나 오배송 등 구매회원의 귀책사유 없는 반품/교환의 경우 판매회원이 배송비를 부담해야 하며, 착불 배송료도 반환해야 합니다.
+    청약철회 기간: 구매회원은 상품 배송완료일로부터 7일 이내에 반품요청 가능 (하자/오배송 시 90일 이내 또는 안 날부터 30일 이내).
+    지정택배사: 판매회원의 귀책사유(택배사 미설정 등)로 수거가 원활하지 않은 경우 회사가 지정하는 택배사가 반품/교환 택배사로 설정될 수 있습니다.
+
+- chunk_id: naver_smartstore_tos_art26
+  platform: NaverSmartStore
+  authority_level: Contract
+  doc_title: "네이버 스마트스토어 판매회원 이용약관"
+  clause_ref: "제26조 (정산 및 자동구매확정)"
+  category: [Settlement, Purchase_Confirmation]
+  parent_context: "스마트스토어 판매대금 정산 및 자동구매확정 절차"
+  content: |
+    자동구매확정: 판매회원이 배송완료일로부터 7일(영업일 3일 미만인 경우 3영업일) 이내 구매회원으로부터 교환, 반품, 환불 의사가 없는 경우 회사는 정책에 따른 자동구매확정 절차를 진행할 수 있습니다.
+    정산대금 지급: 구매확정되는 경우, 파이낸셜은 정산일정 및 정책에 따라 판매대금에서 서비스이용수수료, 미납금 등을 공제한 정산대금을 판매회원에게 지급합니다.
+    거래 종료 의무: 판매회원은 상품 주문일로부터 90일 이내 해당 주문건의 원활한 배송 및 취소/반품/교환 처리가 종료될 수 있도록 필요한 조치를 취하여야 합니다.
+
+- chunk_id: naver_ss_tos_art27_29
+  platform: NaverSmartStore
+  authority_level: Contract
+  doc_title: "네이버 스마트스토어 판매회원 이용약관"
+  clause_ref: "제27조, 제29조 (비즈월렛 출금 제한 및 정산 보류)"
+  category: [Settlement, Dispute, Seller_Obligation]
+  parent_context: "스마트스토어 구매회원 이의제기, 배송지연, 정책위반 시 정산금 출금 제한 및 보류 사유"
+  content: |
+    정산 보류/출금 제한 사유: 구매회원의 거래취소/항변권 행사(이의제기), 배송지연 및 계약불이행, 장기간 배송지연 건 자동종결, 이용계약 종료 시 클레임 대비, 매출 비정상적 증감, 약관/정책 위반 의심, 법원 가압류/압류 등.
+    조치 내용: 네이버페이 비즈월렛 정산 잔액 및 충전 머니의 일부 또는 전부 이용/출금 제한.
+    해제 조건: 제한 사유가 해소되어야 출금 가능.
+
+- chunk_id: 11st_tos_art16
+  platform: 11st
+  authority_level: Contract
+  doc_title: "11번가 구매이용약관"
+  clause_ref: "제16조 (포인트, 캐시)"
+  category: [Refund, Point]
+  parent_context: "11번가 캐시의 유효기간 및 현금 출금 규정"
+  content: |
+    캐시 정의: 결제수단 특성상 동일 절차로 환불하기 어려울 때 현금 환불수단으로 활용되는 정보.
+    유효기간: 환불 등으로 인한 사유발생 일자로부터 5년. 소진일 30일 전 이메일 등으로 통지.
+    현금 출금: 캐시는 현금으로 환급 가능. 인출 요청 시 요청한 날로부터 1영업일에 지정 계좌로 환급.
+
+- chunk_id: 11st_tos_art22
+  platform: 11st
+  authority_level: Contract
+  doc_title: "11번가 구매이용약관"
+  clause_ref: "제22조 (배송 및 거래완료)"
+  category: [Delivery, Purchase_Confirmation]
+  parent_context: "11번가 배송 소요기간 및 자동구매확정 기준"
+  content: |
+    배송 소요기간: 입금 확인일 다음 날을 기산일로 하여 배송 완료까지의 기간 (공휴일/천재지변 제외).
+    자동구매확정: 구매확정 기간(물품수령일로부터 7일, 설치상품 등 발송완료일로부터 21일+7일) 내에 구매확정, 교환, 반품 의사표시가 없으면 자동구매확정 처리.
+    구매확정 후 분쟁: 결제대금 환불사유 발생 시 회사는 개입하지 않으며, 판매자와 구매자가 직접 해결.
+
+- chunk_id: 11st_tos_art23
+  platform: 11st
+  authority_level: Contract
+  doc_title: "11번가 구매이용약관"
+  clause_ref: "제23조 (반품/교환/환불/취소)"
+  category: [Return, Refund, Cancellation]
+  parent_context: "11번가 반품 가능 기간, 배송비 부담 및 효력 상실 규정"
+  content: |
+    기본 반품 기간: 상품 배송받은 날로부터 7일 이내 (전자상거래법 우선 적용).
+    배송비 부담: 귀책사유가 있는 쪽에서 부담 (물품하자: 판매자, 구매자 변심: 구매자).
+    효력 상실: 교환/반품 접수일로부터 14일이 지날 때까지 상품을 반환하지 않거나 연락되지 않으면 교환/반품 의사 철회로 간주, 결제대금 판매자에게 지급.
+    환불 제한: 카드결제로 구매한 건은 카드결제 취소로만 가능하며 현금 잔고로 환불되지 않음 (단, 묶음배송비는 구매확정 후 캐시로 환불 가능).
+
+- chunk_id: 11st_tos_art28
+  platform: 11st
+  authority_level: Contract
+  doc_title: "11번가 구매이용약관"
+  clause_ref: "제28조 (해외쇼핑 11번가 특약)"
+  category: [Return, Refund, Overseas]
+  parent_context: "11번가 해외 직배송 상품 취소 및 반품 특약"
+  content: |
+    취소 제한: 글로벌셀러가 주문을 접수하기 이전인 '주문완료' 단계에서만 취소 가능. 상품 준비 중 상태가 되면 주문취소 불가.
+    반품/교환 기간: 상품 하자 시 공급받은 날부터 3개월 이내, 안 날부터 30일 이내 증빙 제시 후 신청.
+    배송비 부담: 글로벌셀러 귀책 시 반품배송비 및 기타 비용 판매자 부담. 구매자 변심/귀책 시 왕복배송비 구매자 부담 (해외배송 특성상 고비용 주의).
+    관부가세: 상품 가격에 포함되거나 추후 부과될 수 있으며, 수입대행 시 통관정보 위탁 수집 가능.
+
+- chunk_id: 11st_seller_tos_art7
+  platform: 11st
+  authority_level: Contract
+  doc_title: "11번가 판매이용약관"
+  clause_ref: "제7조 (상품의 배송)"
+  category: [Delivery, Seller_Obligation]
+  parent_context: "11번가 판매회원의 발송 기한 및 미도착 신고 처리"
+  content: |
+    발송 기한: 구매자의 결제일로부터 3영업일 이내에 상품 공급을 위한 필수 조치 및 송장번호 입력 완료.
+    미도착 신고: 발송 후 3일 이내 수령 조치 필요. 구매자가 상품 미도착 신고 접수 시 판매회원은 10일 이내 조치. 미조치 시 회사는 거래 취소 및 환불 가능.
+    자동 환불: 발주확인 후 상당 기간 배송 등 후속 절차 미이행 시 회사 정책에 따라 구매자에게 자동 환불 처리 가능.
+
+- chunk_id: 11st_seller_tos_art8_9
+  platform: 11st
+  authority_level: Contract
+  doc_title: "11번가 판매이용약관"
+  clause_ref: "제8조 (교환, 환불) 및 제9조 (판매대금의 정산)"
+  category: [Refund, Settlement, Seller_Obligation]
+  parent_context: "11번가 판매회원의 반품 처리 기한 및 판매대금 정산 절차"
+  content: |
+    반품 처리 기한: 반품수령일로부터 3영업일 이내 환불 등 조치 필요. 미조치 시 회사는 환불에 필요한 조치(자동 환불) 가능.
+    정산 시기: 구매확정 또는 자동구매확정 후 2일(토요일 및 법정공휴일 제외) 이내에 서비스이용료 등 공제 후 송금.
+    셀러캐시: 정산대금 입금 계좌 오류 등 회사 입금 불가 시 또는 판매자가 지정한 경우 '셀러캐시'로 지급. 셀러캐시는 은행계좌 송금 신청 가능(2영업일 내 송금).
+    정산 보류: 귀책사유 비용 공제, 장기간 배송지연 건, 구매자 클레임 대비, 법원 압류 등 사유 발생 시 정산 보류 또는 상계 가능.
+
+- chunk_id: gmarket_buyer_tos_art14_delivery
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 구매회원 약관"
+  clause_ref: "제14조 (배송)"
+  category: [Delivery, Dispatch, Purchase_Confirmation]
+  parent_context: "G마켓 구매회원 기준 배송 소요기간, 판매자 발송 조치 안내 및 자동 배송완료 전환 기준"
+  content: |
+    배송 소요기간: 입금 또는 대금결제 확인일의 익일을 기산일로 하여 배송 완료까지의 기간을 말합니다.
+    발송 조치: 회사는 판매자에게 구매자의 입금 또는 대금결제 확인 통지를 받은 후 3영업일 이내 배송에 필요한 조치를 취하도록 안내합니다.
+    배송 분쟁: 판매자, 구매자, 배송업체, 금융기관 사이의 배송 관련 분쟁은 당사자 간 해결을 원칙으로 하며 회사는 책임을 부담하지 않습니다.
+    자동 배송완료: 판매자의 발송확인 처리 후 구매자의 수취확인이 지연될 경우 회사 안내 후 일정 기간이 지나면 자동으로 배송완료로 전환될 수 있으며, 실제 미수령 시 구매자는 미수취신고를 할 수 있습니다.
+
+- chunk_id: gmarket_buyer_tos_art15_cancellation
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 구매회원 약관"
+  clause_ref: "제15조 (취소)"
+  category: [Cancellation, Refund, Return]
+  parent_context: "G마켓 구매회원 기준 발송 전 취소, 배송중 반품절차 전환 및 취소 환불 기준"
+  content: |
+    발송 전 취소: 회원은 구매한 상품이 발송되기 전까지 구매를 취소할 수 있습니다.
+    배송중 처리: 상품이 이미 배송중인 경우에는 취소가 아니라 반품절차에 따라 처리됩니다.
+    배송준비 중 발송 완료: 배송준비 상태에서 취소신청했더라도 이미 상품이 발송된 경우에는 발송된 상품의 왕복배송비를 구매자가 부담하는 것을 원칙으로 하며 반품절차로 처리됩니다.
+    취소 환불: 카드결제는 취소절차 완료 즉시 결제가 취소되고, 현금결제는 3영업일 이내 환불예정금으로 환불됩니다.
+
+- chunk_id: gmarket_buyer_tos_art16_return
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 구매회원 약관"
+  clause_ref: "제16조 (반품)"
+  category: [Return, Refund, Shipping_Fee]
+  parent_context: "G마켓 구매회원 기준 반품 신청 기간, 귀책사유별 반품 비용 부담 및 반품 환불 기준"
+  content: |
+    반품 기간: 회원은 판매자의 상품 발송 시로부터 배송완료일 후 7일 이내까지 관계법령에 따라 반품을 신청할 수 있습니다.
+    법령 우선: 반품에 관한 일반 사항은 전자상거래 등에서의 소비자보호에 관한 법률 등 관련 법령이 판매자가 제시한 조건보다 우선합니다.
+    비용 부담: 반품 비용은 반품에 대한 귀책사유가 있는 자에게 일반적으로 귀속됩니다. 단순변심은 구매자 부담, 상품하자는 판매자 부담으로 볼 수 있습니다.
+    처리 지연 사유: 반품송장번호를 기재하지 않거나 반품사유를 판매자에게 정확히 통보하지 않으면 반품처리 및 환불이 지연될 수 있습니다.
+    환불 기준: 반품 상품이 판매자에게 도착하고 반품사유 및 반품배송비 부담자가 확인된 이후 현금결제는 3영업일 이내 환불예정금으로 환불되고 카드결제는 즉시 취소됩니다.
+    배송비 미결제: 구매자가 반품배송비를 부담해야 하는 경우 추가 결제가 이루어지지 않으면 환불이 지연될 수 있습니다.
+
+- chunk_id: gmarket_buyer_tos_art17_exchange
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 구매회원 약관"
+  clause_ref: "제17조 (교환)"
+  category: [Exchange, Return, Shipping_Fee]
+  parent_context: "G마켓 구매회원 기준 교환 신청 기간, 재고 부족 시 반품 전환 및 교환 비용 부담"
+  content: |
+    교환 기간: 회원은 판매자의 상품 발송 시로부터 배송완료일 후 7일 이내까지 관계법령에 따라 교환을 신청할 수 있습니다.
+    재고 부족: 교환신청을 하더라도 판매자에게 교환할 물품의 재고가 없는 경우 교환은 불가능하며 해당 교환신청은 반품으로 처리됩니다.
+    비용 부담: 물품하자의 경우 판매자가 왕복배송비를 부담하고, 구매자의 변심에 의한 경우에는 구매자가 교환 비용을 부담합니다.
+
+- chunk_id: gmarket_buyer_tos_art18_refund
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 구매회원 약관"
+  clause_ref: "제18조 (환불)"
+  category: [Refund, Payment]
+  parent_context: "G마켓 구매회원 기준 취소 또는 반품으로 환불 사유가 발생한 경우 결제수단별 환불 처리"
+  content: |
+    환불 발생: 구매자의 취소 또는 반품에 의하여 환불사유가 발생한 경우 환불 처리가 진행됩니다.
+    현금결제: 현금결제의 경우 3영업일 이내 구매자의 환불예정금으로 해당 금액을 환불합니다.
+    카드결제: 카드결제의 경우 즉시 결제가 취소되며, 카드결제를 통한 구매건의 환불은 원칙적으로 카드결제 취소를 통해서만 가능합니다.
+    출금 요청: 회원은 환불예정금으로 환불된 금액을 별도로 지정한 자신의 출금계좌로 현금출금 요청할 수 있습니다.
+
+- chunk_id: gmarket_buyer_tos_art19_exclusion
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 구매회원 약관"
+  clause_ref: "제19조 (반품/교환/환불의 적용 배제)"
+  category: [Return, Exchange, Refund, Exception]
+  parent_context: "G마켓 구매회원 기준 반품, 교환, 환불 요청이 제한되는 적용 배제 사유"
+  content: |
+    적용 배제: 구매자는 약관에서 정한 특정 사유에 해당하는 경우 환불 또는 교환을 요청할 수 없습니다.
+    구매자 귀책 훼손: 구매자의 귀책사유로 상품이 멸실 또는 훼손된 경우 환불 또는 교환 요청이 제한됩니다.
+    사용 또는 소비: 구매자의 사용 또는 일부 소비로 상품 가치가 현저히 감소한 경우 환불 또는 교환 요청이 제한됩니다.
+    시간 경과: 시간의 경과로 재판매가 곤란할 정도로 상품 가치가 현저히 감소한 경우 환불 또는 교환 요청이 제한됩니다.
+    복제 가능 상품: 복제가 가능한 상품의 포장을 훼손한 경우 환불 또는 교환 요청이 제한됩니다.
+    주문제작 상품: 주문에 따라 개별 생산되는 물품 등 판매자에게 회복할 수 없는 중대한 피해가 예상되고 사전 고지 및 구매자 동의가 있는 경우 환불 또는 교환 요청이 제한될 수 있습니다.
+
+- chunk_id: gmarket_buyer_tos_art20_purchase_safety
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 구매회원 약관"
+  clause_ref: "제20조 (구매안전 서비스)"
+  category: [Settlement, Purchase_Confirmation, Refund]
+  parent_context: "G마켓 구매회원 기준 결제대금 예치, 구매결정 및 취소/반품/교환/환불 의사표시 시 지급 보류"
+  content: |
+    구매안전 서비스: 회사는 선지급식 통신판매에서 구매자의 결제대금을 예치하고 배송 완료 후 재화 또는 용역 대금을 판매자에게 지급하여 구매자의 안전을 도모합니다.
+    구매결정 요청: 회사는 구매자에게 배송완료일로부터 3영업일 이내 상품 공급 사실을 통보하도록 요청합니다.
+    판매대금 지급: 구매자가 구매결정을 클릭하거나 배송완료일 후 일정 기간 내 구매결정을 클릭하지 않으면 회사는 약관 기준에 따라 판매회원에게 결제대금을 지급할 수 있습니다.
+    지급 보류: 판매회원에게 결제대금을 지급하기 이전에 구매자가 취소, 반품, 교환 또는 환불 의사를 표시한 경우 회사는 지급을 보류합니다.
+
+- chunk_id: gmarket_seller_tos_art15_delivery
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 판매회원 약관"
+  clause_ref: "제15조 (상품의 배송)"
+  category: [Delivery, Dispatch, Seller_Obligation, Packaging]
+  parent_context: "G마켓 판매회원 기준 주문정보 확인, 포장, 발송기한 및 송장 입력 의무"
+  content: |
+    주문정보 확인: 구매자의 주문에 따른 결제가 완료되면 회사는 판매회원이 주문정보를 확인할 수 있도록 조치하고, 판매회원은 해당 주문정보에 따라 배송해야 합니다.
+    포장 의무: 판매회원은 배송 중 상품이 파손되지 않도록 적절히 포장한 후 배송 증명 또는 추적이 가능한 물류대행업체에 배송을 위탁해야 합니다.
+    발송 기한: 판매회원은 구매자의 결제일로부터 3영업일 이내 상품 발송을 완료해야 합니다.
+    발송 증명: 판매회원은 ESM PLUS에 송장번호 등 발송 관련 데이터를 입력하여 발송 완료를 증명해야 합니다.
+    지연 제재: 기한 내 발송하지 않은 경우 상품 판매 제한, 옵션 판매 제한, 물품 및 옵션 등록 가능 개수 제한 등의 패널티를 받을 수 있습니다.
+
+- chunk_id: gmarket_seller_tos_art16_delivery_obligation
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 판매회원 약관"
+  clause_ref: "제16조 (판매회원의 배송 의무)"
+  category: [Delivery, Dispatch, Cancellation, Seller_Obligation]
+  parent_context: "G마켓 판매회원 기준 발송예정일 입력, 발송 전 취소 확인, 주문확인 미입력 시 환불 위험"
+  content: |
+    발송 데이터 입력: 주문을 확인한 판매회원은 ESM PLUS를 통하여 발송예정일 및 발송 관련 데이터를 입력해야 합니다.
+    발송 전 취소 확인: 판매회원은 상품을 발송하기 전에 주문확인을 통해 주문이 취소되었는지 최종 확인해야 합니다.
+    미입력 위험: 상품발송 후 주문확인 미입력 건에 대해 구매자가 G마켓으로 취소요청을 하는 경우 판매회원에게 통보 없이 주문이 취소되어 구매자에게 환불될 수 있으며, 상품회수 비용은 판매회원이 부담합니다.
+    자동 환불: 주문 확인 후 발송예정일을 입력하지 않은 상태로 2주 이상 경과하면 주문 건은 자동 환불될 수 있습니다.
+    판매거부 제재: 상품을 발송하지 않아 거래가 취소되는 경우 회사는 판매회원에게 판매거부로 인한 불이익을 줄 수 있습니다.
+
+- chunk_id: gmarket_seller_tos_art18_cancel_return
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 판매회원 약관"
+  clause_ref: "제18조 (취소 및 반품)"
+  category: [Cancellation, Return, Refund, Seller_Obligation, Shipping_Fee]
+  parent_context: "G마켓 판매회원 기준 취소, 반품, 자동환불, 반품 배송비 부담 및 부당반품거부 제재"
+  content: |
+    공급 곤란 시 취소: 판매회원은 구매자가 주문한 상품 공급이 곤란하다는 것을 알았을 때 즉시 구매자와 회사에 통보하고 구매자 동의를 얻은 후 취소해야 하며, 회사가 3일 이내 환불 조치를 할 수 있도록 해야 합니다.
+    주문확인 후 취소요청: 주문확인 후 취소 요청 건에 대해 24시간 이내 환불처리나 발송확인 처리를 하지 않으면 주문 건은 자동 환불처리됩니다. 단, 배송중인 경우에는 취소가 아니라 반품절차에 따릅니다.
+    반품 환불기한: 판매회원은 반품상품 수령일로부터 3영업일 이내 환불 또는 환불에 필요한 조치를 취해야 합니다.
+    환불유보 제한: 반품배송비 청구로 환불유보를 하더라도 반품상품 수령일로부터 5일 이내 환불 조치를 취해야 하며, 클레임 발생 시 패널티가 부과될 수 있습니다.
+    하자/오배송 배송비: 판매회원이 상품하자나 오배송 등을 인정한 상태에서는 구매자에게 반품 또는 교환 배송비를 부담시켜서는 안 됩니다.
+    구매자 요청 처리: 구매자는 배송완료일 후 7일 이내 반품 또는 교환 요청을 할 수 있으며, 판매회원은 법령상 예외 사유가 없는 한 요청에 따라 처리해야 합니다.
+    표시광고 상이: 상품이 표시 또는 광고 내용과 다른 경우 상품수령 후 90일 이내 및 그 사실을 안 날 또는 알 수 있었던 날부터 30일 이내 요청에 따라 반품 또는 교환 처리해야 합니다.
+    부당 거부 금지: 판매회원은 반품신청을 수시로 확인해야 하며, 확인하지 못한 것을 이유로 반품을 거부해서는 안 됩니다.
+
+- chunk_id: gmarket_seller_tos_art19_exchange_refund
+  platform: Gmarket
+  authority_level: Contract
+  doc_title: "G마켓 판매회원 약관"
+  clause_ref: "제19조 (교환 및 환불)"
+  category: [Exchange, Refund, Recall, Seller_Obligation, Shipping_Fee]
+  parent_context: "G마켓 판매회원 기준 교환/환불 처리, 비용 부담 주체, 리콜 및 청약철회 불가 상품 고지"
+  content: |
+    교환/환불 처리: 구매자가 상품 수령 후 교환이나 환불을 요청하는 경우 판매회원은 관련 법률에 따라 반품을 받은 후 교환 또는 환불을 해주어야 합니다.
+    비용 부담: 교환이나 환불로 추가 발생하는 비용은 교환이나 환불의 책임이 있는 측에서 부담합니다.
+    빠른환불 정산: 회사는 구매회원이 반품을 위해 상품을 발송한 사실이 확인되면 판매회원의 반품수령확인 전이라도 구매회원에게 빠른환불서비스를 제공할 수 있으며, 정당한 사유 없는 환불로 확인되면 판매회원에게 환불액을 정산합니다.
+    리콜 의무: 상품 하자 또는 사용상 안전성에 결함이 있는 경우 판매회원은 전량 리콜, 수리, 교환, 환불을 해야 하며 리콜 비용을 부담해야 합니다.
+    청약철회 불가 고지: 청약철회가 불가능한 상품은 상품 상세페이지에 명시하고 배송 시 포장 또는 소비자가 쉽게 알 수 있는 곳에 명기해야 합니다.
+    분쟁 협력: 주문 취소, 환불 등에 대한 분쟁 발생 시 회사는 소비자분쟁해결기준에 근거하여 합의가 이루어질 수 있도록 협력합니다.
+
+- chunk_id: auction_tos_art24_delivery
+  platform: Auction
+  authority_level: Contract
+  doc_title: "옥션 이용약관"
+  clause_ref: "제24조 (배송)"
+  category: [Delivery, Dispatch, Seller_Obligation, Packaging]
+  parent_context: "옥션 판매자 기준 발송정보 입력, 3영업일 내 발송, 배송증명 및 배송 중 위험 부담"
+  content: |
+    발송정보 입력: 판매자는 주문이 접수되면 ESM PLUS 서비스화면에 발주를 확인하거나 발송예정일, 발송일, 택배사, 송장번호 등 발송 관련 정보를 입력해야 합니다.
+    지연 통지: 물품발송이 지연될 가능성이 있는 경우 판매자는 이를 구매자에게 통지해야 합니다.
+    발송 기한: 판매자는 전자상거래법에 따라 구매자의 결제일로부터 3영업일 이내 상품 발송을 완료해야 합니다.
+    발송 전 취소 확인: 판매자는 물품발송 전에 구매자가 주문 또는 결제를 취소하지 않았는지 확인해야 합니다.
+    발송 증명: 판매자는 송장번호 등 발송 관련 데이터를 입력하여 발송 완료를 증명해야 합니다.
+    배송추적 불가: 발송 관련 데이터를 입력하지 않았거나 부정확한 정보로 배송 증명 또는 추적이 불가능한 경우 회사는 구매자 요청에 따라 주문을 취소하고 환불할 수 있습니다.
+    배송 위험 부담: 판매자가 물품을 배송할 경우 구매자가 물품을 수령하기까지의 위험은 판매자가 부담하며, 판매자는 하자 없는 물품 수령을 위해 포장, 운송업체 선정 등 필요한 조치를 해야 합니다.
+
+- chunk_id: auction_tos_art26_cancel_before_shipping
+  platform: Auction
+  authority_level: Contract
+  doc_title: "옥션 이용약관"
+  clause_ref: "제26조 가~다 (취소)"
+  category: [Cancellation, Refund]
+  parent_context: "옥션 기준 입금 또는 대금결제 통지 전 취소, 발송 전 취소 및 발송 후 반품절차 전환"
+  content: |
+    통지 전 취소: 판매자가 구매자의 입금 또는 대금결제 통지를 수령하기 전에 구매자가 주문 또는 결제를 취소한 경우 해당 경매는 자동 취소되고 입금된 대금은 구매자에게 환불됩니다.
+    구매쿠폰 미승인: 판매자가 ESM PLUS 서비스화면에서 에누리쿠폰 적용을 승인하지 않으면 해당 경매는 자동 취소되고 입금된 대금은 구매자에게 환불됩니다.
+    발송 전 취소: 판매자가 물품발송표시를 하기 전에 구매자가 주문 또는 결제를 취소한 경우, 취소 이전에 물품을 발송하지 않은 판매자는 구매자의 취소를 승인해야 합니다.
+    자동 취소: 판매자가 구매자의 취소 시로부터 24시간 이내 취소 승인 또는 취소일 이전 발송일이 표시된 물품발송표시를 하지 않는 경우 해당 경매는 자동 취소되고 대금은 환불됩니다.
+    발송 후 처리: 물품이 발송된 이후의 취소와 대금환불은 취소가 아니라 반품절차에 따릅니다.
+
+- chunk_id: auction_tos_art26_non_receipt
+  platform: Auction
+  authority_level: Contract
+  doc_title: "옥션 이용약관"
+  clause_ref: "제26조 라 (물품 미수령)"
+  category: [Delivery, Refund, Non_Receipt]
+  parent_context: "옥션 기준 물품 미수령 통지, 판매자의 도착 증빙 및 환불 처리"
+  content: |
+    미수령 통지: 구매자는 물품을 수령하지 못한 경우 판매자가 표시한 물품발송일로부터 15일 이내 회사에 물품미수령 통지를 해야 합니다.
+    판매자 통지: 회사는 물품미도착 사실을 판매자에게 서비스화면 또는 이메일 등으로 통지합니다.
+    도착 증빙 실패: 판매자가 물품도착증빙을 제공하지 못하는 경우 회사는 입금된 대금을 구매자에게 환불합니다.
+    철회 요청: 물품도착증빙을 제공한 판매자는 구매자의 물품미수령신고 철회를 요청할 수 있으며, 고지 후 7일 이내 구매자가 이의를 제기하지 않으면 물품 판매대금이 판매자에게 송금될 수 있습니다.
+
+- chunk_id: auction_tos_art26_return_exchange
+  platform: Auction
+  authority_level: Contract
+  doc_title: "옥션 이용약관"
+  clause_ref: "제26조 마~바 (반품 및 교환)"
+  category: [Return, Exchange, Exception, Settlement]
+  parent_context: "옥션 기준 반품/교환 요청 기간, 제한 사유, 교환 1회 제한 및 대금 송금 보류"
+  content: |
+    반품/교환 기간: 구매자는 물품발송일로부터 물품을 수령한 후 7일 이내까지 회사에 반품 또는 교환을 요청할 수 있습니다. 물품등록정보에 그 이상의 기간이 게시되어 있는 경우에는 그 기간 내 요청할 수 있습니다.
+    제한 사유: 구매자의 귀책사유로 물품이 훼손된 경우, 사용 또는 일부 소비로 가치가 현저히 감소한 경우, 시간 경과로 재판매가 곤란한 경우, 복제 가능한 물품의 포장을 훼손한 경우, 주문제작 물품 등 사전 고지 및 동의가 있는 경우, 기타 법령상 제한 사유가 있는 경우 반품 또는 교환이 제한됩니다.
+    교환 제한: 교환은 1회에 한하여 허용됩니다.
+    반품 전환: 물품 판매 시 교환 제한을 명시적으로 고지했거나, 교환 신청 시 교환 재고가 없는 경우 해당 교환 신청은 반품으로 처리됩니다.
+    반환 의무: 구매자는 교환 또는 반품하려는 경우 판매자에게 통지하고 수령한 물품을 판매자에게 반환해야 하며, 회사 서비스 화면에도 교환 또는 반품 요청 사실을 표시해야 합니다.
+    송금 보류: 구매자가 교환 또는 반품을 요청한 경우 회사는 물품대금의 송금을 보류합니다. 다만 교환/반품 제한 사유가 입증되면 구매결정 여부와 관계없이 판매자에게 물품대금을 송금할 수 있습니다.
+
+- chunk_id: auction_tos_art26_fee_hold_refund
+  platform: Auction
+  authority_level: Contract
+  doc_title: "옥션 이용약관"
+  clause_ref: "제26조 사~아 (운송료 및 반품/교환 보류)"
+  category: [Return, Exchange, Refund, Shipping_Fee, Settlement]
+  parent_context: "옥션 기준 반품/교환 운송료 부담, 판매자의 보류 통지 및 비용 정산 후 환불 처리"
+  content: |
+    운송료 부담: 반품 또는 교환 시 소요되는 운송료는 반품 또는 교환의 원인을 제공한 자가 부담하는 것을 원칙으로 합니다.
+    판매자 조치: 구매자로부터 물품을 반환받은 판매자는 반품 또는 교환에 필요한 조치를 취해야 합니다.
+    보류 통지: 판매자는 배송비 정산, 물품 및 부속품/종물/사은품 반환 확인, 반품/교환 부적합 판단 등의 사유가 있는 경우 회사에 반품 또는 교환 보류 의사를 통지할 수 있습니다.
+    배송비 정산 후 처리: 판매자가 배송비 정산을 이유로 보류 의사를 통지한 경우, 구매자가 배송비 정산을 완료하면 회사는 반품의 경우 3영업일 이내 환불 또는 교환에 필요한 조치를 취합니다.
+    분쟁 보류: 배송비 외 사유로 보류 의사가 통지된 경우 회사는 구매자 환불을 보류하고, 구매자와 판매자 간 분쟁이 완료되면 그 결과에 따라 환불 또는 송금 등의 조치를 취합니다.
+
+- chunk_id: ssg_tos_art16_general
+  platform: SSG
+  authority_level: Contract
+  doc_title: "SSG.COM 이용약관"
+  clause_ref: "제1장 총칙 제16조 (청약 철회 등)"
+  category: [Return, Refund, Cancellation]
+  parent_context: "SSG.COM 일반/직매입 재화의 기본 청약철회 기간 및 반품 불가 사유"
+  content: |
+    [기본 반품 기간] 계약내용 서면을 받은 날 또는 재화 공급 시작일로부터 7일 이내 청약 철회 가능.
+    [하자/오배송 특례] 재화 내용이 표시·광고 및 계약 내용과 다른 경우, 공급받은 날부터 3개월 이내, 그 사실을 안 날로부터 30일 이내 청약 철회 가능.
+    [반품 불가 사유]
+    1. 이용자 책임 사유로 재화 멸실/훼손 (내용 확인을 위한 포장 훼손은 예외)
+    2. 이용자의 사용/일부 소비로 재화 가치 현저히 감소
+    3. 시간 경과로 재판매 곤란할 정도로 가치 감소
+    4. 복제 가능 재화의 원본 포장 훼손
+    5. 디지털콘텐츠 제공 개시 (가분적 용역 미개시 부분 제외)
+    6. 개별 생산 물품 중 사전 서면 동의를 받은 경우
+
+- chunk_id: ssg_tos_art17_refund_effect
+  platform: SSG
+  authority_level: Contract
+  doc_title: "SSG.COM 이용약관"
+  clause_ref: "제1장 총칙 제17조 (청약 철회 등의 효과)"
+  category: [Refund, Payment, Return, Points]
+  parent_context: "SSG.COM 반품 수령 후 대금 환급 기한, 지연 배상금, 결제 취소 및 배송비 부담 원칙"
+  content: |
+    [환급 기한 및 지연 배상] 재화를 반환받은 날로부터 3영업일 이내에 대금 환급. 환급 지연 시 전자상거래법 시행령에 따른 지연 이자(지연 배상금)를 지급함.
+    [결제 취소] 신용카드 등으로 결제한 경우, 지체 없이 해당 결제 사업자에게 대금 청구 정지 또는 취소를 요청함.
+    [반품 비용 부담] 단순 청약 철회의 경우 반환에 필요한 비용은 이용자가 부담함. 단, 재화 내용이 표시·광고 내용 또는 계약 내용과 다르게 이행된 경우(오배송/하자 등) 반환 비용은 닷컴이 부담함.
+    [위약금 청구 금지] 청약 철회를 이유로 이용자에게 위약금이나 손해배상을 청구하지 않음.
+    [부분 사용 청구] 이미 재화가 일부 사용되거나 소비된 경우, 이용자가 얻은 이익이나 공급 소요 비용에 상당하는 금액을 청구할 수 있음.
+    [적립금 반환] 상품 구매로 지급받은 적립금이 있는 경우, 청약 철회 시 이를 닷컴에 반환해야 함.
+
+- chunk_id: ssg_tos_art29_marketplace
+  platform: SSG
+  authority_level: Contract
+  doc_title: "SSG.COM 이용약관"
+  clause_ref: "제2장 통신판매중개 제29조 (청약철회 등)"
+  category: [Return, Refund, Cancellation, Marketplace]
+  parent_context: "SSG.COM 입점사(오픈마켓) 상품의 청약철회, 배송비 부담 원칙 및 반품 신청 효력 상실"
+  content: |
+    [기본 반품 기간 및 하자 특례] 제16조(총칙)와 동일하게 7일 이내 반품 가능하며, 하자 시 3개월/30일 기준 적용. 입점사 재고 부족 시 교환은 반품으로 처리됨.
+    [반품 불가 사유] 제16조와 동일하나 '거래 안전을 위해 대통령령이 정하는 경우'가 추가됨.
+    [배송비 부담] 귀책사유가 있는 당사자 부담 (하자/오배송: 입점사 부담, 단순 변심: 구매자 부담). 입점사는 배송상 문제로 발생한 구매자 손해 책임 부담.
+    [자동 환불] 입점사가 결제완료 통지 후 상당 기간 배송 절차 미이행 시, 닷컴이 거래 취소 및 환불 가능.
+    [효력 상실] 구매자가 교환/반품 신청 후 14일이 지날 때까지 상품 미반환 또는 전화/이메일 연락 두절 시 교환/반품 신청은 효력 상실.
+
+- chunk_id: ftc_delivery_sla
+  platform: Common
+  authority_level: Statute
+  doc_title: "공정거래위원회 택배 표준약관"
+  clause_ref: "제12조"
+  category: [Delivery, SLA]
+  parent_context: "운송물의 인도일 및 배송 기한 기본 규정"
+  content: |
+    인도예정일이 기재된 경우 해당 기재된 날에 인도함.
+    인도예정일이 기재되지 않은 경우, 일반 지역은 수탁일로부터 2일, 도서 및 산간벽지는 3일 내에 인도함.
+    특정 일시에 사용할 운송물은 기재된 특정 시간까지 인도함.
+
+- chunk_id: ftc_delivery_absence
+  platform: Common
+  authority_level: Statute
+  doc_title: "공정거래위원회 택배 표준약관"
+  clause_ref: "제13조"
+  category: [Delivery, Exception]
+  parent_context: "수하인 부재 시 배송 예외 처리 지침"
+  content: "수하인 부재로 운송물을 인도할 수 없는 경우, 방문 일시 및 문의처 등을 기재한 '부재중 방문표' 서면으로 통지한 후 사업소에 운송물을 보관함."
+
+- chunk_id: ftc_return_disposal
+  platform: Common
+  authority_level: Statute
+  doc_title: "공정거래위원회 택배 표준약관"
+  clause_ref: "제14조"
+  category: [Return, Disposal]
+  parent_context: "수령 거절 및 인도 불가 운송물의 처분 절차"
+  content: |
+    수하인불명 또는 수령거절 시 고객에게 1개월 이상의 기간을 정하여 지시를 최고하고, 지시가 없으면 경매 처분할 수 있음.
+    단, 수령거절의 경우 먼저 수하인에게 1주일 이상 기간을 정해 수령을 최고한 후 고객에게 최고해야 함.
+
+- chunk_id: ftc_compensation_declared
+  platform: Common
+  authority_level: Statute
+  doc_title: "공정거래위원회 택배 표준약관"
+  clause_ref: "제20조 제2항"
+  category: [Compensation, Refund, Liability]
+  parent_context: "운송장 가액 기재 시 손해배상 산정 기준"
+  content: |
+    전부 또는 일부 멸실 시 운송장에 기재된 가액을 기준으로 산정한 손해액을 배상함.
+    훼손 시 수선이 가능하면 수선해주고, 불가능하면 가액을 기준으로 배상함.
+    일반적인 연착 시, 초과일수에 운송장에 기재한 운임액의 50%를 곱한 금액을 배상하되, 해당 운임액의 200%를 한도로 함.
+
+- chunk_id: ftc_compensation_undeclared
+  platform: Common
+  authority_level: Statute
+  doc_title: "공정거래위원회 택배 표준약관"
+  clause_ref: "제20조 제3항"
+  category: [Compensation, Refund, Liability]
+  parent_context: "운송장 가액 미기재 시 손해배상 산정 한도 및 기준"
+  content: |
+    가액 미기재 시 사업자의 손해배상한도액은 50만원으로 제한됨.
+    전부 멸실된 경우 인도예정일의 인도예정장소에서의 운송물 가액을 기준으로 손해액을 산정함.
+    일부 멸실 시 인도일의 인도장소에서의 운송물 가액을 기준으로 함.
+
+- chunk_id: e_commerce_act_art17_1
+  platform: Common
+  authority_level: Statute
+  doc_title: "전자상거래 등에서의 소비자보호에 관한 법률"
+  clause_ref: "제17조 제1항"
+  category: [Return, Refund, Deadline]
+  parent_context: "청약철회(반품) 기본 기한 및 예외 연장"
+  content: |
+    기본 기한: 계약 서면 수령일 또는 재화 공급(시작)일 중 늦은 날로부터 7일 이내.
+    예외 기한 연장: 판매자의 주소 미기재/변경으로 7일 내 철회가 불가능했던 경우 '주소를 안 날'부터 7일 이내.
+    방해 행위 연장: 판매자의 청약철회 방해 행위가 있었던 경우 '방해 행위가 종료한 날'부터 7일 이내.
+    당사자 간 7일보다 긴 기간으로 약정한 경우에는 그 약정 기간을 우선함.
+
+- chunk_id: e_commerce_act_art17_2_and_6
+  platform: Common
+  authority_level: Statute
+  doc_title: "전자상거래 등에서의 소비자보호에 관한 법률"
+  clause_ref: "제17조 제2항 및 제6항"
+  category: [Return, Exception, Reject, Seller_Duty]
+  parent_context: "청약철회 제한 사유와 판매자의 사전 고지 의무"
+  content: |
+    [반품 불가 사유]
+    1. 소비자 책임으로 재화가 멸실/훼손된 경우 (단, 내용 확인을 위한 포장 훼손은 반품 가능).
+    2. 소비자의 사용/일부 소비로 가치가 현저히 감소한 경우.
+    3. 시간 경과로 재판매가 곤란할 정도로 가치가 현저히 감소한 경우.
+    4. 복제 가능한 재화의 포장을 훼손한 경우.
+    
+    [핵심 예외 조건 - 제6항 연계]
+    위 2~4호의 사유가 발생하더라도, 판매자가 사전에 "청약철회 불가 사실"을 포장 등 쉽게 알 수 있는 곳에 명확히 표시하지 않았다면 소비자는 청약철회를 할 수 있음.
+
+- chunk_id: e_commerce_act_art17_3
+  platform: Common
+  authority_level: Statute
+  doc_title: "전자상거래 등에서의 소비자보호에 관한 법률"
+  clause_ref: "제17조 제3항"
+  category: [Return, Defect, Dispute]
+  parent_context: "표시·광고 및 계약 불일치 시 특례"
+  content: |
+    재화 내용이 표시·광고 내용이나 계약 내용과 다르게 이행된 경우, 1항(7일)과 2항(훼손 등 제한)의 규정에도 불구하고 특례 적용.
+    재화를 공급받은 날부터 3개월 이내, 또는 그 사실을 안 날(알 수 있었던 날)부터 30일 이내에 청약철회 가능.
+
+- chunk_id: e_commerce_act_art17_4_and_5
+  platform: Common
+  authority_level: Statute
+  doc_title: "전자상거래 등에서의 소비자보호에 관한 법률"
+  clause_ref: "제17조 제4항 및 제5항"
+  category: [Return, Effective_Date, Proof]
+  parent_context: "효력 발생 시점 및 입증 책임"
+  content: |
+    효력 발생일: 청약철회를 서면으로 할 경우, 서면을 발송한 날(우체국 소인 등)에 효력이 발생함 (도달주의의 예외).
+    입증 책임: 재화 훼손에 대한 소비자의 책임 여부, 계약 및 공급 사실과 시기 등에 다툼이 있을 경우, 모든 증명 책임은 통신판매업자(판매자)에게 있음.
