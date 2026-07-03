@@ -80,4 +80,4 @@ git push origin <내_작업_브랜치_이름>
 ### 3) CI/CD 테스트 및 Merge (병합)
 - PR을 올리면 깃허브 봇(GitHub Actions)이 자동으로 린트(Lint)와 테스트 에러를 검사합니다.
 - ❌ 에러가 나면 `main`으로 합칠 수 없습니다. 코드를 수정해서 다시 Push 하세요.
-- ✅ 테스트를 통과하고, **PM(장문경 님)의 리뷰 및 승인(Approve)**이 떨어지면 최종적으로 `main` 브랜치에 코드가 병합(Merge)됩니다!
+- ✅ 테스트를 통과하고, **Git Gatekeeper(PM 장문경 님)의 리뷰 및 승인(Approve)**이 떨어지면 최종적으로 `main` 브랜치에 코드가 병합(Merge)됩니다!
