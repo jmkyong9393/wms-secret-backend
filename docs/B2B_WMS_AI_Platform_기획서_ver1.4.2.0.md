@@ -76,10 +76,10 @@ graph TD
 
     subgraph "LangGraph (Multi-Agent Pipeline)"
         J --> K{Supervisor Agent}
-        K <--> V[Vision Agent: GPT-4o 결함 BBox 탐지]
-        K <--> P[Policy Agent: UBCI 상대비율/페이지 감점 연산]
-        K <--> C_A[Critic Agent: 교차 검증 및 환각 방어]
-        K <--> R[Report Agent: 결과 리포트 생성]
+        K <--> V["Vision Agent: GPT-4o 결함 BBox 탐지"]
+        K <--> P["Policy Agent: UBCI 상대비율/페이지 감점 연산"]
+        K <--> C_A["Critic Agent: 교차 검증 및 환각 방어"]
+        K <--> R["Report Agent: 결과 리포트 생성"]
     end
 
     subgraph "WMS Core"
