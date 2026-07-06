@@ -25,7 +25,7 @@
 - **WMS Core API Layer (FastAPI):** Python FastAPI 기반 메인 비즈니스 서버. 주문, 출고, 입고, 반품, 재고 증감을 모두 포괄하는 **WMS 코어 트랜잭션 전담**. 
 - **Orchestration & AI Worker Layer (API & Worker 분리):** 
   - **API Pod:** 클라이언트 요청 시 DB에 `PENDING` 큐만 적재하고 즉시 응답(`202 Accepted`)하여 병목을 원천 차단.
-  - **AI Worker 데몬:** Celery/Redis를 배제하고 LangGraph 기반 Supervisor (Star Topology) 상태 머신 구동. K8s 오토스케일링(HPA) 환경에서의 메모리 증발 및 중복 실행을 막기 위해 Redis 브로커 및 Celery Worker 기반 비동기 큐를 Redis 브로커 및 Celery Task로 폴링.
+  - **AI Worker 데몬:** LangGraph 기반 Supervisor (Star Topology) 상태 머신 구동. K8s 오토스케일링(HPA) 환경에서의 메모리 증발 및 중복 실행을 막기 위해 Redis 브로커 및 Celery Worker 기반 비동기 큐를 전면 채택하여 작업을 안전하게 비동기 분산 처리.
 - **Analytics & FDS Layer (CronJob 분리):**
   - 무거운 Pandas/ML 기반 이상거래탐지(FDS) 및 주간 리포팅 로직은 API 서버 부하 방지를 위해 **K8s CronJob + 독립 Batch 스크립트** 형태로 분리하여 매일 자정 실행.
 - **Data & Storage Layer (Two-Track 전략):**
@@ -44,7 +44,7 @@
 3. **OpenCV 시각화 및 DB 최적화:** AI 추론이 끝나면 백엔드 파이썬 워커가 OpenCV를 활용하여 BBox 좌표를 기반으로 원본 이미지 위에 빨간색 결함 박스(YOLO 매핑 형태)를 그립니다. 이 시각화된 **'결과 이미지'를 다시 S3에 업로드**하고, RDB(PostgreSQL)에는 이미지 바이너리(BLOB) 대신 **S3 URL 텍스트 1줄만 적재**하여 DB 성능 팽창(Anti-pattern)을 완벽히 방지합니다.
 
 ### 3.1.3 동일 도서 물리적 섞임 방어: LPN 라벨링 시스템
-대량의 베스트셀러 반품이 쏟아지는 환경에서는 육안으로 구분이 불가능한 동일 서적들이 하나의 작업대에서 섞일 위험이 큽니다. 이를 소프트웨어적인 트랜잭션 큐나 보류 대기함(2-Step Pending Bin)만으로 해결하려 하면 작업자의 이중 터치로 인한 비효율이 발생하며, WMS의 비동기 처리 성능이 극적으로 저하될 수 있습니다. 
+대량의 베스트셀러 반품이 쏟아지는 환경에서는 육안으로 구분이 불가능한 동일 서적들이 하나의 작업대에서 섞일 위험이 큽니다. 이를 소프트웨어적인 소프트웨어적인 큐(Queue) 대기함(2-Step Pending Bin)만으로 해결하려 하면 작업자의 이중 터치로 인한 비효율이 발생하며, WMS의 비동기 처리 성능이 극적으로 저하될 수 있습니다. 
 따라서 본 아키텍처는 시스템의 비동기 동시성 성능을 100% 보장하기 위해, 소프트웨어적 잠금(Lock) 대신 **'감열식 블루투스 프린터(LPN 발급)'**를 도입하여 물리적 섞임을 원천 차단하는 가장 직관적이고 효율적인 엔지니어링 결단(이때 중고 서적의 가치 하락을 막기 위해 떼어내도 자국이 없는 '정전기 필름 라벨지' 사용)을 내렸습니다. 스캔 즉시 10만 원대의 저렴한 감열식 프린터에서 고유 식별자(LPN) 라벨이 발급되며, 작업자는 이를 책에 부착하는 단 1번의 터치만으로 분류 작업을 끝낼 수 있습니다.
 
 ### 3.1.4 Hardware Fail-over Protocol (무중단 장애 조치 시스템)
@@ -76,10 +76,10 @@ graph TD
 
     subgraph "LangGraph (Multi-Agent Pipeline)"
         J --> K{Supervisor Agent}
-        K <--> V["Vision Agent: GPT-4o 결함 BBox 탐지"]
-        K <--> P["Policy Agent: UBCI 상대비율/페이지 감점 연산"]
-        K <--> C_A["Critic Agent: 교차 검증 및 환각 방어"]
-        K <--> R["Report Agent: 결과 리포트 생성"]
+        K <--> V[Vision Agent - GPT-4o 결함 BBox 탐지]
+        K <--> P[Policy Agent - UBCI 상대비율 및 페이지 감점 연산]
+        K <--> C_A[Critic Agent - 교차 검증 및 환각 방어]
+        K <--> R[Report Agent - 결과 리포트 생성]
     end
 
     subgraph "WMS Core"
