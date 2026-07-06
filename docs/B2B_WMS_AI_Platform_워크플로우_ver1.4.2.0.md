@@ -1,4 +1,4 @@
-# [Tech PM Planner] 멀티 에이전트 기반 B2B 도서 물류(입출고·반품) 자동화 및 AI 재고 관리(WMS) 플랫폼 워크플로우
+# [Tech PM Planner] 멀티 에이전트 기반 B2B 도서 물류(입출고·반품) 자동화 및 AI 재고 관리(WMS) 플랫폼 워크플로우 (ver1.4.2.0)
 
 ## 1. 과제 정의 및 핵심 목표 (Project Definition & Objective)
 본 프로젝트는 기존 수작업에 의존하던 도서 이커머스 반품 검수 프로세스를 **VLM(Vision-Language Model)과 LangGraph 기반 멀티 에이전트(Multi-Agent)**를 활용해 자동화하는 B2B SaaS 플랫폼을 구축하는 것입니다. 
@@ -15,17 +15,26 @@
 ```mermaid
 sequenceDiagram
     participant Worker as 현장 작업자
+    participant Printer as 블루투스 프린터
     participant FE as Frontend (Next.js/Jotai)
     participant BE as FastAPI
     participant Redis as Redis Broker
-    participant Celery as Celery Worker
+    participant Celery as Celery Worker (gevent Pool)
     participant Graph as LangGraph (4-Agents)
     participant DB as PostgreSQL
 
-    Worker->>FE: 1. 스마트폰 카메라 촬영 (WebRTC)
+    Worker->>FE: 1. 스마트폰 카메라 촬영 및 바코드 스캔 (WebRTC)
     FE->>FE: 2. Canvas 압축 & 흔들림 검출 (Edge AI 대체)
     FE->>FE: 3. Jotai 큐 PENDING 추가 (낙관적 UI 전환)
-    Worker->>Worker: 4. 다음 도서 찰영 진행 (Non-blocking)
+    
+    alt 프린터 정상 연결 (Primary Mode)
+        FE->>Printer: 4-A. 블루투스 프린터 LPN 인쇄 지시 (정전기 필름)
+        Worker->>Worker: 4-B. 훼손 방지 정전기 필름 라벨 부착 후 촬영 진행 (Non-blocking)
+    else 하드웨어 장애/용지 소진 (Fail-over Mode)
+        FE-->>Worker: 4-C. 화면에 가상 큐 번호(매트릭스 바구니) 할당 알림
+        Worker->>Worker: 4-D. 해당 번호 바구니에 도서 적재 후 다음 촬영 진행
+    end
+    
     FE->>BE: 5. 비동기 POST /api/v1/inspections
     BE->>DB: 6. 상태 PENDING 저장
     BE->>Redis: 7. Task 큐 적재
@@ -41,7 +50,7 @@ sequenceDiagram
     Graph->>DB: 13. 상태 COMPLETED 및 결과 업데이트
     
     BE-->>FE: 14. Polling 완료 응답 (COMPLETED)
-    FE->>FE: 15. Jotai 큐 체크마크(✓) 업데이트
+    FE->>FE: 15. Jotai 큐 체크마크(✓) 및 최종 판정 업데이트
 ```
 
 ### 2.3 반품/중고 서적 전용 4-Agent AI 검수 워크플로우 (System Architecture & Workflow)
@@ -58,7 +67,7 @@ graph TD
     end
 
     subgraph "API & Orchestration (AWS EKS / FastAPI & Worker)"
-        C[FastAPI Router] -->|3. Redis 브로커 및 Celery Worker 기반 비동기 큐 INSERT & 202 반환| E[(AWS RDS PostgreSQL)]
+        C[FastAPI Router] -->|3. Redis 브로커 및 Celery Worker (gevent Pool) 기반 비동기 큐 INSERT & 202 반환| E[(AWS RDS PostgreSQL)]
         C -->|클라이언트 SSE 실시간 푸시| A
         E -->|4. Celery/Redis 비동기 폴링 비동기 폴링| W[Worker Daemon]
         W -->|5. Multi-Agent 위임| D[LangGraph Workflow]
@@ -105,7 +114,7 @@ sequenceDiagram
     API->>DB: 6. 상태 '검수중(Processing)'
     API-->>Worker: 7. 202 Accepted 및 SSE 연결
     
-    %% [3] Redis 브로커 및 Celery Worker 기반 비동기 큐 & Worker (Decoupling)
+    %% [3] Redis 브로커 및 Celery Worker (gevent Pool) 기반 비동기 큐 & Worker (Decoupling)
     API->>DB: 8. INSERT PENDING 상태 저장
     API-->>Worker: 9. 202 Accepted (API 응답 종료)
     DB->>WorkerDaemon: 10. Celery/Redis 비동기 폴링 큐 폴링
@@ -223,6 +232,10 @@ graph TD
 ### 🛑 6. 외부 API 도서 메타데이터 누락 (Missing Dimensions)
 * **Risk:** 출판사 DB나 외부 API에서 도서의 가로/세로/무게 정보가 누락되어 들어오면 3D Bin Packing(박스 최적화) 알고리즘이 에러를 뱉고 다운됩니다.
 * **Mitigation:** **도서 규격 Fallback 추정 로직 도입.** 데이터가 Null일 경우, 도서 카테고리(소설=신국판, 전공=B5)와 페이지 수(100p=10mm, 1p=1.2g)를 기반으로 부피와 무게를 근사치로 자동 계산하는 방어 로직을 탑재하여 100%에 가까운 패킹 성공률을 보장합니다.
+
+### 🛑 7. 물류센터 하드웨어 장애로 인한 전체 시스템 마비 (Hardware Failure)
+* **Risk:** 대량 반품 시 동일 물품 섞임을 방어하기 위해 도입된 '블루투스 감열식 프린터'가 용지/잉크 소진이나 연결 끊김으로 작동을 멈추면 작업대 전체가 멈추는 병목이 발생합니다.
+* **Mitigation:** **무중단 장애 조치(Hardware Fail-over Protocol) 시스템 전환.** 프린터 응답이 없거나 에러가 감지되면, 프론트엔드 UI가 즉시 'LPN 출력 모드'에서 **'탁상용 매트릭스(Numbered Baskets) 큐 할당 모드'**로 전환됩니다. 화면에 프린터 대기 대신 "바구니 2번에 적재하세요"라는 지시가 뜨게 하여, 프린터를 수리하거나 교체하는 동안에도 작업자의 물류 분류 작업은 1초도 쉬지 않고 지속됩니다.
 
 ---
 

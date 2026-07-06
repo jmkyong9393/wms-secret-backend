@@ -10,11 +10,12 @@
 
 | 역할명 | 담당자 | 주요 R&R (역할과 책임) |
 | :--- | :---: | :--- |
-| **Tech PM & DevOps** | **장문경 (PM)** | Git Gatekeeper, DevOps/EKS Infrastructure manager, Kanban master, 통합 관리자(Integration Manager), 트러블슈터(Cross-functional Troubleshooter), 코드 검수(Code Reviewer). (NO backend API orchestration) |
+| **Tech PM & DevOps** | **장문경 (PM)** | Git Gatekeeper, DevOps/EKS Infrastructure manager, Kanban master, 통합 관리자(Integration Manager)
+  * **[1.4.2.0 업데이트]** HPA(CPU) 및 KEDA(Queue 길이) 하이브리드 오토스케일링 아키텍처 배포 관리, 트러블슈터(Cross-functional Troubleshooter), 코드 검수(Code Reviewer). (NO backend API orchestration) |
 | **AI Lead** | **홍경표(Main)** | LangGraph Supervisor (Star Topology) 조립, Fast-track Routing (Mint 등급 Auto-refund) 구현 및 프롬프트 제어 |
 | **BE-1 (Data/MLOps)** | **소한민(Main)<br/>고영빈(Sub)** | Dynamic RAG 구축, FDS 및 통계(CronJob), 오토 라벨링 데이터 적재 파이프라인 (YOLO 학습 배제) |
-| **BE-2 (Orchestration)**| **서다은(Main)** | Redis & Celery 기반 LangGraph 연동 (Celery/Redis 배제), 실시간 SSE 통신, 대시보드 API 구현 |
-| **BE-3 (WMS Core API)** | **박민우(Main)** | 전체 물류 DB 설계 및 WMS CRUD API (No Spring Boot) 전담 개발. FIFO by UBCI, 3D Bin Packing 구현 |
+| **BE-2 (Orchestration)**| **서다은(Main)** | Redis & Celery 기반 LangGraph 연동 (Celery/Redis 배제), 실시간 SSE 통신, 대시보드 API 구현 |, gevent 풀 최적화 및 Tenacity 429 에러 방어 구현
+| **BE-3 (WMS Core API)** | **박민우(Main)** | 전체 물류 DB 설계 및 WMS CRUD API (No Spring Boot) 전담 개발. FIFO by UBCI, 3D Bin Packing 구현 |, LPN 매트릭스 큐 모드 Fail-over 로직 추가
 | **FE-1 (Mobile PWA)** | **고영빈(Main)** | 작업자용 모바일 뷰, 카메라 단말 연동, Canvas 리사이징 압축 기반 엣지 최적화 |
 | **FE-2 (Dashboard)** | **박준희(Main)** | 관리자용 PC 대시보드 개발. Dynamic Pricing 적용, 판독 데이터 시각화 및 수동 승인 뷰 개발 |
 
