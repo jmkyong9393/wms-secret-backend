@@ -62,15 +62,15 @@ sequenceDiagram
 ```mermaid
 graph TD
     subgraph "Client Layer (Vercel / Next.js)"
-        A["작업자 WebRTC/WASM 등 4대 극한 최적화 기술이 적용된 고성능 PWA 신간 반품 / 중고 매입 모드"] -->|1. 도서 가이드 촬영  - 중고 모드는 속지 N장 추가| B("HTML5 Canvas 리사이징")
-        F["관리자 대시보드 Web"] -->|7. 에이전트 로그 확인 및 승인| G((상태 모니터링))
+        A[작업자 고성능 PWA 신간 반품 및 중고 매입 모드] -->|1. 도서 가이드 촬영  - 중고 모드는 속지 N장 추가| B(HTML5 Canvas 리사이징)
+        F[관리자 대시보드 Web] -->|7. 에이전트 로그 확인 및 승인| G((상태 모니터링))
     end
 
     subgraph "API & Orchestration (AWS EKS / FastAPI & Worker)"
-        C["FastAPI Router"] -->|3. Redis 브로커 및 Celery Worker (gevent Pool) 기반 비동기 큐 INSERT & 202 반환| E[("AWS RDS PostgreSQL")]
+        C[FastAPI Router] -->|3. Redis 브로커 및 Celery Worker 기반 비동기 큐 INSERT 및 202 반환| E[(AWS RDS PostgreSQL)]
         C -->|클라이언트 SSE 실시간 푸시| A
-        E -->|4. Celery/Redis 비동기 폴링| W["Worker Daemon"]
-        W -->|5. Multi-Agent 위임| D["LangGraph Workflow"]
+        E -->|4. Celery/Redis 비동기 폴링| W[Worker Daemon]
+        W -->|5. Multi-Agent 위임| D[LangGraph Workflow]
         D -->|6. 에이전트 로그 및 결과 DB 저장| E
     end
 
@@ -81,7 +81,7 @@ graph TD
     end
 
     subgraph "Analytics & LLMOps Layer"
-        E -.->|자정 배치 실행| Batch["K8s CronJob report_batch.py"]
+        E -.->|자정 배치 실행| Batch[K8s CronJob report_batch.py]
         Batch -->|어뷰징 탐지 및 리포트 적재| F
         D -.->|Tracing & Snapshot| LangSmith[(LangSmith / MemorySaver)]
     end
@@ -117,7 +117,7 @@ sequenceDiagram
     %% [3] Redis 브로커 및 Celery Worker (gevent Pool) 기반 비동기 큐 & Worker (Decoupling)
     API->>DB: 8. INSERT PENDING 상태 저장
     API-->>Worker: 9. 202 Accepted (API 응답 종료)
-    DB->>WorkerDaemon: 10. Celery/Redis 비동기 폴링 큐 폴링
+    DB->>WorkerDaemon: 10. Celery/Redis 비동기 큐 폴링
     %% [4] LangGraph Supervisor Star Topology 처리
     DB->>Graph(Supervisor): 11. Celery/Redis 비동기 폴링 워커 할당
     Graph(Supervisor)->>Graph(Vision): 12. [Vision Agent] 외관/내지 불량 탐지 지시
