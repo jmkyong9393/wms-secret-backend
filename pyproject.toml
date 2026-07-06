@@ -14,6 +14,9 @@ dependencies = [
     "langgraph>=0.1.4",
     "langchain-openai>=0.1.10",
     "langgraph-checkpoint>=1.0.0",
+    "celery>=5.6.3",
+    "redis>=8.0.1",
+    "gevent>=26.5.0",
 ]
 
 [build-system]
