@@ -8,7 +8,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
 # Copy dependency definitions
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock guide.md ./
 
 # Sync dependencies (without installing the project itself)
 RUN uv sync --frozen --no-install-project --no-dev

@@ -16,7 +16,7 @@
 | **BE-1 (Data/MLOps)** | **소한민(Main)<br/>고영빈(Sub)** | Dynamic RAG 구축, FDS 및 통계(CronJob), 오토 라벨링 데이터 적재 파이프라인 (YOLO 학습 배제) |
 | **BE-2 (Orchestration)**| **서다은(Main)** | Redis & Celery 기반 LangGraph 연동 (Celery/Redis 배제), 실시간 SSE 통신, 대시보드 API 구현 |, gevent 풀 최적화 및 Tenacity 429 에러 방어 구현
 | **BE-3 (WMS Core API)** | **박민우(Main)** | 전체 물류 DB 설계 및 WMS CRUD API (No Spring Boot) 전담 개발. FIFO by UBCI, 3D Bin Packing 구현 |, LPN 매트릭스 큐 모드 Fail-over 로직 추가
-| **FE-1 (Mobile PWA)** | **고영빈(Main)** | 작업자용 모바일 뷰, 카메라 단말 연동, Canvas 리사이징 압축 기반 엣지 최적화 |
+| **FE-1 (Mobile PWA)** | **고영빈(Main)** | **[3주 압축 플랜]** 작업자용 모바일 뷰, 카메라 단말 연동, Canvas 리사이징 압축 기반 엣지 최적화. 전체 프론트엔드 아키텍처 및 RAG 스키마 총괄 검수. |
 | **FE-2 (Dashboard)** | **박준희(Main)** | 관리자용 PC 대시보드 개발. Dynamic Pricing 적용, 판독 데이터 시각화 및 수동 승인 뷰 개발 |
 
 ---
@@ -29,6 +29,7 @@
 * **[1주차] 환경 세팅 및 아키텍처 설계**
   * `[Tech PM, BE-3]`: 주문, 로케이션, 재고 입출고를 포함한 **WMS 코어 관계형 DB 스키마** 완벽 설계 (AWS RDS).
   * `[FE-1, FE-2]`: Figma 기반 모바일 뷰 및 관리자 WMS 뷰 와이어프레임 설계.
+  * `[FE-1(Main), BE-1(Sub), AI Lead(Sub)]`: **[Day-1 블로커] AI Knowledge Base 100% 구축 (타사 정책 데이터 취합 후 고영빈이 최종 검수 및 제출) 및 전체 아키텍처 구조 검수.**
   * `[AI Lead, BE-1]`: 창고 환경 모사 도서 반품 데이터(정상/훼손 200장) 수집 및 Dynamic RAG (정책 DB) 스키마 설계 (Relative Ratio BBox, Page-level penalty 적용).
   * `[BE-2]`: 프론트엔드 개발 병목을 막기 위해 가상의 State를 반환하는 더미 API 명세 작성.
 
@@ -39,9 +40,10 @@
   * `[BE-3]`: **WMS 코어 API (고객 주문 출고, 재고 차감, 정상 입고/편입)** 개발 전담.
   * `[BE-1]`: FDS(블랙컨슈머 이상거래탐지) 및 주간 통계를 위한 독립된 `report_batch.py` 및 K8s CronJob 인프라 세팅.
   * `[AI Lead]`: LangGraph Supervisor (Star Topology) 기반 에이전트 조립 및 Fast-track Routing (Vision detects Mint -> Auto-refund, Policy/Critic 생략) 파이프라인 완성.
-  * `[FE-1]`: 모바일 웹 Canvas 리사이징(WebP 압축) 및 S3 다이렉트 업로드 연동 완료.
+  * `[FE-1]`: 모바일 앱 카메라 연동, HTML5 Canvas 최적화, IndexedDB 캐싱 및 다중 업로드 UI 완료.
 * **[3주차] API 오케스트레이션 및 비동기 연동**
   * `[BE-2]`: AI 판독 결과를 `BE-3` WMS API와 내부 연결하여 자동 입/출고 완성. Redis & Celery 강제 적용(Celery/Redis 완전 배제). 클라이언트 SSE 푸시 적용.
+  * `[FE-1]`: SSE 실시간 푸시, 예외 처리 등 모바일 개발 조기 완료 (Code Freeze 및 인수인계 완수).
   * `[FE-2]`: 대시보드 레이아웃 구현 및 백엔드 더미 로그 연결.
 
 ---
