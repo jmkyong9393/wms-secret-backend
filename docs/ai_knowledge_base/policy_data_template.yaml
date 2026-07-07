@@ -1,0 +1,69 @@
+# ==========================================
+# B2B WMS AI Platform - Return & Inspection Policy
+# Knowledge Base (Vector DB / RAG Target)
+# ==========================================
+
+# 1. 타사 레퍼런스 (참고용 - RAG 검색 시 가중치 낮음)
+references:
+  aladin:
+    policy_name: "알라딘 중고매장 매입 기준"
+    grade_criteria:
+      mint: "변색 없음, 찢어짐 없음, 얼룩 없음, 낙서 없음"
+      good: "희미한 변색, 1cm 이하의 미세한 찢어짐 1~2곳 허용, 본문 읽기에 지장 없는 얼룩"
+      normal: "전체적인 옅은 변색, 2cm 이하의 찢어짐 허용, 모서리 닳음"
+    rejection_criteria: 
+      - "5페이지 이상의 낙서 또는 밑줄"
+      - "물에 젖은 흔적(우글거림)"
+      - "부록(CD, 별책) 누락 시 매입 불가"
+  
+  kyobo:
+    policy_name: "교보문고 중고장터 기준"
+    grade_criteria:
+      mint: "새 책과 동일한 상태"
+      good: "밑줄(연필) 5페이지 이내, 약간의 모서리 접힘"
+    rejection_criteria:
+      - "도서관 폐기 도서(직인 찍힘)"
+      - "2cm 이상의 심한 찢어짐"
+
+# 2. 자체 B2B WMS 물류 표준 정책 (최우선 적용 - RAG 검색 시 가중치 높음)
+our_wms_standard:
+  version: "1.0.0"
+  last_updated: "2026-07-07"
+  
+  # 등급 판정 기준 (UBCI - Used Book Condition Index 연동)
+  grading_rules:
+    grade_S (최상):
+      description: "재판매 시 정가의 90% 이상 받을 수 있는 신품급 상태"
+      allowed_defects:
+        - "미세한 스크래치 1개 (커버)"
+      routing_action: "Fast-track (텍스트 AI 생략, 즉시 +1 재고 편입)"
+      
+    grade_A (상):
+      description: "재판매 시 정가의 70% 수준. 사용감은 있으나 훼손이 거의 없음"
+      allowed_defects:
+        - "모서리 미세 마모 (1cm 이하)"
+        - "연필 밑줄 3장 이하"
+      routing_action: "정상 입고 처리"
+      
+    grade_B (중):
+      description: "재판매 시 정가의 40% 수준. 눈에 띄는 사용감 존재"
+      allowed_defects:
+        - "2cm 이하의 찢어짐 1곳"
+        - "볼펜 밑줄 5장 이하"
+        - "측면(책배) 희미한 얼룩"
+      routing_action: "정상 입고 처리 및 디지털 품질 보증서에 훼손 사유 명시"
+      
+    grade_C (하 - 반려 대상):
+      description: "재판매 불가 또는 특수 할인(10% 수준) 처리 대상"
+      allowed_defects:
+        - "물에 젖은 흔적 (우글거림)"
+        - "페이지 찢겨짐 및 유실"
+        - "5cm 이상의 큰 얼룩"
+      routing_action: "반품 거절(Reject) - 사유를 Reason Code와 함께 반환"
+
+  # 에러 사유 코드 (Critic Agent가 사용하는 표준 규격)
+  reason_codes:
+    R_WATER_DAMAGE: "수분 노출로 인한 페이지 변형"
+    R_PAGE_MISSING: "본문 페이지 유실"
+    R_HEAVY_STAIN: "기준치(5cm)를 초과하는 심각한 오염"
+    R_APPENDIX_MISSING: "필수 부록(CD, 별책 등) 누락"
