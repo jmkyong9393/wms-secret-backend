@@ -2,7 +2,7 @@
 name = "wms-core-backend"
 version = "0.1.0"
 description = "B2B AI Book Inspection & WMS Platform"
-readme = "README.md"
+readme = "guide.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111.0",

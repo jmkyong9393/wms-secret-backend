@@ -27,3 +27,6 @@ logs/
 
 # pytest
 .pytest_cache/
+
+# Archive Backups
+archive/

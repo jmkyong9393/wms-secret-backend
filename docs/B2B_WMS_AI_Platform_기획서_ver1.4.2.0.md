@@ -60,11 +60,11 @@
 ```mermaid
 graph TD
     subgraph "Frontend (WebRTC & WASM Edge Pre-processing)"
-        A[스마트폰 후면 카메라 (WebRTC)] -->|1. 디바이스 최대 화질 스트림| B(Canvas 리사이징 & 압축)
+        A["스마트폰 후면 카메라 (WebRTC)"] -->|1. 디바이스 최대 화질 스트림| B("Canvas 리사이징 & 압축")
         B -->|2. 라플라시안 흔들림 감지| C{흔들림 여부}
         C -->|흔들림 발생| D[경고 토스트 및 전송 차단]
         C -->|정상| E[Jotai 낙관적 큐 PENDING 적재]
-        E -->|3. 작업자 대기 없이 즉각 다음 촬영| F((다음 작업))
+        E -->|3. 작업자 대기 없이 즉각 다음 촬영| F(("다음 작업"))
     end
 
     subgraph "Backend (FastAPI & Celery/Redis)"
@@ -83,8 +83,8 @@ graph TD
     end
 
     subgraph "WMS Core"
-        K -->|7. Fast-track (MINT) 또는 정상 판정| L[(WMS: 입고 로케이션 +1)]
-        K -->|8. 불량 판정| M[WMS: 자동 출판사 발주 Auto-PO]
+        K -->|7. Fast-track (MINT) 또는 정상 판정| L[("WMS: 입고 로케이션 +1")]
+        K -->|8. 불량 판정| M["WMS: 자동 출판사 발주 Auto-PO"]
     end
 ```
 
@@ -145,7 +145,7 @@ WMS의 완전한 사이클(Closed-loop) 완성을 위해, 입고된 도서가 �
 
 ```mermaid
 graph TD
-    Order( - 고객 가상 주문 인입) --> FIFO
+    Order(" - 고객 가상 주문 인입") --> FIFO
     
     subgraph "스마트 출고(Outbound) 5대 AI 파이프라인"
         direction TB
@@ -159,7 +159,7 @@ graph TD
         Forecast --> Pack
     end
     
-    Pack --> Cert( - 5. UBCI 디지털 품질 보증서 발급 소비자용 URL 링크 제공)
+    Pack --> Cert(" - 5. UBCI 디지털 품질 보증서 발급 소비자용 URL 링크 제공")
     
     style FIFO fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
     style Price fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
