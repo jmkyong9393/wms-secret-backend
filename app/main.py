@@ -1,18 +1,22 @@
 from fastapi import FastAPI
-from app.core.config import settings
+from app.api.routes import inventory, returns, orders
 from app.core.database import init_db
-from app.api.routes import orders, returns, inventory
 
-app = FastAPI(title=settings.PROJECT_NAME)
+app = FastAPI(
+    title="WMS Core API",
+    description="다중 에이전트 기반 B2B 도서 물류 자동화 플랫폼 Core Backend",
+    version="1.5.0.0"
+)
 
 @app.on_event("startup")
 def on_startup():
     init_db()
 
-app.include_router(orders.router, prefix="/api/orders", tags=["Orders"])
-app.include_router(returns.router, prefix="/api/returns", tags=["Returns"])
-app.include_router(inventory.router, prefix="/api/inventory", tags=["Inventory"])
+# 라우터 등록
+app.include_router(inventory.router, prefix="/api/v1")
+app.include_router(returns.router, prefix="/api/v1")
+app.include_router(orders.router, prefix="/api/v1")
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to B2B WMS Platform API"}
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "version": "1.5.0.0"}

@@ -8,7 +8,8 @@ ReasonCode = Literal["UBCI_POLICY_VIOLATION", "BBOX_MISMATCH", "QUALITY_ERROR", 
 class WMSInspectionState(TypedDict):
     """
     LangGraph 에이전트 간 메모리를 공유하기 위한 전역 상태(State) 객체.
-    미니프로젝트 3차의 LLMOps 기법을 도입하여 상태를 명확히 제어합니다.
+    각 에이전트 노드들이 수행한 결과(Vision 판독 결과, UBCI 산정 점수 등)를 순차적으로 누적하고, 
+    Supervisor 라우팅의 조건부 판단을 위한 핵심 파라미터로 사용됩니다.
     """
     messages: Annotated[List[BaseMessage], add_messages]
     

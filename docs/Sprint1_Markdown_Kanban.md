@@ -1,6 +1,6 @@
 # 📋 B2B WMS AI Platform - Sprint 1 Kanban & Work Log
 
-노션(Notion) 서버 점검이나 접속 불가 시, GitHub Repository 내부 또는 로컬에서 마크다운(.md)으로 직접 관리할 수 있는 칸반 보드 및 작업 일지입니다. 
+노션(Notion) 서버 점검이나 접속 불가 시, GitHub Repository 내부 또는 로컬에서 마크다운(.md)으로 직접 관리할 수 있는 데이터 그리드 및 작업 일지입니다. 
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### 📝 To Do (할 일 대기열)
 - `[ ]` **[BE-1.1]** PostgreSQL DB 연동, 코어 스키마(DDL) 설계 및 FastAPI 세팅 (@박민우(Main))
-- `[ ]` **[BE-1.2]** S3 Pre-signed URL 발급 API 개발 및 통합 (@박민우(Main))
+- `[ ]` **[BE-1.2]** AWS CloudFront Signed Cookie 발급 API 개발 및 통합 (@박민우(Main))
 - `[ ]` **[BE-2.1]** Managed Redis 환경 세팅 및 Celery 브로커/워커 연동 파이프라인 구축 (@서다은(Main))
 - `[ ]` **[BE-2.2]** SSE 스트리밍 라우팅 및 Celery Flower / 작업 소요 시간 측정 API 구현 (@서다은(Main))
 - `[ ]` **[DATA-1.1]** Vector DB(ChromaDB) 환경 세팅 및 LangChain 임베딩 파이프라인 파이썬 스크립트 작성 (@소한민(Main))
