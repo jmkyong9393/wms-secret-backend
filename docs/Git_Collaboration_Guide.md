@@ -38,7 +38,7 @@ git checkout -b <브랜치타입>/<이슈번호>-<작업내용>  # 또는 git sw
 
 ```bash
 git add .
-git commit -m "feat: S3 Pre-signed URL 발급 API 구현"
+git commit -m "feat: AWS CloudFront Signed Cookie 발급 API 구현"
 ```
 
 **[커밋 메시지 접두사 규칙]**

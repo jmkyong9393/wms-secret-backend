@@ -36,10 +36,10 @@
   - 시각 판독(Vision Agent)은 정확도가 높은 `GPT-4o`를 채택.
   - 규정 판독, 검증, 리포트 생성 등 텍스트 기반 에이전트는 가성비가 높은 `GPT-4o-mini`를 사용하여 전체 API 통신 비용 최적화.
 
-### 3.1.2 대용량 이미지 처리 및 저장 파이프라인 (S3 Pre-signed URL)
+### 3.1.2 대용량 이미지 처리 및 저장 파이프라인 (AWS CloudFront Signed Cookie)
 대규모 물류센터의 병목 현상을 방지하기 위해 백엔드 서버를 거치지 않고 S3와 다이렉트로 통신하며, 무거운 이미지와 가벼운 LLM 연산 데이터를 철저히 분리(Decoupling)합니다.
 
-1. **S3 Direct Upload (병목 방지):** 클라이언트(모바일/웹)가 백엔드 API에서 S3 Pre-signed URL만 발급받아, 5~10MB의 대용량 고화질 사진을 S3 버킷에 직접 업로드합니다. 백엔드 서버는 무거운 이미지 트래픽을 처리하지 않아 서버 부하가 0(Zero)입니다.
+1. **S3 Direct Upload (병목 방지):** 클라이언트(모바일/웹)가 백엔드 API에서 AWS CloudFront Signed Cookie만 발급받아, 5~10MB의 대용량 고화질 사진을 S3 버킷에 직접 업로드합니다. 백엔드 서버는 무거운 이미지 트래픽을 처리하지 않아 서버 부하가 0(Zero)입니다.
 2. **경량 JSON 패싱 (토큰/레이턴시 최적화):** Vision Agent는 S3 URL을 통해 원본 이미지를 판독하고, 결함의 **BBox 좌표와 상대 비율(Ratio) 데이터(JSON 형식)**만을 추출합니다. 이후 이어지는 Policy, Critic, Report Agent들은 무거운 이미지 없이 이 가벼운 텍스트(JSON) 데이터만으로 RAG 매칭 및 검증 연산을 수행하여 LLM 호출 비용과 시간을 극단적으로 절약합니다.
 3. **OpenCV 시각화 및 DB 최적화:** AI 추론이 끝나면 백엔드 파이썬 워커가 OpenCV를 활용하여 BBox 좌표를 기반으로 원본 이미지 위에 빨간색 결함 박스(YOLO 매핑 형태)를 그립니다. 이 시각화된 **'결과 이미지'를 다시 S3에 업로드**하고, RDB(PostgreSQL)에는 이미지 바이너리(BLOB) 대신 **S3 URL 텍스트 1줄만 적재**하여 DB 성능 팽창(Anti-pattern)을 완벽히 방지합니다.
 
@@ -64,26 +64,26 @@ graph TD
         B -->|2. 라플라시안 흔들림 감지| C{흔들림 여부}
         C -->|흔들림 발생| D[경고 토스트 및 전송 차단]
         C -->|정상| E[Jotai 낙관적 큐 PENDING 적재]
-        E -->|3. 작업자 대기 없이 즉각 다음 촬영| F(("다음 작업"))
+        E -->|3. 작업자 대기 없이 즉각 다음 촬영| F("다음 작업")
     end
 
     subgraph "Backend (FastAPI & Celery/Redis)"
-        E -.->|비동기 POST /api/v1/inspections| G[FastAPI Router]
-        G -->|4. 202 Accepted & DB INSERT| H[(PostgreSQL)]
+        E -.->|Signed Cookie 보안 인증| G[AWS CloudFront Edge Upload]
+        G -->|4. Edge Middleware RBAC & S3 Direct| H[(PostgreSQL)]
         G -->|5. Celery Task 발행| I[Redis Message Broker]
-        I -->|6. 워커 폴링| J[Celery Worker]
+        I -->|6. 워커 Redis Pub/Sub SSE| J[Celery Worker]
     end
 
     subgraph "LangGraph (Multi-Agent Pipeline)"
         J --> K{Supervisor Agent}
         K <--> V[Vision Agent - GPT-4o 결함 BBox 탐지]
         K <--> P[Policy Agent - UBCI 상대비율 및 페이지 감점 연산]
-        K <--> C_A[Critic Agent - 교차 검증 및 환각 방어]
+        K <--> CriticA[Critic Agent - 교차 검증 및 환각 방어]
         K <--> R[Report Agent - 결과 리포트 생성]
     end
 
     subgraph "WMS Core"
-        K -->|7. Fast-track (MINT) 또는 정상 판정| L[("WMS: 입고 로케이션 +1")]
+        K -->|7. Fast-track (MINT) 또는 정상 판정| L["WMS: 입고 로케이션 +1"]
         K -->|8. 불량 판정| M["WMS: 자동 출판사 발주 Auto-PO"]
     end
 ```
@@ -104,12 +104,12 @@ sequenceDiagram
     FE->>FE: 2. Canvas 압축 & 흔들림 검출 (Edge AI 대체)
     FE->>FE: 3. Jotai 큐 PENDING 추가 (낙관적 UI 전환)
     Worker->>Worker: 4. 다음 도서 찰영 진행 (Non-blocking)
-    FE->>BE: 5. 비동기 POST /api/v1/inspections
+    FE->>BE: 5. Signed Cookie 보안 인증
     BE->>DB: 6. 상태 PENDING 저장
     BE->>Redis: 7. Task 큐 적재
     BE-->>FE: 8. 202 Accepted 응답
     
-    loop 3초 주기 비동기 폴링 (Polling)
+    loop 3초 주기 비동기 Redis Pub/Sub SSE (Redis Pub/Sub SSE)
         FE->>BE: 9. GET /api/v1/inspections/{id}
     end
     
@@ -118,7 +118,7 @@ sequenceDiagram
     Graph->>Graph: 12. Vision -> Policy -> Critic -> Report
     Graph->>DB: 13. 상태 COMPLETED 및 결과 업데이트
     
-    BE-->>FE: 14. Polling 완료 응답 (COMPLETED)
+    BE-->>FE: 14. Redis Pub/Sub SSE 완료 응답 (COMPLETED)
     FE->>FE: 15. Jotai 큐 체크마크(✓) 업데이트
 ```
 
@@ -176,14 +176,14 @@ graph TD
   - **Frontend Lead (박준희):** Next.js 기반 반응형 웹앱 및 관리자 대시보드 아키텍처 설계, API 연동, 프로젝트 프론트엔드 총괄.
   - **AI Lead (홍경표):** LangGraph 다중 에이전트 파이프라인 조립 및 최적화, 프롬프트 튜닝, 타사 정책 데이터 리서치.
   - **Backend Core (박민우):** 주문, 출고, 입고, 반품, 재고 증감을 포괄하는 WMS 코어 API 구현 및 Celery/Redis 분산 큐 아키텍처 최적화, CI/CD 구축.
-  - **Backend Orchestration (서다은):** LangGraph 에이전트와 FastAPI 연동, Redis 기반 실시간 작업 상태 폴링 API 구현, 통합 테스트 수행.
+  - **Backend Orchestration (서다은):** LangGraph 에이전트와 FastAPI 연동, Redis 기반 실시간 작업 상태 Redis Pub/Sub SSE API 구현, 통합 테스트 수행.
   - **Frontend UI/UX & Data (고영빈):** WebRTC/WASM 등 4대 극한 최적화 기술이 적용된 고성능 PWA 연동, 3인 리서치 데이터 취합 및 마스터 지식베이스 구축.
   - **Data/MLOps (소한민):** 원시 이미지 데이터 정제, 오토 라벨링 파이프라인 구축, 모델 지식 증류 리서치 및 타사 정책 데이터 리서치.
 
 - **4.2 6+1주 연구개발 마일스톤:**
   - **[1주차 / PoC 및 기획]:** 더미 API 배포, 도서 훼손 이미지 데이터 구축, LangGraph 기본 노드 구조 설계.
   - **[2~3주차 / 코어 연동]:** FastAPI 통합 라우팅 및 LangGraph 4-Agent 체인 연동 완성, 모바일 뷰 이미지 업로드 및 SSE 적용.
-  - **[4~5주차 / 대시보드 및 예외 처리]:** 관리자 대시보드(수동 승인 및 에이전트 로그 조회) 구현, 클라이언트 폴링 및 재시도(Retry) 로직 적용.
+  - **[4~5주차 / 대시보드 및 예외 처리]:** 관리자 대시보드(수동 승인 및 에이전트 로그 조회) 구현, 클라이언트 Redis Pub/Sub SSE 및 재시도(Retry) 로직 적용.
   - **[6주차 / Code Freeze]:** K8s 배포 및 모든 유닛 개발 완료, 100% Code Freeze 실시.
   - **[7주차 / QA 및 리허설]:** 신규 기능 추가 금지, 통합 E2E QA, 버그 픽스 및 데모 시연 시나리오 리허설 반복.
 
@@ -216,23 +216,5 @@ graph TD
 물품 카테고리(가전, 의류 등)를 넓힐 경우 발생할 수 있는 데이터 수집 난항과 VLM 프롬프트 튜닝 리스크를 사전에 차단하기 위해, 본 6주 개발 기간 동안에는 **'도서' 도메인에서의 E2E WMS 파이프라인 완성도(FastAPI, Celery 분산 큐, 동적 가격 책정, 3D Bin Packing 등)를 극한으로 끌어올리는 데만 집중**합니다. 확장은 아키텍처 구조로만 증명하며, MVP 시연은 철저히 도서 도메인에 맞춥니다.
 
 
-### 3.2.2 [심화] 백엔드 & AI 워커 4대 방어 논리 (ver1.4.2.0 신규 도입)
 
-실제 대규모 물류센터(B2B) 환경에서 발생할 수 있는 치명적 병목 현상과 429 에러를 원천 차단하기 위해, 우리는 단순한 프레임워크 도입을 넘어선 4가지 심화 방어 논리를 설계했습니다.
 
-1. **[I/O Bound 병목 극복] Celery Gevent 풀(Pool) 도입**
-   - **문제:** FastAPI(API 서버)는 비동기를 지원하지만, 무거운 작업을 대신하는 Celery 워커는 기본 Prefork 방식으로 동작하여 OpenAI API 응답을 기다리는 15초 동안 스레드를 블로킹(Blocking)합니다. 
-   - **해결:** 코루틴 기반의 비동기 I/O 라이브러리인 **`gevent` 풀(Pool)**을 Celery 실행 옵션으로 도입하여, 외부 API 통신 대기 시간 동안 스레드를 멈추지 않고 단일 워커가 수백 개의 동시 요청(Concurrent Requests)을 우아하게 처리하도록 아키텍처를 고도화했습니다.
-
-2. **[스케일링 병목 극복] KEDA 기반 하이브리드 오토스케일링**
-   - **문제:** Kubernetes 기본 HPA(CPU 70% 도달 시 파드 증설)를 워커에 적용하면 스케일링이 작동하지 않습니다. AI 워커는 "응답 대기(I/O)" 상태이므로 큐에 1만 건이 쌓여도 CPU 사용률이 극히 낮기 때문입니다.
-   - **해결:** 인프라 오토스케일링을 투트랙으로 분리했습니다. API 서버(FastAPI)는 기존처럼 **CPU 기반 HPA**를 적용하고, 백그라운드 AI 워커(Celery)에는 **KEDA(Kubernetes Event-driven Autoscaling)**를 도입하여 오직 **'Redis 큐에 쌓인 대기열 길이(Queue Length)'**만을 기준으로 파드를 무한 증설하도록 설계했습니다.
-
-3. **[API 통신 한계 극복] 429 Rate Limit 투트랙 방어 (시연 vs 상용화)**
-   - **문제:** 워커가 수백 개의 도서를 동시에 비동기로 넘기면, OpenAI 서버에서 초당 요청 한도 초과(HTTP 429 에러)를 뱉고 전체 큐가 터지는 현상이 발생합니다.
-   - **시연/MVP 방어 (소프트웨어적 우아함):** 한정된 학생 예산을 고려해, 파이썬 `Tenacity` 라이브러리를 활용한 **지수 백오프(Exponential Backoff: 2초->4초->8초 대기 후 재시도)** 로직을 구현했습니다. 이를 통해 간헐적 429 에러를 돈을 들이지 않고 안전하게 방어합니다.
-   - **B2B 상용화 비전 (자본과 아키텍처):** 실제 물류센터 상용화 시에는 고객사의 예산(과금)을 바탕으로 OpenAI 계정을 Tier 5(Enterprise)로 승급하고, 백엔드 환경변수에 **다중 API Key를 등록하여 라운드로빈(Round-Robin) 방식으로 부하를 분산**하는 API Key 풀링(Pooling) 아키텍처를 도입하여 Throttling 없이 트래픽을 완벽히 소화합니다.
-
-4. **[하드웨어 장애 대비] LPN 바코드 & 넘버링 매트릭스 큐 (Fail-over)**
-   - **문제:** 무선 블루투스 라벨 프린터 고장, 라벨지 소진 등의 물리적 장애 시 소프트웨어 전체가 정지되는 사태 방지.
-   - **해결:** 오류 감지 즉시 앱 UI를 **'매트릭스 큐(Matrix Queue)' 모드**로 무중단 전환. 작업자는 바코드를 뽑는 대신, 앱 화면에 뜬 번호(예: A-1)를 보고 바구니(A-1)에 책을 던져 넣기만 하면 됩니다. (1.4.1.0에서 확립된 논리 유지)
