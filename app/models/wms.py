@@ -1,63 +1,217 @@
-import uuid
-from typing import Optional
-from sqlmodel import Field, SQLModel, Column
+from sqlmodel import SQLModel, Field, UniqueConstraint
+from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
+from typing import Optional, List, Dict, Any
+from uuid import UUID, uuid4
 from datetime import datetime
+from enum import Enum
+
+# --- Enums (상태 및 타입 정의) ---
+
+class ConditionGradeEnum(str, Enum):
+    MINT = "MINT"
+    GOOD = "GOOD"
+    NORMAL = "NORMAL"
+    REJECT = "REJECT"
+
+class UserRoleEnum(str, Enum):
+    MASTER = "MASTER"
+    WORKER = "WORKER"
+    GUEST = "GUEST"
+    PENDING = "PENDING"
+
+class UserStatusEnum(str, Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+
+class InboundTypeEnum(str, Enum):
+    NEW_STOCK = "NEW_STOCK"
+    USED_PURCHASE = "USED_PURCHASE"
+    CUSTOMER_RETURN = "CUSTOMER_RETURN"
+
+class InboundStatusEnum(str, Enum):
+    RECEIVED = "RECEIVED"
+    CHECKING = "CHECKING"
+    COMPLETED = "COMPLETED"
+
+class JobStatusEnum(str, Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    HITL_REQUIRED = "HITL_REQUIRED" # Human-in-the-loop 수동 검수 대기 상태
+
+class TransactionTypeEnum(str, Enum):
+    INBOUND = "INBOUND"
+    OUTBOUND = "OUTBOUND"
+    RETURN_RESTOCK = "RETURN_RESTOCK"
+    DISCARD = "DISCARD"
+    
+class OrderStatusEnum(str, Enum):
+    PENDING = "PENDING"
+    PICKING = "PICKING"
+    SHIPPED = "SHIPPED"
+    RETURN_REQUESTED = "RETURN_REQUESTED"
+
+class OrderTypeEnum(str, Enum):
+    B2B_ORDER = "B2B_ORDER"
+    AUTO_PO = "AUTO_PO"
+
+class BoardTicketStatusEnum(str, Enum):
+    TODO = "TODO"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+
+class BoardCategoryEnum(str, Enum):
+    NOTICE = "NOTICE"
+    MANUAL = "MANUAL"
+    GENERAL = "GENERAL"
+
+# --- Entity Models (SQLModel) ---
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    employee_id: str = Field(max_length=50, unique=True, index=True)
+    email: str = Field(max_length=100, unique=True, index=True)
+    name: str = Field(max_length=50)
+    password_hash: str = Field(max_length=255)
+    role: str = Field(max_length=20) # UserRoleEnum
+    status: str = Field(default="ACTIVE", max_length=20) # UserStatusEnum
+    last_login: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Book(SQLModel, table=True):
     __tablename__ = "books"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    title: str = Field(nullable=False)
-    isbn: str = Field(nullable=False)
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    title: str = Field(max_length=255)
+    isbn: str = Field(max_length=13, unique=True, index=True)
+    base_price: float = Field(default=0.0)
+    standard_size: Optional[str] = Field(default=None, max_length=50) # BoxStandard Enum Name
+    thickness_mm: Optional[int] = Field(default=None)
     virtual_stock: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class InboundJob(SQLModel, table=True):
+    __tablename__ = "inbound_jobs"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    inbound_type: str = Field(max_length=50) # InboundTypeEnum
+    status: str = Field(max_length=50) # InboundStatusEnum
+    supplier_name: Optional[str] = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class InboundItem(SQLModel, table=True):
+    __tablename__ = "inbound_items"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    inbound_job_id: UUID = Field(foreign_key="inbound_jobs.id", ondelete="CASCADE")
+    book_id: UUID = Field(foreign_key="books.id", ondelete="RESTRICT")
+    quantity: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Location(SQLModel, table=True):
     __tablename__ = "locations"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    zone: str = Field(nullable=False)
-    rack: str = Field(nullable=False)
-    shelf: str = Field(nullable=False)
-    barcode: str = Field(nullable=False, unique=True)
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    zone: str = Field(max_length=50)
+    rack: str = Field(max_length=50)
+    shelf: str = Field(max_length=50)
+    barcode: str = Field(max_length=255, unique=True, index=True)
+    is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Inventory(SQLModel, table=True):
     __tablename__ = "inventory"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    book_id: uuid.UUID = Field(foreign_key="books.id")
-    location_id: uuid.UUID = Field(foreign_key="locations.id")
+    __table_args__ = (
+        UniqueConstraint("book_id", "location_id", name="uq_inventory_book_loc"),
+    )
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    book_id: UUID = Field(foreign_key="books.id", ondelete="CASCADE")
+    location_id: UUID = Field(foreign_key="locations.id", ondelete="RESTRICT")
     quantity: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class InventoryUsedItem(SQLModel, table=True):
+    __tablename__ = "inventory_used_items"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    book_id: UUID = Field(foreign_key="books.id", ondelete="CASCADE")
+    location_id: UUID = Field(foreign_key="locations.id", ondelete="RESTRICT")
+    lpn_barcode: str = Field(max_length=255, unique=True, index=True)
+    ubci_score: Optional[int] = Field(default=None)
+    condition_grade: str = Field(max_length=20) # ConditionGradeEnum
+    certificate_url: Optional[str] = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Order(SQLModel, table=True):
     __tablename__ = "orders"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    customer_name: str = Field(nullable=False)
-    status: str = Field(default="PENDING")
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    customer_name: Optional[str] = Field(default=None, max_length=255)
+    type: str = Field(max_length=20) # OrderTypeEnum
+    total_price: float
+    status: str = Field(max_length=20) # OrderStatusEnum
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ReturnJob(SQLModel, table=True):
     __tablename__ = "return_jobs"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    task_id: Optional[str] = Field(default=None, index=True) # Celery의 task_id 매핑용
-    order_id: uuid.UUID = Field(foreign_key="orders.id")
-    book_id: uuid.UUID = Field(foreign_key="books.id")
-    status: str = Field(default="PENDING") # PENDING, PROCESSING, APPROVED, REJECTED
-    image_url: Optional[str] = Field(default=None)
-    agent_logs: Optional[dict] = Field(default={}, sa_column=Column(JSONB))
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    order_id: Optional[UUID] = Field(default=None, foreign_key="orders.id", ondelete="SET NULL")
+    book_id: UUID = Field(foreign_key="books.id", ondelete="CASCADE")
+    status: str = Field(max_length=20) # JobStatusEnum
+    
+    # JSONB 컬럼 매핑 (PostgreSQL 전용 고성능 JSON)
+    image_urls: List[str] = Field(default=[], sa_column=Column(JSONB))
+    ubci_score: Optional[int] = Field(default=None)
+    agent_logs: Dict[str, Any] = Field(default={}, sa_column=Column(JSONB))
     final_report: Optional[str] = Field(default=None)
-    ubci_score: Optional[int] = Field(default=None, description="자체 개발 상태 평가지수(UBCI) - 알라딘 참고 기반 중고 도서 상태 지수")
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class InventoryLog(SQLModel, table=True):
     __tablename__ = "inventory_logs"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    transaction_type: str = Field(nullable=False) # INBOUND, OUTBOUND, RETURN, DISCARD
-    book_id: uuid.UUID = Field(foreign_key="books.id")
-    quantity_change: int = Field(nullable=False)
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    transaction_type: str = Field(max_length=50) # TransactionTypeEnum
+    book_id: UUID = Field(foreign_key="books.id", ondelete="CASCADE")
+    condition_grade: str = Field(max_length=20) # ConditionGradeEnum
+    quantity_change: int
+    target_lpn: Optional[str] = Field(default=None, max_length=255)
+    picked_location: Optional[str] = Field(default=None, max_length=50)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class Board(SQLModel, table=True):
+    __tablename__ = "boards"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    job_id: Optional[UUID] = Field(default=None, foreign_key="return_jobs.id", ondelete="CASCADE")
+    ticket_status: str = Field(max_length=20) # BoardTicketStatusEnum
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class BoardPost(SQLModel, table=True):
+    __tablename__ = "board_posts"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    author_id: UUID = Field(foreign_key="users.id", ondelete="CASCADE")
+    category: str = Field(max_length=20) # BoardCategoryEnum
+    title: str = Field(max_length=255)
+    content: str
+    attachment_paths: List[str] = Field(default=[], sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
