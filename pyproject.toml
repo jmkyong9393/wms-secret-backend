@@ -1,5 +1,5 @@
 [project]
-name = "wms-core-backend"
+name = "wms-secret-backend"
 version = "0.1.0"
 description = "B2B AI Book Inspection & WMS Platform"
 readme = "guide.md"
@@ -17,6 +17,10 @@ dependencies = [
     "celery>=5.6.3",
     "redis>=8.0.1",
     "gevent>=26.5.0",
+    "pytest>=9.1.1",
+    "alembic>=1.18.5",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.2",
 ]
 
 [build-system]
