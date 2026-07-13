@@ -1,13 +1,30 @@
-from pydantic_settings import BaseSettings
+"""
+애플리케이션 환경변수 및 전역 설정을 중앙에서 관리하는 파일입니다.
+pydantic-settings를 사용하여 .env 파일의 값을 자동으로 읽고 타입 검증(Type Validation)을 수행합니다.
+"""
+import os
+from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# LangChain 등 파이썬 내장 os.environ을 직접 참조하는 외부 라이브러리를 위해 
+# .env 파일의 내용을 OS 환경변수로 강제 주입(Load)합니다.
+load_dotenv()
+
 
 class Settings(BaseSettings):
+    """
+    애플리케이션에서 사용될 모든 환경변수를 정의하는 모델 클래스입니다.
+    여기에 정의된 속성들은 .env 파일 또는 OS 환경변수에서 자동으로 값을 찾아 매핑됩니다.
+    """
     PROJECT_NAME: str = "WMS Core API"
+    API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/wms_db"
     
-    # Celery & Redis (For BE-2 Integration later)
+    # Celery & Redis (추후 비동기 작업 및 상태 캐싱을 위해 사용 예정)
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    class Config:
-        env_file = ".env"
+    # Pydantic V2 설정 방식: .env 파일을 우선적으로 읽도록 지정합니다.
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+# 설정 객체를 싱글톤처럼 하나만 생성하여 전역적으로 사용합니다.
 settings = Settings()
