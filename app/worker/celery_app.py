@@ -1,8 +1,13 @@
 from celery import Celery
 from app.core.config import settings
 
+"""
+분산 비동기 큐(Asynchronous Task Queue) 처리를 위한 Celery 애플리케이션 초기화 파일입니다.
+대규모의 도서 검수 이미지 트래픽이 몰릴 때, FastAPI 서버가 터지지 않도록 작업을 큐에 적재합니다.
+"""
+
 # Celery 앱 인스턴스 생성
-# Redis를 브로커(Broker)와 백엔드(Backend)로 모두 사용
+# Redis를 메시지 브로커(Broker)와 작업 결과 저장소(Backend)로 모두 사용
 celery_app = Celery(
     "wms_worker",
     broker=settings.REDIS_URL,
