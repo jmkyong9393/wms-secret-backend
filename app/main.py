@@ -3,24 +3,88 @@ FastAPI 애플리케이션의 진입점(Entrypoint) 파일입니다.
 앱 초기화, 데이터베이스 테이블 생성 트리거, 그리고 도메인별 API 라우터를 마운트하는 역할을 합니다.
 """
 from fastapi import FastAPI
-from app.api.v1.routes import inventory, returns, orders, dashboard, po, inbound
-from app.core.database import create_db_and_tables
+from app.domains.dashboard import router as dashboard
+from app.domains.inbound import router as inbound
+from app.domains.inventory import router as inventory
+from app.domains.orders import router as orders
+from app.domains.po import router as po
+from app.domains.returns import router as returns
+from app.domains.users import router as users
+from fastapi import Depends, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy import text
+from sqlmodel import Session
+import datetime
+
+from app.db.session import get_db
 from app.core.config import settings
+from app.core.middleware import LoggingMiddleware
 
 # FastAPI 앱 객체 생성 및 메타데이터(Swagger 문서 등) 설정
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="다중 에이전트 기반 B2B 도서 물류 자동화 플랫폼 Secret Backend",
-    version="1.6.0.0"
+    version="1.7.0.0"
 )
 
+# ==========================================
+# SlowAPI (Rate Limiter) 전역 설정
+# ==========================================
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.core.limiter import limiter
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ==========================================
+# 미들웨어(Middleware) 등록
+# ==========================================
+app.add_middleware(LoggingMiddleware)
+
+# ==========================================
+# 글로벌 에러 핸들러 (Global Exception Handlers)
+# ==========================================
+from fastapi import HTTPException
+from app.core.exceptions import BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException
+
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    """지정된 커스텀 HTTPException이 터졌을 때 엔터프라이즈 JSON 규격으로 반환"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "status": "error",
+            "code": exc.status_code,
+            "message": exc.detail,
+            "path": request.url.path,
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+        },
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """예상치 못한 일반 Exception(500 서버 에러) 처리"""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "code": 500,
+            "message": "Internal Server Error",
+            "detail": str(exc),
+            "path": request.url.path,
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+        },
+    )
 @app.on_event("startup")
 def on_startup():
     """
     서버 시작 시 실행되는 이벤트 핸들러입니다.
-    현재는 앱 시작 시 SQLModel 기반 데이터베이스 테이블을 자동 생성(초기화)합니다.
+    (기존에 존재하던 SQLModel.metadata.create_all()은 Alembic 마이그레이션을 
+    사용하므로 충돌 방지를 위해 제거되었습니다.)
     """
-    create_db_and_tables()
+    pass
 
 # ==========================================
 # 라우터 등록 (도메인별 API 분리)
@@ -32,10 +96,23 @@ app.include_router(po.router, prefix=settings.API_V1_STR)
 app.include_router(inbound.router, prefix=settings.API_V1_STR)
 app.include_router(returns.router, prefix=settings.API_V1_STR)
 app.include_router(orders.router, prefix=settings.API_V1_STR)
+app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
 
 @app.get("/health")
 def health_check():
     """
     로드밸런서(K8s Ingress 등) 또는 KEDA 스케일링을 위한 서버 헬스 체크 엔드포인트입니다.
     """
-    return {"status": "ok", "version": "1.6.0.0"}
+    return {"status": "ok", "version": "1.7.0.0"}
+
+@app.get("/db-check")
+def db_check(session: Session = Depends(get_db)):
+    """
+    데이터베이스 연동이 정상적으로 되었는지 터미널과 브라우저에서 직접 확인하기 위한 테스트 엔드포인트입니다.
+    """
+    try:
+        # DB에 간단한 1+1 핑거프린트 쿼리를 날려 연결을 테스트합니다.
+        session.exec(text("SELECT 1")).first()
+        return {"db_status": "connected", "ping": "ok"}
+    except Exception as e:
+        return {"db_status": "disconnected", "error": str(e)}

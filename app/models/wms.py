@@ -18,7 +18,6 @@ class UserRoleEnum(str, Enum):
     MASTER = "MASTER"
     WORKER = "WORKER"
     GUEST = "GUEST"
-    PENDING = "PENDING"
 
 class UserStatusEnum(str, Enum):
     ACTIVE = "ACTIVE"
@@ -57,6 +56,11 @@ class OrderTypeEnum(str, Enum):
     B2B_ORDER = "B2B_ORDER"
     AUTO_PO = "AUTO_PO"
 
+class ItemStatusEnum(str, Enum):
+    IN_STOCK = "IN_STOCK"
+    ALLOCATED = "ALLOCATED"
+    SHIPPED = "SHIPPED"
+
 class BoardTicketStatusEnum(str, Enum):
     TODO = "TODO"
     IN_PROGRESS = "IN_PROGRESS"
@@ -93,6 +97,7 @@ class Book(SQLModel, table=True):
     standard_size: Optional[str] = Field(default=None, max_length=50) # BoxStandard Enum Name
     thickness_mm: Optional[int] = Field(default=None)
     virtual_stock: int = Field(default=0)
+    is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -151,6 +156,8 @@ class InventoryUsedItem(SQLModel, table=True):
     ubci_score: Optional[int] = Field(default=None)
     condition_grade: str = Field(max_length=20) # ConditionGradeEnum
     certificate_url: Optional[str] = Field(default=None, max_length=255)
+    item_status: str = Field(default="IN_STOCK", max_length=20) # ItemStatusEnum
+    source_job_id: Optional[UUID] = Field(default=None, foreign_key="return_jobs.id", ondelete="SET NULL")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -162,6 +169,17 @@ class Order(SQLModel, table=True):
     type: str = Field(max_length=20) # OrderTypeEnum
     total_price: float
     status: str = Field(max_length=20) # OrderStatusEnum
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class OrderItem(SQLModel, table=True):
+    __tablename__ = "order_items"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    order_id: UUID = Field(foreign_key="orders.id", ondelete="CASCADE")
+    book_id: UUID = Field(foreign_key="books.id", ondelete="RESTRICT")
+    quantity: int = Field(default=1)
+    unit_price: float = Field(default=0.0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -178,6 +196,8 @@ class ReturnJob(SQLModel, table=True):
     ubci_score: Optional[int] = Field(default=None)
     agent_logs: Dict[str, Any] = Field(default={}, sa_column=Column(JSONB))
     final_report: Optional[str] = Field(default=None)
+    latency_ms: Optional[int] = Field(default=None)
+    retry_count: int = Field(default=0)
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

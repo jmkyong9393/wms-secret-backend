@@ -2,9 +2,9 @@ from typing import TypedDict, Annotated, List, Optional
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, END, START
 from langchain_core.messages import HumanMessage
-from app.agents.vision_agent import VisionAgent
-from app.agents.policy_agent import run_policy_node
-from app.agents.critic_agent import run_critic_node
+from app.ai.vision_agent import VisionAgent
+from app.ai.policy_agent import run_policy_node
+from app.ai.critic_agent import run_critic_node
 
 class AgentState(TypedDict):
     """Role-based LLMOps 아키텍처가 적용된 LangGraph State"""
