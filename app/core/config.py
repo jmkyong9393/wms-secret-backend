@@ -18,10 +18,19 @@ class Settings(BaseSettings):
     """
     PROJECT_NAME: str = "WMS Core API"
     API_V1_STR: str = "/api/v1"
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/wms_db"
+    DATABASE_URL: str = "postgresql://admin:password@localhost:5432/wms_db"
     
     # Celery & Redis (추후 비동기 작업 및 상태 캐싱을 위해 사용 예정)
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # JWT & Auth
+    SECRET_KEY: str = "super_secret_key_for_wms_platform_change_me_in_production"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7일
+
+    # Invitation Codes (회원가입 제한코드)
+    WORKER_INVITATION_CODE: str = "WMS_WORKER_2026"
+    MASTER_INVITATION_CODE: str = "WMS_MASTER_2026"
 
     # Pydantic V2 설정 방식: .env 파일을 우선적으로 읽도록 지정합니다.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

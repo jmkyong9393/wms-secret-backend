@@ -1,5 +1,6 @@
 from sqlmodel import Session
 from app.models.wms import ReturnJob, JobStatusEnum
+from uuid import UUID
 
 class ReturnRepository:
     """
@@ -9,7 +10,7 @@ class ReturnRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_pending_job(self, book_id: int, location_id: int) -> ReturnJob:
+    def create_pending_job(self, book_id: UUID, location_id: UUID) -> ReturnJob:
         """새로운 PENDING 상태의 반품 작업을 생성하고 식별자를 할당받습니다."""
         new_job = ReturnJob(
             book_id=book_id,

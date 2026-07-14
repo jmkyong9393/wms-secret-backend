@@ -1,10 +1,15 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from typing import Dict, List, Any
 from datetime import datetime
+from app.core.security import RoleChecker
 
 # Dashboard 도메인 라우터: 관리자 대시보드 화면에 필요한 통계 및 로깅 데이터를 제공합니다.
-router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
-
+# MASTER 권한을 가진 사용자만 대시보드를 볼 수 있도록 라우터 레벨에서 차단합니다.
+router = APIRouter(
+    prefix="/dashboard", 
+    tags=["Dashboard"],
+    dependencies=[Depends(RoleChecker(["MASTER"]))]
+)
 
 @router.get("/kpi")
 async def get_kpi() -> Dict[str, int]:

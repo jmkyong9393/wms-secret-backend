@@ -16,9 +16,13 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+from sqlmodel import SQLModel
+from app.models import wms  # 모든 모델 로드 필수
+target_metadata = SQLModel.metadata
+
+# 동적 DB URL 바인딩 (alembic.ini의 하드코딩 URL 대신 settings에서 가져옴)
+from app.core.config import settings
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

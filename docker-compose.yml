@@ -65,7 +65,7 @@ services:
     # Hot-reload mapping for local dev
     volumes:
       - ./app:/app/app
-    command: ["celery", "-A", "app.core.celery_app", "worker", "-l", "info", "--pool=gevent"]
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "-l", "info", "--pool=gevent"]
 
 volumes:
   postgres_data:

@@ -2,9 +2,10 @@ from sqlmodel import Session
 from fastapi import Depends
 from typing import List
 
-from app.api.deps import get_db
-from app.repositories.return_repository import ReturnRepository
+from app.db.session import get_db
+from app.domains.returns.repository import ReturnRepository
 from app.worker.tasks import process_inspection
+from uuid import UUID
 
 class ReturnService:
     """
@@ -16,7 +17,7 @@ class ReturnService:
         # 트랜잭션 관리용 Session 객체를 받아 Repository 계층에 주입
         self.repository = ReturnRepository(db)
 
-    def trigger_inspection(self, book_id: int, location_id: int, image_urls: List[str]) -> int:
+    def trigger_inspection(self, book_id: UUID, location_id: UUID, image_urls: List[str]) -> UUID:
         """
         반품 접수 및 AI 검수 파이프라인 트리거 비즈니스 로직
         """

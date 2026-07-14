@@ -1,10 +1,13 @@
 import asyncio
 from typing import List
 from celery import shared_task
-from app.agents.graph import build_wms_graph
-from app.core.database import engine
+from app.ai.graph import build_wms_graph
+from app.db.session import engine
 from sqlmodel import Session, select
 from app.models.wms import ReturnJob, JobStatusEnum
+import redis
+import json
+import time
 import redis
 import json
 
@@ -35,13 +38,20 @@ def process_inspection(job_id: str, image_urls: List[str]):
         "needs_hitl": None
     }
     
-    # 2. LangGraph 실행
+    
+    # 2. LangGraph 실행 및 지연시간(Latency) 측정
+    start_time = time.time()
     try:
         final_state = wms_agent_graph.invoke(initial_state)
     except Exception as e:
+        end_time = time.time()
+        latency_ms = int((end_time - start_time) * 1000)
         print(f"[{job_id}] 파이프라인 에러 발생: {e}")
-        _update_job_status(job_id, JobStatusEnum.REJECTED.value, final_report=f"Error: {e}")
+        _update_job_status(job_id, JobStatusEnum.REJECTED.value, final_report=f"Error: {e}", latency_ms=latency_ms)
         return {"status": "error", "error": str(e)}
+    
+    end_time = time.time()
+    latency_ms = int((end_time - start_time) * 1000)
 
     # 3. 결과 분석 및 DB 업데이트 (PostgreSQL JSONB)
     needs_hitl = final_state.get("needs_hitl", False)
@@ -53,18 +63,24 @@ def process_inspection(job_id: str, image_urls: List[str]):
         f"[훼손 요약]: {final_state.get('defect_description')}"
     )
     
+    
+    # Retry 횟수 추출 (LangGraph 내부에 저장된 상태가 있다면, 없으면 기본값 0)
+    retry_count = final_state.get("retry_count", 0)
+    
     _update_job_status(
         job_id=job_id,
         status=final_status,
         score=final_state.get("ubci_score"),
         logs=final_state,
-        final_report=report
+        final_report=report,
+        latency_ms=latency_ms,
+        retry_count=retry_count
     )
     
     print(f"[{job_id}] 검수 완료 -> {final_status}")
     return {"status": final_status, "score": final_state.get("ubci_score")}
 
-def _update_job_status(job_id: str, status: str, score: int = None, logs: dict = None, final_report: str = None):
+def _update_job_status(job_id: str, status: str, score: int = None, logs: dict = None, final_report: str = None, latency_ms: int = None, retry_count: int = 0):
     """
     비동기 워커 환경(Celery)에서 DB 상태를 업데이트하기 위한 유틸리티 함수입니다.
     FastAPI의 세션 의존성(Depends)을 사용할 수 없으므로, 직접 DB 세션을 열고 닫습니다.
@@ -81,6 +97,9 @@ def _update_job_status(job_id: str, status: str, score: int = None, logs: dict =
                 job.agent_logs = logs # AI 추론 과정 전체를 JSONB로 저장
             if final_report:
                 job.final_report = final_report
+            if latency_ms is not None:
+                job.latency_ms = latency_ms
+            job.retry_count = retry_count
             session.add(job)
             session.commit()
             

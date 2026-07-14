@@ -4,7 +4,7 @@ import sys
 # 프로젝트 루트 경로를 PATH에 추가
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from app.agents.graph import build_wms_graph
+from app.ai.graph import build_wms_graph
 from dotenv import load_dotenv
 
 # API 키 로드

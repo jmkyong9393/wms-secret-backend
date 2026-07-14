@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status
-from app.schemas.return_schema import InspectionRequest
-from app.services.return_service import ReturnService
+from app.domains.returns.schemas import InspectionRequest
+from app.domains.returns.service import ReturnService
 from fastapi.responses import StreamingResponse
 import redis.asyncio as redis
 import asyncio
@@ -28,7 +28,7 @@ def create_inspection(
 @router.get("/inspections/{job_id}/stream")
 async def stream_inspection_status(job_id: str):
     """
-    (BE-2 서다은 님 파트) SSE 푸시 알림 API (Redis Pub/Sub 연동)
+    SSE 푸시 알림 API (Redis Pub/Sub 연동)
     DB 폴링 없이, Celery 워커가 작업 완료 시 Redis에 발행하는 이벤트를 구독하여
     프론트엔드로 즉시 단방향 푸시(Server-Sent Events)를 전송합니다.
     """
