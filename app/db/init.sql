@@ -27,6 +27,7 @@ CREATE TABLE books (
     standard_size VARCHAR(50),
     thickness_mm INT,
     virtual_stock INT DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -82,6 +83,8 @@ CREATE TABLE inventory_used_items (
     ubci_score INT,
     condition_grade VARCHAR(20) NOT NULL,
     certificate_url VARCHAR(255),
+    item_status VARCHAR(20) DEFAULT 'IN_STOCK',
+    source_job_id UUID REFERENCES return_jobs(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -97,6 +100,16 @@ CREATE TABLE orders (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE order_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE RESTRICT,
+    quantity INT NOT NULL DEFAULT 1,
+    unit_price DECIMAL NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
 -- 9. 반품 작업 및 에이전트 로그 (return_jobs)
 CREATE TABLE return_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -107,6 +120,8 @@ CREATE TABLE return_jobs (
     ubci_score INT,
     agent_logs JSONB,
     final_report TEXT,
+    latency_ms INT,
+    retry_count INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
