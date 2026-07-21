@@ -1,0 +1,30 @@
+# kube-prometheus-stack custom values
+# K8s 클러스터 내 모니터링을 위한 최소 설정 및 WMS 서비스 연동
+
+grafana:
+  enabled: true
+  adminPassword: "wms-admin-password"
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+    hosts:
+      - grafana.wms-ai-platform.com
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # 리소스 제한 (로컬/소규모 클러스터 방어 로직)
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 2Gi
+        cpu: 1000m
+    # 스토리지 유지 기간 설정
+    retention: 10d
+    retentionSize: "20GB"

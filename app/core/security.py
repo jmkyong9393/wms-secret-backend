@@ -1,5 +1,4 @@
-from fastapi import Depends
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, Request
 from sqlmodel import Session
 import jwt
 from typing import List
@@ -10,9 +9,17 @@ from app.domains.users.repository import user_repository
 from app.core.exceptions import UnauthorizedException, ForbiddenException
 from app.models.wms import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/users/login")
+def get_token_from_cookie(request: Request) -> str:
+    token = request.cookies.get("token")
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+        if not token:
+            raise UnauthorizedException("Not authenticated")
+    return token
 
-def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_db)) -> User:
+def get_current_user(token: str = Depends(get_token_from_cookie), session: Session = Depends(get_db)) -> User:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         employee_id: str = payload.get("sub")

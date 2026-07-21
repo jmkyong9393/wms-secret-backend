@@ -1,0 +1,93 @@
+from fastapi import APIRouter, Depends
+from sqlmodel import Session, select
+from typing import List, Dict, Any
+from sqlalchemy import func
+from app.db.session import get_db
+from app.models.wms import AdminAuditLog, UserRoleEnum, ReturnJob
+from app.core.security import RoleChecker
+
+router = APIRouter(prefix="/research", tags=["Research & Analytics"])
+
+# 연구용 데이터 추출은 MASTER 권한을 요구 (보안 강화)
+master_only = RoleChecker([UserRoleEnum.MASTER])
+
+@router.get("/export-dataset")
+def export_mlops_dataset(
+    session: Session = Depends(get_db),
+    current_admin = Depends(master_only)
+):
+    """
+    MLOps용 BBox 좌표 데이터셋 추출기 (SCI 논문용)
+    HITL 대시보드에서 관리자가 검증 완료(Approved)한 좌표(defectCoordinates)를
+    AI 학습(YOLO/COCO)을 위해 정제하여 JSON으로 반환합니다.
+    """
+    statement = select(AdminAuditLog, ReturnJob).join(
+        ReturnJob, AdminAuditLog.target_id == ReturnJob.id.cast(str)
+    ).where(AdminAuditLog.defect_coordinates != None)
+    
+    results = session.exec(statement).all()
+    
+    dataset = []
+    for audit, job in results:
+        # BBox가 유효한 경우만 추출
+        if audit.defect_coordinates and len(audit.defect_coordinates) > 0:
+            dataset.append({
+                "image_url": job.image_urls[0] if job.image_urls else None,
+                "target_grade": audit.target_grade,
+                "primary_reason": audit.primary_reason_code,
+                "bboxes": audit.defect_coordinates, # x, y, width, height
+                "verified_by": str(audit.admin_id),
+                "verified_at": audit.created_at.isoformat()
+            })
+            
+    return {
+        "status": "success",
+        "total_records": len(dataset),
+        "dataset": dataset
+    }
+
+@router.get("/fds-report")
+def generate_fds_report(
+    session: Session = Depends(get_db),
+    current_admin = Depends(master_only)
+):
+    """
+    작업자 신뢰성 및 모럴 해저드 방어를 위한 FDS (Fraud Detection System) 레포트
+    각 관리자(admin_id)별 평균 reviewDurationMs를 분석하여,
+    비정상적으로 빠르게 승인하는(Abuse) 패턴을 감지합니다.
+    """
+    # 1. 관리자별 통계 집계
+    statement = select(
+        AdminAuditLog.admin_id,
+        func.count(AdminAuditLog.id).label("total_reviews"),
+        func.avg(AdminAuditLog.review_duration_ms).label("avg_duration_ms"),
+        func.min(AdminAuditLog.review_duration_ms).label("min_duration_ms"),
+        func.max(AdminAuditLog.review_duration_ms).label("max_duration_ms")
+    ).where(
+        AdminAuditLog.review_duration_ms != None
+    ).group_by(AdminAuditLog.admin_id)
+    
+    stats = session.exec(statement).all()
+    
+    report = []
+    SUSPICIOUS_THRESHOLD_MS = 1000 # 1초 미만의 평균 검수 시간은 비정상으로 간주
+    
+    for row in stats:
+        admin_id, total, avg_ms, min_ms, max_ms = row
+        is_suspicious = avg_ms < SUSPICIOUS_THRESHOLD_MS
+        
+        report.append({
+            "admin_id": str(admin_id),
+            "total_reviews": total,
+            "avg_duration_ms": round(avg_ms, 2) if avg_ms else 0,
+            "min_duration_ms": min_ms,
+            "max_duration_ms": max_ms,
+            "is_suspicious": is_suspicious,
+            "alert_message": "Warning: Average review time is below 1 second. High risk of blind approval." if is_suspicious else "Normal"
+        })
+        
+    return {
+        "status": "success",
+        "threshold_ms": SUSPICIOUS_THRESHOLD_MS,
+        "worker_stats": report
+    }

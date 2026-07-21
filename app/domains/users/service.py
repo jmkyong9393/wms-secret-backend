@@ -2,7 +2,6 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 import jwt
 from sqlmodel import Session
-from fastapi import status
 from app.core.config import settings
 from app.models.wms import User
 from app.domains.users.schemas import UserCreate

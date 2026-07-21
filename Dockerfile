@@ -1,37 +1,44 @@
-# Stage 1: Build environment using uv
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
+# Stage 1: Builder
+FROM python:3.11-slim AS builder
 
-WORKDIR /app
+# uv 패키지 매니저 바이너리 복사
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Set environment variables to ensure uv works correctly
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
-# Copy dependency definitions
-COPY pyproject.toml uv.lock guide.md ./
+WORKDIR /app
 
-# Sync dependencies (without installing the project itself)
+# 의존성 파일 복사 및 설치 (프로젝트 코드 제외하여 레이어 캐시 극대화)
+COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
-# Copy source code
-COPY app/ ./app/
-
-# Sync the project (if needed)
+# 전체 프로젝트 복사 후 설치
+COPY . /app
 RUN uv sync --frozen --no-dev
 
-# Stage 2: Runtime environment
-FROM python:3.11-slim-bookworm
+# Stage 2: Runtime
+FROM python:3.11-slim AS runtime
+
+# 보안 강화를 위한 Non-root 시스템 유저 생성
+RUN groupadd -r wms-user && useradd -r -g wms-user wms-user
 
 WORKDIR /app
 
-# Copy the virtual environment from builder stage
-COPY --from=builder /app/.venv /app/.venv
-COPY app/ ./app/
+# Builder 스테이지에서 생성된 패키지 환경과 소스 코드 복사 (권한 부여)
+COPY --from=builder --chown=wms-user:wms-user /app/.venv /app/.venv
+COPY --from=builder --chown=wms-user:wms-user /app/app /app/app
+COPY --from=builder --chown=wms-user:wms-user /app/alembic /app/alembic
+COPY --from=builder --chown=wms-user:wms-user /app/alembic.ini /app/alembic.ini
 
-# Add virtual environment to PATH
+# 가상 환경을 PATH 최상단에 등록하여 venv 내 패키지 사용
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Non-root 유저로 전환
+USER wms-user
+
+# 포트 개방
 EXPOSE 8000
 
-# Default command (API server)
+# 컨테이너 실행 시 기본 엔트리포인트 (Celery 구동 시 command override 권장)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

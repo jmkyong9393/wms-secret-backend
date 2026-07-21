@@ -1,29 +1,48 @@
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
+from typing import List, Dict, Any
 from app.core.database import get_session
 from app.models.wms import Order, OrderStatusEnum
+from app.services.bin_packing import recommend_optimal_box
+from app.services.pricing import calculate_b2b_price, calculate_dynamic_discount_rate
 
 router = APIRouter(prefix="/orders", tags=["Orders & Outbound"])
 
 @router.post("/")
-def create_order(customer_name: str, type: str, total_price: float, session: Session = Depends(get_session)):
-    """주문 생성 및 동적 프라이싱 결과 저장 (Mock)"""
+def create_order(customer_name: str, type: str, list_price: float, category: str, ubci_score: float, days_in_inventory: int, session: Session = Depends(get_session)):
+    """동적 프라이싱이 적용된 주문 생성 (AI B2B Price & Discount Rate)"""
+    # 1. AI Dynamic Pricing
+    base_b2b_price = calculate_b2b_price(list_price, category, ubci_score)
+    discount_rate = calculate_dynamic_discount_rate(ubci_score, days_in_inventory, category)
+    
+    final_total_price = base_b2b_price * (1 - discount_rate)
+    
     new_order = Order(
         customer_name=customer_name,
         type=type,
-        total_price=total_price,
+        total_price=final_total_price,
         status=OrderStatusEnum.PENDING.value
     )
     session.add(new_order)
     session.commit()
     session.refresh(new_order)
-    return {"order_id": new_order.id, "message": "주문이 정상 접수되었습니다."}
+    
+    return {
+        "order_id": new_order.id, 
+        "base_b2b_price": base_b2b_price,
+        "applied_discount_rate": f"{int(discount_rate * 100)}%",
+        "final_price": final_total_price,
+        "message": "AI 동적 프라이싱 적용 후 주문 접수 완료"
+    }
 
 @router.post("/outbound/pick")
-def pick_order(order_id: str):
-    """피킹 및 Box Optimization (Mock)"""
-    # 3D Bin Packing 알고리즘 연동 예정 (박민우/소한민 파트)
+def pick_order(order_id: str, books: List[Dict[str, Any]]):
+    """피킹 시 3D Bin Packing 알고리즘 기반 박스 최적화"""
+    # books example: [{"category": "IT", "format_size": "신국판", "pages": 350, "is_color": False, "is_hardcover": True}]
+    recommended_box = recommend_optimal_box(books)
+    
     return {
-        "recommended_box": "2호",
-        "picking_list": []
+        "order_id": order_id,
+        "recommended_box": recommended_box,
+        "message": "3D Bin Packing 알고리즘 박스 추천 완료"
     }
