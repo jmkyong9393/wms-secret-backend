@@ -17,7 +17,7 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from sqlmodel import SQLModel
-from app.models import wms  # 모든 모델 로드 필수
+import app.models.wms  # Import models so SQLModel.metadata is populated
 target_metadata = SQLModel.metadata
 
 # 동적 DB URL 바인딩 (alembic.ini의 하드코딩 URL 대신 settings에서 가져옴)

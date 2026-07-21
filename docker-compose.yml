@@ -13,8 +13,26 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./app/db/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d wms_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  chroma-server:
+    image: chromadb/chroma:1.5.9
+    container_name: wms-chroma
+    restart: always
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/data
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat')\" || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -38,12 +56,18 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      chroma-server:
+        condition: service_started
       redis:
         condition: service_healthy
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://admin:password@db:5432/wms_db
+      CHROMA_SERVER_HOST: chroma-server
+      CHROMA_SERVER_PORT: 8000
       REDIS_URL: redis://redis:6379/0
     # Hot-reload mapping for local dev (overrides CMD to use reload)
     volumes:
@@ -57,15 +81,37 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      chroma-server:
+        condition: service_started
       redis:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://admin:password@db:5432/wms_db
+      CHROMA_SERVER_HOST: chroma-server
+      CHROMA_SERVER_PORT: 8000
       REDIS_URL: redis://redis:6379/0
     # Hot-reload mapping for local dev
     volumes:
       - ./app:/app/app
-    command: ["celery", "-A", "app.worker.celery_app", "worker", "-l", "info", "--pool=gevent"]
+    
+    # AI 검수 비동기 작업을 처리하는 Celery Worker
+    command: ["celery", "-A", "app.worker.tasks", "worker", "-l", "info", "--pool=gevent", "-E"]
+
+  # flower 컨테이너 추가
+  flower:
+    image: mher/flower
+    container_name: wms-flower
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5555:5555"
+    command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
+
 
 volumes:
   postgres_data:
+  chroma_data:

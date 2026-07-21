@@ -1,6 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from typing import List, Dict, Any
 from datetime import datetime
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.domains.inventory.service import generate_lpn, get_all_lpn
 
 # Inventory 도메인 라우터: 새 상품 및 중고/반품 도서들의 통합 재고 관리를 담당합니다.
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
@@ -35,5 +38,17 @@ async def get_inventory() -> List[Dict[str, Any]]:
             "zone": "B-2-1",
             "quantity": 15,
             "date": datetime.utcnow().isoformat()
-        }
     ]
+
+@router.post("/lpn")
+async def create_lpn(book_id: str, db: Session = Depends(get_db)):
+    """새로운 LPN 바코드를 발급하고 DB에 등록합니다."""
+    # TODO: Pydantic response model 적용
+    new_lpn = generate_lpn(db, book_id)
+    return {"status": "success", "lpn_barcode": new_lpn.lpn_barcode}
+
+@router.get("/lpn")
+async def get_lpn_list(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    """발급된 모든 LPN 내역을 조회합니다 (프론트 대시보드 연동용)."""
+    lpns = get_all_lpn(db, skip=skip, limit=limit)
+    return [{"lpn_barcode": l.lpn_barcode, "book_id": l.book_id, "status": l.item_status} for l in lpns]

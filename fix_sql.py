@@ -1,4 +1,12 @@
--- WMS Core Database DDL (PostgreSQL)
+
+filepath = r"E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\db\init.sql"
+
+with open(filepath, "r", encoding="utf-8") as f:
+    content = f.read()
+
+# Split the sql into blocks based on "-- X. TableName"
+# It's easier to just do it manually in the string since we know the exact text.
+new_sql = """-- WMS Core Database DDL (PostgreSQL)
 -- 기반 문서: 01_엔지니어링_산출물.md (ver 1.5.2.0 - 단품 추적 LPN 바코드 체계 및 테이블 통폐합)
 
 -- 1. UUID 생성을 위한 확장 모듈 활성화
@@ -13,7 +21,6 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) NOT NULL,
     status VARCHAR(20) DEFAULT 'ACTIVE',
-    must_change_password BOOLEAN DEFAULT FALSE,
     last_login TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -23,12 +30,7 @@ CREATE TABLE users (
 CREATE TABLE books (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
-    author VARCHAR(255),
-    publisher VARCHAR(255),
-    published_date VARCHAR(50),
     isbn VARCHAR(13) UNIQUE NOT NULL,
-    category_type VARCHAR(50) DEFAULT 'GENERAL',
-    cover_image_url VARCHAR(255),
     base_price DECIMAL NOT NULL DEFAULT 0,
     standard_size VARCHAR(50),
     thickness_mm INT,
@@ -106,9 +108,7 @@ CREATE TABLE return_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
     book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-    task_id VARCHAR(255),
     status VARCHAR(20) NOT NULL,
-    mode VARCHAR(50) DEFAULT 'RETURN',
     image_urls JSONB,
     ubci_score INT,
     agent_logs JSONB,
@@ -167,24 +167,8 @@ CREATE TABLE board_posts (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+"""
 
--- 12. FDS 적발 이력 (fds_reports)
-CREATE TABLE fds_reports (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_name VARCHAR(255) NOT NULL,
-    fraud_score INT NOT NULL,
-    fraud_reason VARCHAR(255),
-    detected_at TIMESTAMP DEFAULT NOW()
-);
-
--- 13. 주간 대시보드 스냅샷 (weekly_insights)
-CREATE TABLE weekly_insights (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    report_week VARCHAR(20) UNIQUE NOT NULL,
-    saved_labor_cost_krw INT DEFAULT 0,
-    top_defective_publishers JSONB,
-    location_hotspots JSONB,
-    logistics_hotspots JSONB,
-    predicted_returns INT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW()
-);
+with open(filepath, "w", encoding="utf-8") as f:
+    f.write(new_sql)
+print("init.sql reordered successfully.")

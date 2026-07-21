@@ -1,0 +1,20 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: wms-ai-worker-scaler
+  namespace: default
+  labels:
+    app: wms-ai-worker
+spec:
+  scaleTargetRef:
+    name: wms-ai-worker      # 타겟이 되는 AI 전담 Deployment 이름
+  minReplicaCount: 0         # [중요] 사용하지 않을 때는 $0 과금을 위해 Scale-to-Zero 달성
+  maxReplicaCount: 3         # 값비싼 인스턴스의 무분별한 스케일 아웃에 의한 요금 폭탄 방지
+  pollingInterval: 15        
+  cooldownPeriod: 120        # AI 모델 로딩/언로딩 오버헤드 방지를 위해 넉넉한 쿨다운 부여 (2분)
+  triggers:
+    - type: redis
+      metadata:
+        address: "redis-master.default.svc.cluster.local:6379" 
+        listName: "ai_vision_queue"  # AI 검수 전용 큐
+        listLength: "2"              # AI 작업은 무거우므로 2개만 적재되어도 즉각 스케일 아웃

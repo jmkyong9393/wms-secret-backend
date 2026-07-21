@@ -10,9 +10,11 @@ from app.domains.orders import router as orders
 from app.domains.po import router as po
 from app.domains.returns import router as returns
 from app.domains.users import router as users
+from app.domains.uploads import router as uploads
+from app.domains.admin.router import router as admin
+from app.domains.research.router import router as research
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
 from sqlalchemy import text
 from sqlmodel import Session
 import datetime
@@ -29,6 +31,26 @@ app = FastAPI(
 )
 
 # ==========================================
+# OpenTelemetry 분산 추적 (SCI 논문 데이터 수집용)
+# ==========================================
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
+    # 임시 콘솔 익스포터 설정 (추후 Jaeger/Zipkin OTLP 익스포터로 변경 가능)
+    provider = TracerProvider()
+    processor = BatchSpanProcessor(ConsoleSpanExporter())
+    provider.add_span_processor(processor)
+    trace.set_tracer_provider(provider)
+
+    FastAPIInstrumentor.instrument_app(app)
+    print("OpenTelemetry FastAPI Instrumentation enabled.")
+except ImportError:
+    print("OpenTelemetry not installed. Skipping tracing setup.")
+
+# ==========================================
 # SlowAPI (Rate Limiter) 전역 설정
 # ==========================================
 from slowapi import _rate_limit_exceeded_handler
@@ -41,13 +63,21 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # ==========================================
 # 미들웨어(Middleware) 등록
 # ==========================================
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.add_middleware(LoggingMiddleware)
 
 # ==========================================
 # 글로벌 에러 핸들러 (Global Exception Handlers)
 # ==========================================
 from fastapi import HTTPException
-from app.core.exceptions import BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException
 
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
@@ -97,6 +127,9 @@ app.include_router(inbound.router, prefix=settings.API_V1_STR)
 app.include_router(returns.router, prefix=settings.API_V1_STR)
 app.include_router(orders.router, prefix=settings.API_V1_STR)
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
+app.include_router(uploads.router, prefix=settings.API_V1_STR)
+app.include_router(admin, prefix=settings.API_V1_STR)
+app.include_router(research, prefix=settings.API_V1_STR)
 
 @app.get("/health")
 def health_check():
