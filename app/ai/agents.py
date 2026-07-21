@@ -1,4 +1,3 @@
-import os
 import json
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
@@ -60,7 +59,7 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
     
     try:
         response: VisionResult = structured_llm.invoke(messages)
-    except Exception as e:
+    except Exception:
         # Fallback for mock test
         response = VisionResult(is_mint=False, defects=[DefectDetail(type="가상 판독 오류", ratio=10)])
     

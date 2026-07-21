@@ -2,7 +2,6 @@
 애플리케이션 환경변수 및 전역 설정을 중앙에서 관리하는 파일입니다.
 pydantic-settings를 사용하여 .env 파일의 값을 자동으로 읽고 타입 검증(Type Validation)을 수행합니다.
 """
-import os
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,6 +16,7 @@ class Settings(BaseSettings):
     여기에 정의된 속성들은 .env 파일 또는 OS 환경변수에서 자동으로 값을 찾아 매핑됩니다.
     """
     PROJECT_NAME: str = "WMS Core API"
+    APP_ENV: str = "local" # local, dev, prod
     API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = "postgresql://admin:password@localhost:5432/wms_db"
     
@@ -31,6 +31,18 @@ class Settings(BaseSettings):
     # Invitation Codes (회원가입 제한코드)
     WORKER_INVITATION_CODE: str = "WMS_WORKER_2026"
     MASTER_INVITATION_CODE: str = "WMS_MASTER_2026"
+
+    # AWS & CloudFront (이미지 다이렉트 업로드 용도)
+    AWS_S3_BUCKET: str = "mock-wms-bucket"
+    AWS_REGION: str = "ap-northeast-2"
+    CLOUDFRONT_DOMAIN: str = "https://mock1234.cloudfront.net"
+    CLOUDFRONT_KEY_PAIR_ID: str = "mock_key_pair_id"
+    CLOUDFRONT_PRIVATE_KEY: str = "mock_private_key"
+
+    # 최초 MASTER 초기화 변수
+    FIRST_SUPERUSER_ID: str = "EMP0001"
+    FIRST_SUPERUSER_EMAIL: str = "admin@wms.com"
+    FIRST_SUPERUSER_PASSWORD: str = "" # 빈 값일 경우 난수 자동 생성
 
     # Pydantic V2 설정 방식: .env 파일을 우선적으로 읽도록 지정합니다.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

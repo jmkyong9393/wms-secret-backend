@@ -1,10 +1,8 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 from app.domains.returns.schemas import InspectionRequest
 from app.domains.returns.service import ReturnService
 from fastapi.responses import StreamingResponse
 import redis.asyncio as redis
-import asyncio
-from typing import List
 
 router = APIRouter(prefix="/returns", tags=["Returns & AI Inspections"])
 
@@ -34,7 +32,9 @@ async def stream_inspection_status(job_id: str):
     """
     async def event_generator():
         # 비동기 Redis 클라이언트 생성
-        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        import os
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = redis.Redis.from_url(redis_url, decode_responses=True)
         pubsub = r.pubsub()
         await pubsub.subscribe(f"job_status:{job_id}")
         

@@ -16,6 +16,7 @@ class ConditionGradeEnum(str, Enum):
 
 class UserRoleEnum(str, Enum):
     MASTER = "MASTER"
+    ADMIN = "ADMIN"
     WORKER = "WORKER"
     GUEST = "GUEST"
 
@@ -39,6 +40,7 @@ class JobStatusEnum(str, Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     HITL_REQUIRED = "HITL_REQUIRED" # Human-in-the-loop 수동 검수 대기 상태
+    FAILED = "FAILED"
 
 class TransactionTypeEnum(str, Enum):
     INBOUND = "INBOUND"
@@ -83,6 +85,7 @@ class User(SQLModel, table=True):
     password_hash: str = Field(max_length=255)
     role: str = Field(max_length=20) # UserRoleEnum
     status: str = Field(default="ACTIVE", max_length=20) # UserStatusEnum
+    must_change_password: bool = Field(default=False)
     last_login: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -92,7 +95,12 @@ class Book(SQLModel, table=True):
     
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     title: str = Field(max_length=255)
+    author: Optional[str] = Field(default=None, max_length=255)
+    publisher: Optional[str] = Field(default=None, max_length=255)
+    published_date: Optional[str] = Field(default=None, max_length=50)
     isbn: str = Field(max_length=13, unique=True, index=True)
+    category_type: str = Field(default="GENERAL", max_length=50)
+    cover_image_url: Optional[str] = Field(default=None, max_length=255)
     base_price: float = Field(default=0.0)
     standard_size: Optional[str] = Field(default=None, max_length=50) # BoxStandard Enum Name
     thickness_mm: Optional[int] = Field(default=None)
@@ -189,7 +197,9 @@ class ReturnJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     order_id: Optional[UUID] = Field(default=None, foreign_key="orders.id", ondelete="SET NULL")
     book_id: UUID = Field(foreign_key="books.id", ondelete="CASCADE")
+    task_id: Optional[str] = Field(default=None, max_length=255)
     status: str = Field(max_length=20) # JobStatusEnum
+    mode: str = Field(default="RETURN", max_length=50)
     
     # JSONB 컬럼 매핑 (PostgreSQL 전용 고성능 JSON)
     image_urls: List[str] = Field(default=[], sa_column=Column(JSONB))
@@ -235,3 +245,43 @@ class BoardPost(SQLModel, table=True):
     attachment_paths: List[str] = Field(default=[], sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class FdsReport(SQLModel, table=True):
+    __tablename__ = "fds_reports"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    customer_name: str = Field(max_length=255)
+    fraud_score: int
+    fraud_reason: Optional[str] = Field(default=None, max_length=255)
+    detected_at: datetime = Field(default_factory=datetime.utcnow)
+
+class WeeklyInsight(SQLModel, table=True):
+    __tablename__ = "weekly_insights"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    report_week: str = Field(unique=True, index=True, max_length=20)
+    saved_labor_cost_krw: int = Field(default=0)
+    top_defective_publishers: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    location_hotspots: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    logistics_hotspots: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    predicted_returns: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class AdminAuditLog(SQLModel, table=True):
+    __tablename__ = "admin_audit_logs"
+    
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    admin_id: UUID = Field(foreign_key="users.id", ondelete="RESTRICT")
+    target_type: str = Field(max_length=50) # e.g., "RETURN_JOB"
+    target_id: str = Field(max_length=255) # job_id string or uuid
+    action: str = Field(max_length=50) # e.g., "APPROVE_DOWNGRADE", "REJECT_RETURN"
+    previous_state: str = Field(max_length=255)
+    new_state: str = Field(max_length=255)
+    
+    # Advanced HITL Metrics
+    target_grade: Optional[str] = Field(default=None, max_length=10)
+    primary_reason_code: Optional[str] = Field(default=None, max_length=50)
+    defect_coordinates: Optional[List[Dict[str, Any]]] = Field(default=None, sa_column=Column(JSONB))
+    review_duration_ms: Optional[int] = Field(default=None)
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)

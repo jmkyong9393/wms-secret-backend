@@ -1,4 +1,3 @@
-import os
 import yaml
 from pathlib import Path
 from langchain_community.vectorstores import Chroma

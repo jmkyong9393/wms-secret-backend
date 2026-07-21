@@ -1,6 +1,5 @@
-import asyncio
 from typing import List
-from celery import shared_task
+from app.core.celery_app import celery_app
 from app.ai.graph import build_wms_graph
 from app.db.session import engine
 from sqlmodel import Session, select
@@ -8,14 +7,12 @@ from app.models.wms import ReturnJob, JobStatusEnum
 import redis
 import json
 import time
-import redis
-import json
 
 # LangGraph 인스턴스 컴파일 (워커 프로세스 로드 시 1회만 수행하여 성능 최적화)
 # 매 태스크마다 그래프를 새로 빌드하면 오버헤드가 크므로 전역으로 미리 로드합니다.
 wms_agent_graph = build_wms_graph()
 
-@shared_task(name="app.worker.tasks.process_inspection")
+@celery_app.task(name="app.worker.tasks.process_inspection")
 def process_inspection(job_id: str, image_urls: List[str]):
     """
     FastAPI로부터 큐(Queue)를 통해 전달받은 비동기 이미지 검수 작업을 수행합니다.
@@ -105,7 +102,9 @@ def _update_job_status(job_id: str, status: str, score: int = None, logs: dict =
             
     # Redis Pub/Sub로 이벤트 발행 (SSE 연동)
     try:
-        r = redis.Redis(host='localhost', port=6379, db=0)
+        import os
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = redis.Redis.from_url(redis_url)
         message = json.dumps({"job_id": job_id, "status": status, "score": score})
         r.publish(f"job_status:{job_id}", message)
     except Exception as e:

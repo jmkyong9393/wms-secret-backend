@@ -1,0 +1,37 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wms-api-monitor
+  namespace: monitoring
+  labels:
+    release: wms-monitoring # kube-prometheus-stack의 Helm Release 이름과 매칭
+spec:
+  selector:
+    matchLabels:
+      app: wms-api
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 15s
+  namespaceSelector:
+    matchNames:
+    - default
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: wms-celery-monitor
+  namespace: monitoring
+  labels:
+    release: wms-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: wms-ai-worker
+  endpoints:
+  - port: metrics # Celery 워커가 prometheus_client 메트릭 포트를 오픈해야 함
+    path: /metrics
+    interval: 15s
+  namespaceSelector:
+    matchNames:
+    - default

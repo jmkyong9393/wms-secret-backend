@@ -5,6 +5,10 @@ from langchain_core.messages import HumanMessage
 from app.ai.vision_agent import VisionAgent
 from app.ai.policy_agent import run_policy_node
 from app.ai.critic_agent import run_critic_node
+import os
+import json
+from PIL import Image
+from datetime import datetime
 
 class AgentState(TypedDict):
     """Role-based LLMOps 아키텍처가 적용된 LangGraph State"""
@@ -12,11 +16,12 @@ class AgentState(TypedDict):
     messages: Annotated[List, add_messages]
     
     job_id: str
-    image_path: str
+    image_paths: List[str]
     
     # 1. Vision Agent의 출력값
     has_defect: Optional[bool]
     defect_description: Optional[str]
+    defect_coordinates: Optional[List[dict]]
     
     # 2. Policy Agent의 출력값 (RAG 기반)
     matched_rule: Optional[str]
@@ -31,7 +36,53 @@ class AgentState(TypedDict):
 def run_vision_node(state: AgentState):
     print("--- [Node: Vision Agent] 가동 ---")
     vision = VisionAgent()
-    report = vision.analyze_image(state["image_path"])
+    image_paths = state.get("image_paths", [])
+    report = vision.analyze_images(image_paths)
+    
+    # ==== 실험 데이터 로컬 로깅 (PIL 압축 & JSON 직렬화) ====
+    try:
+        job_id = state.get("job_id", f"LPN-UNKNOWN-{int(datetime.now().timestamp())}")
+        experiment_dir = os.path.join(os.getcwd(), "experiment_data", job_id)
+        os.makedirs(experiment_dir, exist_ok=True)
+        
+        saved_images = []
+        for idx, img_path in enumerate(image_paths):
+            if not os.path.exists(img_path):
+                continue
+            
+            with Image.open(img_path) as img:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # 비율 유지 리사이징 (최대 1280px)
+                img.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
+                
+                # 역할별 이름 매핑 (1번 정면, 2번 후면, 그 외 훼손부위)
+                label = "front" if idx == 0 else "back" if idx == 1 else f"defect_{idx-1}"
+                save_name = f"img_{idx}_{label}.jpg"
+                save_path = os.path.join(experiment_dir, save_name)
+                
+                # Quality 80 JPEG 저장으로 용량 최적화
+                img.save(save_path, "JPEG", quality=80)
+                saved_images.append(save_name)
+        
+        result_data = {
+            "lpn_barcode": job_id,
+            "timestamp": datetime.now().isoformat(),
+            "vision_result": {
+                "has_defect": report.has_defect,
+                "defect_description": report.defect_description,
+                "defect_coordinates": [box.model_dump() for box in report.defect_coordinates] if report.defect_coordinates else []
+            },
+            "images": saved_images
+        }
+        
+        with open(os.path.join(experiment_dir, "vlm_result.json"), "w", encoding="utf-8") as f:
+            json.dump(result_data, f, ensure_ascii=False, indent=2)
+            
+        print(f"--- [Node: Vision Agent] 로컬 실험 데이터 축적 완료: {experiment_dir} ---")
+    except Exception as e:
+        print(f"--- [Node: Vision Agent] 실험 데이터 로깅 에러 발생: {e} ---")
     
     # LLM이 읽을 수 있도록 결과를 HumanMessage로 변환하여 저장
     msg_content = f"Vision 분석 결과: 훼손 감지={report.has_defect}, 훼손 상세={report.defect_description}"
@@ -39,6 +90,7 @@ def run_vision_node(state: AgentState):
         "messages": [HumanMessage(content=msg_content)],
         "has_defect": report.has_defect,
         "defect_description": report.defect_description,
+        "defect_coordinates": [box.model_dump() for box in report.defect_coordinates] if report.defect_coordinates else [],
         "retry_count": 0,
         "needs_hitl": False
     }
