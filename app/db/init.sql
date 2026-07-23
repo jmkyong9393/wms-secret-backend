@@ -8,9 +8,11 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     employee_id VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE,
     name VARCHAR(50) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    phone_number VARCHAR(50),
+    address VARCHAR(255),
     role VARCHAR(20) NOT NULL,
     status VARCHAR(20) DEFAULT 'ACTIVE',
     must_change_password BOOLEAN DEFAULT FALSE,

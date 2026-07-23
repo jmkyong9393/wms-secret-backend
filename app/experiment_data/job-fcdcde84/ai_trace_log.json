@@ -1,0 +1,50 @@
+[
+  {
+    "vision_agent": {
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "content": "Vision 분석 결과: 훼손 감지=True, 훼손 상세=습기 휨"
+        }
+      ],
+      "has_defect": true,
+      "defect_description": "습기 휨",
+      "defect_coordinates": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "width": 100.0,
+          "height": 100.0,
+          "image_index": 4
+        }
+      ],
+      "retry_count": 0,
+      "needs_hitl": false
+    }
+  },
+  {
+    "policy_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "{\"ubci_grade\": \"REJECT\", \"ubci_score\": 0, \"matched_rule\": \"[감점: -100점] 주요 훼손 사유 요약 (습기 휨)\"}"
+        }
+      ],
+      "ubci_grade": "REJECT",
+      "ubci_score": 0,
+      "matched_rule": "[감점: -100점] 주요 훼손 사유 요약 (습기 휨)"
+    }
+  },
+  {
+    "critic_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "APPROVED\n\nPolicy Agent의 판정 결과는 Vision 분석 결과와 일치합니다. 훼손이 감지되었고, 그 상세 내용이 '습기 휨'으로 명시되어 있으며, 이에 따라 적절한 감점이 이루어졌습니다. 따라서 등급 REJECT와 점수 0은 합당한 결정입니다."
+        }
+      ],
+      "critique": "APPROVED\n\nPolicy Agent의 판정 결과는 Vision 분석 결과와 일치합니다. 훼손이 감지되었고, 그 상세 내용이 '습기 휨'으로 명시되어 있으며, 이에 따라 적절한 감점이 이루어졌습니다. 따라서 등급 REJECT와 점수 0은 합당한 결정입니다.",
+      "retry_count": 0
+    }
+  }
+]

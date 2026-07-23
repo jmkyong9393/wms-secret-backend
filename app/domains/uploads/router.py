@@ -3,7 +3,7 @@ import boto3
 from botocore.exceptions import ClientError
 from app.core.config import settings
 import uuid
-from app.services.aws_auth_service import generate_signed_cookies
+from app.core.aws_auth_service import generate_signed_cookies
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
