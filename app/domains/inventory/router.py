@@ -38,14 +38,32 @@ async def get_inventory() -> List[Dict[str, Any]]:
             "zone": "B-2-1",
             "quantity": 15,
             "date": datetime.utcnow().isoformat()
+        }
     ]
 
+from typing import Optional
+from pydantic import BaseModel
+
+class CreateLpnRequest(BaseModel):
+    book_id: Optional[str] = None
+    isbn: Optional[str] = None
+    worker_id: Optional[str] = None
+
 @router.post("/lpn")
-async def create_lpn(book_id: str, db: Session = Depends(get_db)):
+async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
     """새로운 LPN 바코드를 발급하고 DB에 등록합니다."""
     # TODO: Pydantic response model 적용
-    new_lpn = generate_lpn(db, book_id)
-    return {"status": "success", "lpn_barcode": new_lpn.lpn_barcode}
+    new_lpn, book = generate_lpn(db, book_id=req.book_id, isbn=req.isbn)
+    return {
+        "status": "success", 
+        "lpn_barcode": new_lpn.lpn_barcode,
+        "book": {
+            "title": book.title,
+            "author": book.author,
+            "isbn": book.isbn
+        },
+        "worker_id": req.worker_id
+    }
 
 @router.get("/lpn")
 async def get_lpn_list(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):

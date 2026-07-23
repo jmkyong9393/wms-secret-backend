@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from uuid import UUID, uuid4
 from datetime import datetime
 from enum import Enum
+from sqlalchemy import Column, Enum as SQLEnum, Text
 
 # --- Enums (상태 및 타입 정의) ---
 
@@ -80,11 +81,13 @@ class User(SQLModel, table=True):
     
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     employee_id: str = Field(max_length=50, unique=True, index=True)
-    email: str = Field(max_length=100, unique=True, index=True)
+    email: Optional[str] = Field(default=None, max_length=100, unique=True, index=True)
     name: str = Field(max_length=50)
     password_hash: str = Field(max_length=255)
-    role: str = Field(max_length=20) # UserRoleEnum
-    status: str = Field(default="ACTIVE", max_length=20) # UserStatusEnum
+    phone_number: Optional[str] = Field(default=None, max_length=50)
+    address: Optional[str] = Field(default=None, max_length=255)
+    role: UserRoleEnum = Field(sa_column=Column(SQLEnum(UserRoleEnum), nullable=False))
+    status: UserStatusEnum = Field(default=UserStatusEnum.ACTIVE, sa_column=Column(SQLEnum(UserStatusEnum), nullable=False, default=UserStatusEnum.ACTIVE))
     must_change_password: bool = Field(default=False)
     last_login: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -101,6 +104,7 @@ class Book(SQLModel, table=True):
     isbn: str = Field(max_length=13, unique=True, index=True)
     category_type: str = Field(default="GENERAL", max_length=50)
     cover_image_url: Optional[str] = Field(default=None, max_length=255)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
     base_price: float = Field(default=0.0)
     standard_size: Optional[str] = Field(default=None, max_length=50) # BoxStandard Enum Name
     thickness_mm: Optional[int] = Field(default=None)

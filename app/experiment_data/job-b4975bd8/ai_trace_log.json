@@ -1,0 +1,42 @@
+[
+  {
+    "vision_agent": {
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "content": "Vision 분석 결과: 훼손 감지=False, 훼손 상세=없음"
+        }
+      ],
+      "has_defect": false,
+      "defect_description": "MINT",
+      "defect_coordinates": [],
+      "retry_count": 0,
+      "needs_hitl": false
+    }
+  },
+  {
+    "policy_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "{\"ubci_grade\": \"MINT\", \"ubci_score\": 100, \"matched_rule\": \"[감점: -0점] 훼손 없음\"}"
+        }
+      ],
+      "ubci_grade": "MINT",
+      "ubci_score": 100,
+      "matched_rule": "[감점: -0점] 훼손 없음"
+    }
+  },
+  {
+    "critic_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "APPROVED. \n\nVision 분석 결과에서 훼손 감지가 없고, 훼손 상세도 없다는 점이 확인되었습니다. 따라서 MINT 등급과 100점의 판정은 합당합니다. 규정 해석에 일관성이 있으며, 감점이 없는 점도 적절하게 반영되었습니다."
+        }
+      ],
+      "critique": "APPROVED. \n\nVision 분석 결과에서 훼손 감지가 없고, 훼손 상세도 없다는 점이 확인되었습니다. 따라서 MINT 등급과 100점의 판정은 합당합니다. 규정 해석에 일관성이 있으며, 감점이 없는 점도 적절하게 반영되었습니다.",
+      "retry_count": 0
+    }
+  }
+]

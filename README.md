@@ -1,6 +1,6 @@
 # 📦 B2B WMS AI Platform (Backend Repository)
 
-본 저장소는 물류센터(WMS)로 인바운드되는 중고 및 반품 서적의 외관 상태를 AI가 자동으로 판독하고 검수 리포트를 생성하는 **대규모 비동기 AI 파이프라인 시스템**의 백엔드(FastAPI) 및 워커 코어 레포지토리입니다.
+본 저장소는 물류센터(WMS)로 인바운드되는 상품의 외관 상태를 AI가 자동으로 판독하고 검수 리포트를 생성하는 **대규모 비동기 AI 파이프라인 시스템**의 백엔드(FastAPI) 및 워커 코어 레포지토리입니다.
 
 ## 🚀 Key Architectural Innovations
 

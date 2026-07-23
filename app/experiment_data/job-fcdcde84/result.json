@@ -1,0 +1,16 @@
+{
+  "job_id": "job-fcdcde84",
+  "grade": "REJECT",
+  "ubci_score": 0,
+  "defect_description": "[감점: -100점] 주요 훼손 사유 요약 (습기 휨)",
+  "timestamp": "2026-07-22T09:41:44.932128",
+  "defect_coordinates": [
+    {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 100.0,
+      "height": 100.0,
+      "image_index": 4
+    }
+  ]
+}

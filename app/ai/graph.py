@@ -10,13 +10,14 @@ import json
 from PIL import Image
 from datetime import datetime
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     """Role-based LLMOps 아키텍처가 적용된 LangGraph State"""
     # LLM 대화 기록 추적용
     messages: Annotated[List, add_messages]
     
     job_id: str
     image_paths: List[str]
+    book_category: str
     
     # 1. Vision Agent의 출력값
     has_defect: Optional[bool]
@@ -70,9 +71,9 @@ def run_vision_node(state: AgentState):
             "lpn_barcode": job_id,
             "timestamp": datetime.now().isoformat(),
             "vision_result": {
-                "has_defect": report.has_defect,
-                "defect_description": report.defect_description,
-                "defect_coordinates": [box.model_dump() for box in report.defect_coordinates] if report.defect_coordinates else []
+                "has_defect": not report.is_clean,
+                "defect_description": ", ".join([d.defect_type for d in report.defects]) if report.defects else "MINT",
+                "defect_coordinates": [{**(d.bbox.model_dump() if hasattr(d.bbox, 'model_dump') else d.bbox.dict()), "image_index": getattr(d, 'image_index', 0), "label": getattr(d, 'defect_type', '결함')} for d in report.defects] if report.defects else []
             },
             "images": saved_images
         }
@@ -85,12 +86,12 @@ def run_vision_node(state: AgentState):
         print(f"--- [Node: Vision Agent] 실험 데이터 로깅 에러 발생: {e} ---")
     
     # LLM이 읽을 수 있도록 결과를 HumanMessage로 변환하여 저장
-    msg_content = f"Vision 분석 결과: 훼손 감지={report.has_defect}, 훼손 상세={report.defect_description}"
+    msg_content = f"Vision 분석 결과: 훼손 감지={not report.is_clean}, 훼손 상세={', '.join([d.defect_type for d in report.defects]) if report.defects else '없음'}"
     return {
         "messages": [HumanMessage(content=msg_content)],
-        "has_defect": report.has_defect,
-        "defect_description": report.defect_description,
-        "defect_coordinates": [box.model_dump() for box in report.defect_coordinates] if report.defect_coordinates else [],
+        "has_defect": not report.is_clean,
+        "defect_description": ", ".join([d.defect_type for d in report.defects]) if report.defects else "MINT",
+        "defect_coordinates": [{**(d.bbox.model_dump() if hasattr(d.bbox, 'model_dump') else d.bbox.dict()), "image_index": getattr(d, 'image_index', 0), "label": getattr(d, 'defect_type', '결함')} for d in report.defects] if report.defects else [],
         "retry_count": 0,
         "needs_hitl": False
     }

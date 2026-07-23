@@ -33,17 +33,51 @@ class HitlOverrideRequest(BaseModel):
 class BulkOverridePayload(BaseModel):
     items: List[HitlOverrideRequest]
 
-@router.get("/pending", response_model=List[ReturnJob])
+class HitlTaskResponse(BaseModel):
+    id: UUID
+    book_id: UUID
+    book_title: Optional[str] = None
+    isbn: Optional[str] = None
+    cover_image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
+    status: str
+    ubci_score: Optional[int] = None
+    agent_logs: Optional[Dict[str, Any]] = None
+    created_at: str
+
+@router.get("/pending", response_model=List[HitlTaskResponse])
 def get_pending_hitl_tasks(
     session: Session = Depends(get_db),
     current_admin = Depends(admin_only)
 ):
     """
-    수동 검수(HITL) 대기 중인 모든 건 조회
+    수동 검수(HITL) 대기 중인 모든 건 조회 (도서 정보 조인)
     """
-    statement = select(ReturnJob).where(ReturnJob.status == JobStatusEnum.HITL_REQUIRED)
+    from app.models.wms import Book
+    statement = (
+        select(ReturnJob, Book)
+        .where(ReturnJob.status == JobStatusEnum.HITL_REQUIRED)
+        .outerjoin(Book, ReturnJob.book_id == Book.id)
+    )
     results = session.exec(statement).all()
-    return results
+    
+    output = []
+    for job, book in results:
+        output.append(
+            HitlTaskResponse(
+                id=job.id,
+                book_id=job.book_id,
+                book_title=book.title if book else "도서 정보 없음",
+                isbn=book.isbn if book else "-",
+                cover_image_url=book.cover_image_url if book else None,
+                image_urls=job.image_urls or [],
+                status=job.status,
+                ubci_score=job.ubci_score,
+                agent_logs=job.agent_logs,
+                created_at=job.created_at.isoformat() if job.created_at else "",
+            )
+        )
+    return output
 
 @router.post("/override")
 def submit_hitl_override(
