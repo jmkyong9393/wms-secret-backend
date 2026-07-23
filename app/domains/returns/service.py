@@ -4,7 +4,6 @@ from typing import List
 
 from app.db.session import get_db
 from app.models.wms import ReturnJob, JobStatusEnum
-from app.worker.tasks import process_inspection
 from uuid import UUID
 
 class ReturnService:
@@ -32,6 +31,7 @@ class ReturnService:
         self.db.flush() # INSERT 후 반환된 Primary Key(id)를 new_job 객체에 로드 (commit은 get_db가 담당)
         
         # 2. Celery Worker로 비동기 검수 파이프라인 위임 (Non-blocking)
+        from app.worker.tasks import process_inspection
         process_inspection.delay(str(new_job.id), image_urls)
         
         return new_job.id

@@ -856,3 +856,33 @@
   content: |
     효력 발생일: 청약철회를 서면으로 할 경우, 서면을 발송한 날(우체국 소인 등)에 효력이 발생함 (도달주의의 예외).
     입증 책임: 재화 훼손에 대한 소비자의 책임 여부, 계약 및 공급 사실과 시기 등에 다툼이 있을 경우, 모든 증명 책임은 통신판매업자(판매자)에게 있음.
+
+- chunk_id: wms_ubci_v2_1_matrix
+  platform: Common
+  authority_level: Internal
+  doc_title: "WMS UBCI 2.1 감점 매트릭스"
+  clause_ref: "제4조 5항"
+  category: [Used_Inspection, Deduction]
+  parent_context: "도서 결함 종류 및 면적에 따른 2D 감점표"
+  content: |
+    기본 점수는 100점이며, 결함 종류와 심각도(면적 기준 Minor <5%, Moderate 5~15%, Severe >=15%)에 따라 감점한다.
+    긁힘/스크래치: Minor(-2), Moderate(-5), Severe(-10)
+    찢어짐(Tear): Minor(-5), Moderate(-10), Severe(-15)
+    찍힘/구겨짐: Minor(-3), Moderate(-5), Severe(-10)
+    책등 갈라짐(단절): 미세(-5), 깊음(-10)
+    일반 오염/빛바램: Minor(-3), Moderate(-6), Severe(-10)
+    도서관/장서인 도장: 크기 무관 -15점 (장물 의심으로 즉시 반려하지 않고 중징계 감점 처리)
+    텍스트 침범 가중치: 결함이 텍스트(제목, 본문 글자) 영역을 침범 시 산출된 감점 점수에 1.5배 가중치 부과.
+
+- chunk_id: wms_ubci_v2_1_instant_reject
+  platform: Common
+  authority_level: Internal
+  doc_title: "WMS UBCI 2.1 치명적 결함 반려"
+  clause_ref: "제3조"
+  category: [Used_Inspection, Reject]
+  parent_context: "AI가 즉시 반려해야 하는 치명적 결함 기준"
+  content: |
+    낙장(Missing Pages): 본문 내지 누락이 1페이지 이상 확인 시 즉시 반려.
+    액체 얼룩(Water): 액체 오염, 물젖음 흔적 확인 시 즉시 반려.
+    습기 휨(Page Warping): 습기나 장기 보관으로 도서 형태가 심하게 틀어지거나 우는 현상 발생 시 즉시 반려.
+    부속물(CD 등) 누락: 중요도에 따라 매입가의 50%를 삭감하는 재무적 패널티 또는 즉시 반려.

@@ -1,111 +1,306 @@
-from typing import List
-from app.core.celery_app import celery_app
-from app.ai.graph import build_wms_graph
-from app.db.session import engine
-from sqlmodel import Session, select
-from app.models.wms import ReturnJob, JobStatusEnum
-import redis
 import json
-import time
+import logging
+import os
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, Tuple
 
-# LangGraph 인스턴스 컴파일 (워커 프로세스 로드 시 1회만 수행하여 성능 최적화)
-# 매 태스크마다 그래프를 새로 빌드하면 오버헤드가 크므로 전역으로 미리 로드합니다.
-wms_agent_graph = build_wms_graph()
+import httpx
+from pottery import Redlock
+from pottery.exceptions import QuorumNotAchieved
+from redis import Redis
 
-@celery_app.task(name="app.worker.tasks.process_inspection")
-def process_inspection(job_id: str, image_urls: List[str]):
+from app.models.wms import ReturnJob
+from app.core.celery_app import celery_app
+from app.ai.langgraph_wrapper import LangGraphInspectionWrapper
+from app.core.redis_pubsub import publish_return_job_event
+from app.domains.returns.job_service import (
+    prepare_processing_job,
+    save_inspection_failed,
+    save_inspection_result,
+)
+from app.core.wms_client import (
+    call_wms_approve_api,
+    call_wms_reject_api,
+)
+
+logger = logging.getLogger(__name__)
+
+# ==========================================
+# OpenTelemetry Celery 분산 추적 (SCI 논문 데이터 수집용)
+# ==========================================
+try:
+    from opentelemetry.instrumentation.celery import CeleryInstrumentor
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
+    provider = TracerProvider()
+    processor = BatchSpanProcessor(ConsoleSpanExporter())
+    provider.add_span_processor(processor)
+    trace.set_tracer_provider(provider)
+
+    CeleryInstrumentor().instrument()
+    print("OpenTelemetry Celery Instrumentation enabled.")
+except ImportError:
+    print("OpenTelemetry not installed. Skipping tracing setup.")
+
+# Redis Client Setup (for DLQ and Redlock)
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_client = Redis.from_url(REDIS_URL)
+
+DLQ_KEY = "wms:dlq:inspection_tasks"
+
+def push_to_dlq(task_id: str, return_job_id: str, error_msg: str, retries: int) -> None:
     """
-    FastAPI로부터 큐(Queue)를 통해 전달받은 비동기 이미지 검수 작업을 수행합니다.
-    내부적으로 LangGraph 기반의 다중 에이전트 파이프라인(Vision, Policy, Critic)을 가동하여 
-    파손 여부를 판별하고 등급(UBCI)을 매깁니다.
+    Celery 최대 재시도(Max Retries) 초과 시, 작업을 버리지 않고 
+    Redis 기반의 Dead Letter Queue(DLQ)에 적재하여 데이터 유실을 방어합니다.
+    추후 관리자가 대시보드(Admin UI)에서 DLQ 목록을 확인하고 원클릭 수동 재처리(Re-queue)를 할 수 있도록 설계되었습니다.
     """
-    print(f"[{job_id}] 비동기 검수 파이프라인 가동 (이미지 {len(image_urls)}장)")
-    
-    # 1. 초기 상태(State) 주입
-    target_image = image_urls[0] if image_urls else ""
-    
-    initial_state = {
-        "job_id": job_id,
-        "image_path": target_image,
-        "has_defect": None,
-        "defect_description": None,
-        "matched_rule": None,
-        "ubci_grade": None,
-        "ubci_score": None,
-        "needs_hitl": None
+    dlq_payload = {
+        "task_id": task_id,
+        "return_job_id": return_job_id,
+        "error": error_msg,
+        "failed_at": datetime.now(timezone.utc).isoformat(),
+        "retries": retries
     }
     
-    
-    # 2. LangGraph 실행 및 지연시간(Latency) 측정
-    start_time = time.time()
     try:
-        final_state = wms_agent_graph.invoke(initial_state)
+        # 우측 끝에 밀어넣기 (큐 형태 보장)
+        redis_client.rpush(DLQ_KEY, json.dumps(dlq_payload))
+        logger.error(f"[DLQ] Task {task_id} for job {return_job_id} safely pushed to DLQ.")
     except Exception as e:
-        end_time = time.time()
-        latency_ms = int((end_time - start_time) * 1000)
-        print(f"[{job_id}] 파이프라인 에러 발생: {e}")
-        _update_job_status(job_id, JobStatusEnum.REJECTED.value, final_report=f"Error: {e}", latency_ms=latency_ms)
-        return {"status": "error", "error": str(e)}
-    
-    end_time = time.time()
-    latency_ms = int((end_time - start_time) * 1000)
+        # 최악의 경우 Redis마저 뻗었다면 시스템 치명적 결함이므로 로그로 흔적을 짙게 남김
+        logger.critical(f"FATAL: Failed to push DLQ! task={task_id}, job={return_job_id}, err={str(e)}")
 
-    # 3. 결과 분석 및 DB 업데이트 (PostgreSQL JSONB)
-    needs_hitl = final_state.get("needs_hitl", False)
-    final_status = JobStatusEnum.REVIEW.value if needs_hitl else JobStatusEnum.APPROVED.value
-    
-    report = (
-        f"[판정 등급]: {final_state.get('ubci_grade')} ({final_state.get('ubci_score')}점)\n"
-        f"[적용 규정]: {final_state.get('matched_rule')}\n"
-        f"[훼손 요약]: {final_state.get('defect_description')}"
-    )
-    
-    
-    # Retry 횟수 추출 (LangGraph 내부에 저장된 상태가 있다면, 없으면 기본값 0)
-    retry_count = final_state.get("retry_count", 0)
-    
-    _update_job_status(
-        job_id=job_id,
-        status=final_status,
-        score=final_state.get("ubci_score"),
-        logs=final_state,
-        final_report=report,
-        latency_ms=latency_ms,
-        retry_count=retry_count
-    )
-    
-    print(f"[{job_id}] 검수 완료 -> {final_status}")
-    return {"status": final_status, "score": final_state.get("ubci_score")}
 
-def _update_job_status(job_id: str, status: str, score: int = None, logs: dict = None, final_report: str = None, latency_ms: int = None, retry_count: int = 0):
-    """
-    비동기 워커 환경(Celery)에서 DB 상태를 업데이트하기 위한 유틸리티 함수입니다.
-    FastAPI의 세션 의존성(Depends)을 사용할 수 없으므로, 직접 DB 세션을 열고 닫습니다.
-    완료 시 Redis Pub/Sub 채널로 이벤트를 발행하여 프론트엔드 실시간 통신(SSE/WebSocket)을 지원합니다.
-    """
-    with Session(engine) as session:
-        statement = select(ReturnJob).where(ReturnJob.id == job_id)
-        job = session.exec(statement).first()
-        if job:
-            job.status = status
-            if score is not None:
-                job.ubci_score = score
-            if logs:
-                job.agent_logs = logs # AI 추론 과정 전체를 JSONB로 저장
-            if final_report:
-                job.final_report = final_report
-            if latency_ms is not None:
-                job.latency_ms = latency_ms
-            job.retry_count = retry_count
-            session.add(job)
-            session.commit()
+
+# PROCESSING 상태 변경 후 프론트에 진행 상태를 전달하는 Pub/Sub 이벤트 발행 함수
+def publish_processing_event(
+        return_job_id: uuid.UUID,
+        celery_task_id: str,
+) -> None:
+    publish_return_job_event(
+        return_job_id=str(return_job_id),
+        event={
+            "return_job_id": str(return_job_id),
+            "task_id": celery_task_id,
+            "status": "PROCESSING",
+            "progress": 50,
+        },
+    )
+
+# 최종 검수 결과(APPROVED/REJECTED)를 프론트에 전달하는 Pub/Sub 이벤트 발행 함수
+def publish_final_event(
+        job: ReturnJob,
+        celery_task_id: str,
+) -> None:
+    publish_return_job_event(
+        return_job_id=str(job.id),
+        event={
+            "return_job_id": str(job.id),
+            "task_id": celery_task_id,
+            "status": job.status,
+            "progress": 100,
+            "ubci_score": job.ubci_score,
+        },
+    )
+
+# Worker 처리 실패 시 FAILED 상태를 프론트에 전달하는 Pub/Sub 이벤트 발행 함수
+def publish_failed_event(
+        return_job_id: uuid.UUID,
+        celery_task_id: str,
+        error: Exception,
+) -> None:
+    publish_return_job_event(
+        return_job_id=str(return_job_id),
+        event={
+            "return_job_id": str(return_job_id),
+            "task_id": celery_task_id,
+            "status": "FAILED",
+            "progress": 100,
+            "error_message": str(error),
+        },
+    )
+
+# AI decision 결과에 따라 WMS API를 호출하고 최종 ReturnJob status를 결정하는 함수
+def execute_wms_action(
+        decision: str,
+        book_id: uuid.UUID,
+) -> Tuple[str, Dict[str, Any]]:
+    
+    # APPROVE인 경우
+    if decision == "APPROVE":
+
+        wms_result = call_wms_approve_api(
+            book_id = str(book_id),
+        )
+        return "APPROVED", {
+            "wms_result" : wms_result,
+        }
+    
+    # REJECT인 경우
+    if decision == "REJECT":
+        reject_reason = "AI_INSPECTION_REJECTED"
             
-    # Redis Pub/Sub로 이벤트 발행 (SSE 연동)
+        wms_result = call_wms_reject_api(
+            book_id = str(book_id),
+            reason = reject_reason,
+        )
+        
+        return "REJECTED", {
+            "wms_result": wms_result,
+            "reject_reason": reject_reason,
+        }
+
+    raise ValueError(f"Unknown decision: {decision}")
+
+
+
+# celery task
+@celery_app.task(
+        bind=True,
+        name="app.worker.tasks.process_inspection",
+        max_retries=3,
+        # 지수 백오프는 코드 내부에 `retry(countdown=...)` 로직으로 직접 구현하여 우아하게 제어함.
+)
+def process_inspection(self, return_job_id: str) -> Dict[str, Any]:
+    """
+    LangGraph 기반 AI 비전 검수 메인 워커.
+    
+    [핵심 방어 로직 적용 (Resilience Architecture)]
+    1. Redlock (분산 락): KEDA 스케일 아웃 환경에서 다중 워커가 동일 건을 중복 처리하지 못하도록 Lock 점유.
+    2. Exponential Backoff (지수 백오프): LLM API Rate Limit(429)이나 외부 망 통신 장애 발생 시 우회.
+    3. DLQ (Dead Letter Queue): 모든 재시도 실패 시 데이터가 증발하지 않도록 큐 격리 (Zero Data Loss).
+    """
+    celery_task_id = self.request.id
+    parsed_return_job_id = uuid.UUID(return_job_id)
+    
+    # 1. 분산 락(Distributed Lock) 획득
+    # 동일한 return_job_id 에 대한 작업을 다른 워커 파드가 동시에 가져가지 못하도록 락을 확보함.
+    # auto_release_time 을 300초(5분)로 두어 워커가 크래시 나더라도 락이 자연 해제되게 방어 설계.
+    lock_key = f"lock:inspection:{return_job_id}"
+    lock = Redlock(key=lock_key, masters={redis_client}, auto_release_time=300)
+    
     try:
-        import os
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        r = redis.Redis.from_url(redis_url)
-        message = json.dumps({"job_id": job_id, "status": status, "score": score})
-        r.publish(f"job_status:{job_id}", message)
-    except Exception as e:
-        print(f"Redis Publish Error: {e}")
+        # blocking=False: 누군가 이미 락을 쥐고 있으면 쿨하게 포기 (멱등성 보장)
+        if not lock.acquire(blocking=False):
+            logger.warning(f"Task {celery_task_id} skipped. Job {return_job_id} is already locked by another worker.")
+            return {"status": "SKIPPED", "reason": "LOCKED"}
+            
+        logger.info(f"process_inspection started. task_id={celery_task_id} return_job_id={return_job_id}")
+
+        # 2. ReturnJob 조회 및 PROCESSING 상태 변경
+        (
+            parsed_return_job_id,
+            book_id,
+            order_id,
+            image_url,
+        ) = prepare_processing_job(
+            return_job_id=return_job_id,
+            celery_task_id=celery_task_id,
+        )
+
+        publish_processing_event(
+            return_job_id=parsed_return_job_id,
+            celery_task_id=celery_task_id,
+        )
+
+        # 3. LangGraph Multi-Agent 실행
+        langgraph_wrapper = LangGraphInspectionWrapper()
+        ai_result = langgraph_wrapper.run_inspection(
+            order_id = order_id,
+            image_url = image_url
+        )
+
+        # 4. AI decision에 따라 WMS API 호출
+        decision = ai_result.get("decision")
+        if decision not in ["APPROVE", "REJECT"]:
+            raise ValueError(f"Unknown AI decision: {decision}")
+
+        final_status, extra_logs = execute_wms_action(
+            decision=decision,
+            book_id=book_id,
+        )
+
+        # 5. AI 결과와 WMS 결과를 ReturnJob에 저장
+        job = save_inspection_result(
+            return_job_id=parsed_return_job_id,
+            ai_result=ai_result,
+            final_status=final_status,
+            extra_logs=extra_logs,
+        )
+
+        # Redis Pub/Sub에 최종 상태 이벤트 발행
+        publish_final_event(
+            job=job,
+            celery_task_id=celery_task_id,
+        )
+
+        logger.info(
+            f"process_inspection completed gracefully. task_id={celery_task_id} return_job_id={job.id} status={job.status}"
+        )
+
+        return {
+            "task_id": celery_task_id,
+            "return_job_id": str(job.id),
+            "order_id": str(job.order_id),
+            "book_id": str(job.book_id),
+            "status": job.status,
+            "ubci_score": job.ubci_score,
+        }
+        
+    except QuorumNotAchieved:
+        logger.warning(f"Redlock quorum not achieved for {return_job_id}")
+        return {"status": "SKIPPED", "reason": "LOCK_FAILED"}
+
+    except httpx.HTTPError as error:
+        # 네트워크/외부 API 에러 발생 시 Exponential Backoff (지수 백오프) 처리
+        retries = self.request.retries
+        if retries < self.max_retries:
+            # 2초, 4초, 8초... 순으로 기하급수적 대기 시간 적용
+            backoff_delay = 2 ** retries
+            logger.warning(
+                f"[Rate Limit / HTTP Error] Retrying task {celery_task_id} in {backoff_delay}s... "
+                f"({retries + 1}/{self.max_retries}) | Err: {str(error)}"
+            )
+            # 예외를 던지며 retry 큐로 재진입 (이때 finally 블록이 실행되며 락 해제됨)
+            raise self.retry(exc=error, countdown=backoff_delay)
+            
+        # 백오프를 모두 소진했음에도 실패한 경우 (Max Retries Exhausted) -> DLQ 격리
+        logger.exception(f"HTTP retries exhausted for {return_job_id}. Sending to DLQ.")
+        push_to_dlq(celery_task_id, return_job_id, str(error), retries)
+        
+        failed_job = save_inspection_failed(parsed_return_job_id, celery_task_id, error)
+        if failed_job is not None:
+            publish_failed_event(failed_job.id, celery_task_id, error)
+            
+        raise
+    
+    except Exception as error:
+        # 예상치 못한 런타임 에러의 경우 바로 DLQ 격리 및 실패 처리
+        logger.exception(f"Unexpected error in process_inspection. task_id={celery_task_id}, sending to DLQ.")
+        push_to_dlq(celery_task_id, return_job_id, str(error), self.request.retries)
+        
+        failed_job = save_inspection_failed(parsed_return_job_id, celery_task_id, error)
+        if failed_job is not None:
+            publish_failed_event(failed_job.id, celery_task_id, error)
+            
+        raise
+
+    finally:
+        # Exception이 발생하든, 정상 처리되든 락을 무조건 반환하여 Deadlock 방지
+        try:
+            lock.release()
+        except Exception:
+            # 락이 만료되었거나 이미 풀린 상태면 무시
+            pass
+
+
+
+
+    
+
+    
+
+

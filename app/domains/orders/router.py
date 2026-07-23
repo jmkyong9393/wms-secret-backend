@@ -1,15 +1,15 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlmodel import Session
 from typing import List, Dict, Any
-from app.core.database import get_session
+from app.db.session import get_db
 from app.models.wms import Order, OrderStatusEnum
-from app.services.bin_packing import recommend_optimal_box
-from app.services.pricing import calculate_b2b_price, calculate_dynamic_discount_rate
+from app.domains.inventory.bin_packing import recommend_optimal_box
+from app.domains.orders.service import calculate_b2b_price, calculate_dynamic_discount_rate
 
 router = APIRouter(prefix="/orders", tags=["Orders & Outbound"])
 
-@router.post("/")
-def create_order(customer_name: str, type: str, list_price: float, category: str, ubci_score: float, days_in_inventory: int, session: Session = Depends(get_session)):
+@router.post("/", status_code=status.HTTP_201_CREATED)
+def create_order(customer_name: str, type: str, list_price: float, category: str, ubci_score: float, days_in_inventory: int, session: Session = Depends(get_db)):
     """동적 프라이싱이 적용된 주문 생성 (AI B2B Price & Discount Rate)"""
     # 1. AI Dynamic Pricing
     base_b2b_price = calculate_b2b_price(list_price, category, ubci_score)

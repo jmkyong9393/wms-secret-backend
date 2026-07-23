@@ -1,0 +1,37 @@
+{
+  "job_id": "job-dff15705",
+  "grade": "HITL_REQUIRED",
+  "ubci_score": 85,
+  "defect_description": "[감점: -15점] 필기/낙서/밑줄",
+  "timestamp": "2026-07-22T09:52:36.573088",
+  "defect_coordinates": [
+    {
+      "x": 20.0,
+      "y": 40.0,
+      "width": 30.0,
+      "height": 10.0,
+      "image_index": 2
+    },
+    {
+      "x": 25.0,
+      "y": 45.0,
+      "width": 35.0,
+      "height": 15.0,
+      "image_index": 3
+    },
+    {
+      "x": 15.0,
+      "y": 50.0,
+      "width": 25.0,
+      "height": 10.0,
+      "image_index": 4
+    },
+    {
+      "x": 10.0,
+      "y": 55.0,
+      "width": 20.0,
+      "height": 10.0,
+      "image_index": 5
+    }
+  ]
+}

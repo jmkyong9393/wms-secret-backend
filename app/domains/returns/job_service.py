@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 from sqlmodel import Session, select
 
 
-from app.core.database import engine
+from app.db.session import engine
 from app.models.wms import ReturnJob
 
 

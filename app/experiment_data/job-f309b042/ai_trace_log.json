@@ -1,0 +1,49 @@
+[
+  {
+    "vision_agent": {
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "content": "Vision 분석 결과: 훼손 감지=True, 훼손 상세=Handwriting/Scribble"
+        }
+      ],
+      "has_defect": true,
+      "defect_description": "Handwriting/Scribble",
+      "defect_coordinates": [
+        {
+          "x": 20.0,
+          "y": 60.0,
+          "width": 60.0,
+          "height": 20.0
+        }
+      ],
+      "retry_count": 0,
+      "needs_hitl": false
+    }
+  },
+  {
+    "policy_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "{\"ubci_grade\": \"REJECT\", \"ubci_score\": 0, \"matched_rule\": \"도서에 손글씨나 낙서가 있는 경우 파손 심각으로 간주하여 REJECT 처리됨.\"}"
+        }
+      ],
+      "ubci_grade": "REJECT",
+      "ubci_score": 0,
+      "matched_rule": "도서에 손글씨나 낙서가 있는 경우 파손 심각으로 간주하여 REJECT 처리됨."
+    }
+  },
+  {
+    "critic_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "APPROVED. \n\nPolicy Agent의 판정 결과는 Vision 분석 결과와 일치합니다. 훼손 감지 결과에서 손글씨나 낙서가 확인되었고, 이는 도서의 상태를 심각하게 훼손한 것으로 간주되어 REJECT 처리된 것은 합당한 판단입니다. 따라서, 이번 판정은 적절하게 이루어졌습니다."
+        }
+      ],
+      "critique": "APPROVED. \n\nPolicy Agent의 판정 결과는 Vision 분석 결과와 일치합니다. 훼손 감지 결과에서 손글씨나 낙서가 확인되었고, 이는 도서의 상태를 심각하게 훼손한 것으로 간주되어 REJECT 처리된 것은 합당한 판단입니다. 따라서, 이번 판정은 적절하게 이루어졌습니다.",
+      "retry_count": 0
+    }
+  }
+]

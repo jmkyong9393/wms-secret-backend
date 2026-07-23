@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     애플리케이션에서 사용될 모든 환경변수를 정의하는 모델 클래스입니다.
     여기에 정의된 속성들은 .env 파일 또는 OS 환경변수에서 자동으로 값을 찾아 매핑됩니다.
     """
-    PROJECT_NAME: str = "WMS Core API"
+    PROJECT_NAME: str = "Nexus Core API"
     APP_ENV: str = "local" # local, dev, prod
     API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = "postgresql://admin:password@localhost:5432/wms_db"

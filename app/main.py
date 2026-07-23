@@ -25,9 +25,9 @@ from app.core.middleware import LoggingMiddleware
 
 # FastAPI 앱 객체 생성 및 메타데이터(Swagger 문서 등) 설정
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    description="다중 에이전트 기반 B2B 도서 물류 자동화 플랫폼 Secret Backend",
-    version="1.7.0.0"
+    title="Nexus",
+    description="다중 에이전트 기반 B2B 물류 자동화 플랫폼 Nexus Backend",
+    version="1.9.0.1"
 )
 
 # ==========================================
@@ -131,12 +131,19 @@ app.include_router(uploads.router, prefix=settings.API_V1_STR)
 app.include_router(admin, prefix=settings.API_V1_STR)
 app.include_router(research, prefix=settings.API_V1_STR)
 
+import os
+from fastapi.staticfiles import StaticFiles
+base_dir = os.path.dirname(os.path.abspath(__file__))
+experiment_dir = os.path.join(base_dir, "experiment_data")
+os.makedirs(experiment_dir, exist_ok=True)
+app.mount("/experiment_data", StaticFiles(directory=experiment_dir), name="experiment_data")
+
 @app.get("/health")
 def health_check():
     """
     로드밸런서(K8s Ingress 등) 또는 KEDA 스케일링을 위한 서버 헬스 체크 엔드포인트입니다.
     """
-    return {"status": "ok", "version": "1.7.0.0"}
+    return {"status": "ok", "version": "1.9.0.1"}
 
 @app.get("/db-check")
 def db_check(session: Session = Depends(get_db)):
