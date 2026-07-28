@@ -193,11 +193,12 @@ async def real_ai_worker(job_id: str):
                 grade = "HITL_REQUIRED"
                 await asyncio.sleep(0.5)
                 
-        # [실제 DB 저장 연동] AI 검수 최종 판정 결과를 InventoryUsedItem DB 테이블에 동기화
+        # [실제 DB 저장 연동] AI 검수 최종 판정 결과를 InventoryUsedItem 및 ReturnJob DB 테이블에 동기화
         if lpn_code:
             try:
                 from app.db.session import engine
                 from app.domains.inventory.service import assign_rack_location_after_inspection
+                from app.models.wms import ReturnJob, JobStatusEnum
                 isbn = book_meta.get("isbn")
                 
                 with Session(engine) as session:
@@ -205,20 +206,36 @@ async def real_ai_worker(job_id: str):
                     if isbn:
                         book_obj = session.exec(select(Book).where(Book.isbn == isbn)).first()
                     
+                    # 1. ReturnJob DB 생성 (관리자 HITL 대시보드 표출용)
+                    return_job_db = ReturnJob(
+                        book_id=book_obj.id if book_obj else None,
+                        image_urls=image_paths,
+                        status=JobStatusEnum.HITL_REQUIRED.value if grade == "HITL_REQUIRED" else JobStatusEnum.COMPLETED.value,
+                        ubci_score=ubci_score,
+                        final_grade=grade,
+                        agent_logs={
+                            "defect_coordinates": defect_coordinates,
+                            "defect_description": defect_description,
+                            "lpn_barcode": lpn_code
+                        }
+                    )
+                    session.add(return_job_db)
+
+                    # 2. InventoryUsedItem DB 생성/갱신
                     item = session.exec(select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode == lpn_code)).first()
                     if not item:
                         item = InventoryUsedItem(
                             book_id=book_obj.id if book_obj else None,
                             lpn_barcode=lpn_code,
                             ubci_score=ubci_score,
-                            condition_grade=grade,
-                            item_status="IN_STOCK" if grade != "REJECT" else "REJECTED"
+                            condition_grade=grade if grade != "HITL_REQUIRED" else None,
+                            item_status="IN_STOCK" if (grade != "REJECT" and grade != "HITL_REQUIRED") else ("HITL_PENDING" if grade == "HITL_REQUIRED" else "REJECTED")
                         )
                         session.add(item)
                     else:
                         item.ubci_score = ubci_score
-                        item.condition_grade = grade
-                        item.item_status = "IN_STOCK" if grade != "REJECT" else "REJECTED"
+                        item.condition_grade = grade if grade != "HITL_REQUIRED" else item.condition_grade
+                        item.item_status = "IN_STOCK" if (grade != "REJECT" and grade != "HITL_REQUIRED") else ("HITL_PENDING" if grade == "HITL_REQUIRED" else "REJECTED")
                         if book_obj and not item.book_id:
                             item.book_id = book_obj.id
                         session.add(item)
@@ -226,7 +243,8 @@ async def real_ai_worker(job_id: str):
                     session.refresh(item)
                     
                     # 창고 랙 위치 (Zone A-E) 배치
-                    assign_rack_location_after_inspection(session, lpn_code, grade)
+                    if grade != "HITL_REQUIRED":
+                        assign_rack_location_after_inspection(session, lpn_code, grade)
             except Exception as db_err:
                 print(f"DB InventoryUsedItem Save Error: {db_err}")
 
