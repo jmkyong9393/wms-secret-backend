@@ -109,11 +109,22 @@ def save_inspection_result(
         job.status = final_status
         job.updated_at = datetime.utcnow()
      
-
         # 최종 DB 저장
         session.add(job)
         session.commit()
         session.refresh(job)
+
+        # [Supervisor Agent 최종 판정 승인 완료 시점] 
+        # Critic Agent ➔ Supervisor Agent 합의가 이의 없이 끝났을 때만 창고 보관 랙(Zone A-E) 최종 할당 실행!
+        if final_status in ["COMPLETED", "APPROVED"]:
+            from app.domains.inventory.service import assign_rack_location_after_inspection
+            final_grade = ai_result.get("final_grade") or "MINT"
+            lpn_barcode = ai_result.get("lpn_barcode")
+            if lpn_barcode:
+                try:
+                    assign_rack_location_after_inspection(session, lpn_barcode, final_grade)
+                except Exception as e:
+                    logger.warning(f"Supervisor 승인 후 랙 위치 자동 할당 건너뜀/오류: {e}")
 
         return job
     
