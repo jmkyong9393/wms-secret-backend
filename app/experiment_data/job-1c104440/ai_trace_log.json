@@ -1,0 +1,75 @@
+[
+  {
+    "vision_agent": {
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "content": "Vision 분석 결과: 훼손 감지=True, 훼손 상세=필기/낙서/밑줄, 필기/낙서/밑줄, 필기/낙서/밑줄, 필기/낙서/밑줄"
+        }
+      ],
+      "has_defect": true,
+      "defect_description": "필기/낙서/밑줄, 필기/낙서/밑줄, 필기/낙서/밑줄, 필기/낙서/밑줄",
+      "defect_coordinates": [
+        {
+          "ymin": 200,
+          "xmin": 100,
+          "ymax": 800,
+          "xmax": 600,
+          "image_index": 2,
+          "label": "필기/낙서/밑줄"
+        },
+        {
+          "ymin": 250,
+          "xmin": 150,
+          "ymax": 850,
+          "xmax": 650,
+          "image_index": 3,
+          "label": "필기/낙서/밑줄"
+        },
+        {
+          "ymin": 300,
+          "xmin": 200,
+          "ymax": 900,
+          "xmax": 700,
+          "image_index": 4,
+          "label": "필기/낙서/밑줄"
+        },
+        {
+          "ymin": 350,
+          "xmin": 250,
+          "ymax": 950,
+          "xmax": 750,
+          "image_index": 5,
+          "label": "필기/낙서/밑줄"
+        }
+      ],
+      "retry_count": 0,
+      "needs_hitl": false
+    }
+  },
+  {
+    "policy_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "{\"ubci_grade\": \"NORMAL\", \"ubci_score\": 65, \"matched_rule\": \"[감점: -15점] 주요 훼손 사유 요약 (예: 필기/낙서/밑줄)\"}"
+        }
+      ],
+      "ubci_grade": "NORMAL",
+      "ubci_score": 65,
+      "matched_rule": "[감점: -15점] 주요 훼손 사유 요약 (예: 필기/낙서/밑줄)"
+    }
+  },
+  {
+    "critic_agent": {
+      "messages": [
+        {
+          "type": "AIMessage",
+          "content": "APPROVED\n\nPolicy Agent의 판정 결과는 Vision 분석 결과와 일치합니다. 훼손이 감지되었고, 필기/낙서/밑줄이 주요 훼손 사유로 언급되었기 때문에, 등급을 NORMAL로 설정하고 15점을 감점한 것은 합당한 판단입니다."
+        }
+      ],
+      "critique": "APPROVED\n\nPolicy Agent의 판정 결과는 Vision 분석 결과와 일치합니다. 훼손이 감지되었고, 필기/낙서/밑줄이 주요 훼손 사유로 언급되었기 때문에, 등급을 NORMAL로 설정하고 15점을 감점한 것은 합당한 판단입니다.",
+      "retry_count": 0
+    }
+  }
+]
