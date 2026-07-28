@@ -34,24 +34,6 @@ def get_suggested_po(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "urgency": urgency
         })
 
-    if not output:
-        output = [
-            {
-                "book_id": "uuid-book-1",
-                "title": "이기적 유전자 (리처드 도킨스)",
-                "current_stock": 12,
-                "suggested_qty": 50,
-                "urgency": "HIGH"
-            },
-            {
-                "book_id": "uuid-book-2",
-                "title": "클린 코드 (로버트 C. 마틴)",
-                "current_stock": 5,
-                "suggested_qty": 30,
-                "urgency": "CRITICAL"
-            }
-        ]
-
     return output
 
 @router.post("/approve")
