@@ -12,10 +12,21 @@ router = APIRouter(prefix="/inventory", tags=["Inventory"])
 from sqlmodel import select
 from app.models.wms import InventoryUsedItem, Book, Location
 
+from datetime import datetime, timezone, timedelta
+
+KST = timezone(timedelta(hours=9))
+
+def to_kst_str(dt: Optional[datetime]) -> str:
+    if not dt:
+        dt = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S")
+
 @router.get("/")
 def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     """
-    프론트엔드 DataGrid에 출력하기 위한 전체 통합 재고 목록을 실시간 DB 조인 조회합니다.
+    프론트엔드 DataGrid에 출력하기 위한 실재 DB 조인 재고 목록을 조회합니다 (하드코딩 폴백 전면 제거, KST 변환).
     """
     statement = (
         select(InventoryUsedItem, Book, Location)
@@ -26,7 +37,7 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     
     output = []
     for item, book, loc in results:
-        zone_str = f"Zone {loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone A-1-1"
+        zone_str = f"Zone {loc.zone}-{loc.rack}-{loc.shelf}" if loc else "검수대기 (미할당)"
         output.append({
             "id": str(item.id),
             "lpn_barcode": item.lpn_barcode,
@@ -37,35 +48,13 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
                 "isbn": book.isbn if book else "-",
                 "base_price": book.base_price if book else 0.0,
             },
-            "grade": item.condition_grade,
-            "ubci_score": item.ubci_score or 90,
+            "grade": item.condition_grade,  # 미지정 시 None 반환
+            "ubci_score": item.ubci_score,  # 미지정 시 None 반환
             "zone": zone_str,
             "quantity": 1,
             "worker_id": "WM2607001",
-            "date": item.created_at.strftime("%Y-%m-%d %H:%M:%S") if item.created_at else datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            "date": to_kst_str(item.created_at)
         })
-    
-    if not output:
-        # DB에 저장된 개별 중고 아이템이 없을 경우 전체 Book 기본 목록에서 변환 생성
-        books = db.exec(select(Book)).all()
-        for b in books:
-            output.append({
-                "id": str(b.id),
-                "lpn_barcode": f"LPN-260727-{str(b.id)[:4].upper()}",
-                "book": {
-                    "title": b.title,
-                    "author": b.author or "-",
-                    "publisher": b.publisher or "-",
-                    "isbn": b.isbn,
-                    "base_price": b.base_price,
-                },
-                "grade": "MINT",
-                "ubci_score": 95,
-                "zone": "Zone A-1-1",
-                "quantity": 1,
-                "worker_id": "WM2607001",
-                "date": b.created_at.strftime("%Y-%m-%d %H:%M:%S") if b.created_at else datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            })
 
     return output
 
