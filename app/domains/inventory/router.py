@@ -26,7 +26,7 @@ def to_kst_str(dt: Optional[datetime]) -> str:
 @router.get("/")
 def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     """
-    프론트엔드 DataGrid에 출력하기 위한 실재 DB 조인 재고 목록을 조회합니다 (하드코딩 폴백 전면 제거, KST 변환).
+    프론트엔드 DataGrid에 출력하기 위한 DB 실재 재고 및 도서 목록을 조회합니다 (KST 변환).
     """
     statement = (
         select(InventoryUsedItem, Book, Location)
@@ -36,7 +36,10 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     results = db.exec(statement).all()
     
     output = []
+    seen_book_ids = set()
     for item, book, loc in results:
+        if book:
+            seen_book_ids.add(book.id)
         zone_str = f"Zone {loc.zone}-{loc.rack}-{loc.shelf}" if loc else "검수대기 (미할당)"
         output.append({
             "id": str(item.id),
@@ -55,6 +58,28 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "worker_id": "WM2607001",
             "date": to_kst_str(item.created_at)
         })
+
+    # DB의 master Book 테이블에 등록되어 있으나 아직 InventoryUsedItem이 안 만들어진 도서들도 검수 대기 항목으로 표출
+    all_books = db.exec(select(Book)).all()
+    for b in all_books:
+        if b.id not in seen_book_ids:
+            output.append({
+                "id": str(b.id),
+                "lpn_barcode": f"LPN-260728-{str(b.id)[:4].upper()}",
+                "book": {
+                    "title": b.title,
+                    "author": b.author or "-",
+                    "publisher": b.publisher or "-",
+                    "isbn": b.isbn,
+                    "base_price": b.base_price,
+                },
+                "grade": None,        # 미정 (검수 대기)
+                "ubci_score": None,   # 점수 없음
+                "zone": "검수대기 (미할당)",
+                "quantity": 1,
+                "worker_id": "WM2607001",
+                "date": to_kst_str(b.created_at)
+            })
 
     return output
 
