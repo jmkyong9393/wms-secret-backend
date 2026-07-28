@@ -110,11 +110,34 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 def on_startup():
     """
-    서버 시작 시 실행되는 이벤트 핸들러입니다.
-    (기존에 존재하던 SQLModel.metadata.create_all()은 Alembic 마이그레이션을 
-    사용하므로 충돌 방지를 위해 제거되었습니다.)
+    서버 시작 시 DB에 사용자가 0명일 경우, 최초 MASTER 계정(WM2607001 장문경)을 자동으로 시딩합니다.
     """
-    pass
+    from app.db.session import engine
+    from sqlmodel import Session, select
+    from app.models.wms import User, UserRoleEnum, UserStatusEnum
+    from passlib.context import CryptContext
+
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+    try:
+        with Session(engine) as session:
+            users_list = session.exec(select(User)).all()
+            if len(users_list) == 0:
+                print("[Startup] DB가 비어있습니다. 최초 MASTER 계정 (WM2607001 장문경)을 자동 시딩합니다...")
+                master_user = User(
+                    employee_id="WM2607001",
+                    name="장문경",
+                    email="jmkyong2000@naver.com",
+                    password_hash=pwd_context.hash("1234"),
+                    role=UserRoleEnum.MASTER,
+                    status=UserStatusEnum.ACTIVE,
+                    must_change_password=False
+                )
+                session.add(master_user)
+                session.commit()
+                print("[Startup] 최초 MASTER 계정 (WM2607001 / 비밀번호: 1234) 생성 완료!")
+    except Exception as e:
+        print("[Startup] 최초 MASTER 계정 자동 시딩 중 에러:", e)
 
 # ==========================================
 # 라우터 등록 (도메인별 API 분리)
