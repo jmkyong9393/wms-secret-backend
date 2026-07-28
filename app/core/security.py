@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.domains.users.repository import user_repository
 from app.core.exceptions import UnauthorizedException, ForbiddenException
-from app.models.wms import User
+from app.models.wms import User, UserRoleEnum, UserStatusEnum
 
 def get_token_from_cookie(request: Request) -> str:
     token = request.cookies.get("token")
@@ -32,8 +32,8 @@ def get_current_user(token: str = Depends(get_token_from_cookie), session: Sessi
     if user is None:
         raise UnauthorizedException("User not found")
     
-    # 2026-07-14 추가: Inactive 계정 접근 차단 로직 (보안 강화)
-    if user.status != "ACTIVE":
+    user_status_str = str(user.status.value) if hasattr(user.status, 'value') else str(user.status)
+    if user_status_str != "ACTIVE":
         raise ForbiddenException("Inactive user account")
         
     return user

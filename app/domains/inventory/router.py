@@ -9,37 +9,65 @@ from app.domains.inventory.service import generate_lpn, get_all_lpn
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
 
+from sqlmodel import select
+from app.models.wms import InventoryUsedItem, Book, Location
+
 @router.get("/")
-async def get_inventory() -> List[Dict[str, Any]]:
+def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     """
-    프론트엔드 DataGrid에 출력하기 위한 전체 통합 재고 목록을 조회합니다.
-    기존의 복잡했던 DB 필드명을 프론트엔드 인터페이스에 맞춰 가공(Mapping)하여 반환합니다.
-    (예: inventory_id -> id, location_id -> zone 등)
+    프론트엔드 DataGrid에 출력하기 위한 전체 통합 재고 목록을 실시간 DB 조인 조회합니다.
     """
-    return [
-        {
-            "id": "uuid-inv-1",
+    statement = (
+        select(InventoryUsedItem, Book, Location)
+        .outerjoin(Book, InventoryUsedItem.book_id == Book.id)
+        .outerjoin(Location, InventoryUsedItem.location_id == Location.id)
+    )
+    results = db.exec(statement).all()
+    
+    output = []
+    for item, book, loc in results:
+        zone_str = f"Zone {loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone A-1-1"
+        output.append({
+            "id": str(item.id),
+            "lpn_barcode": item.lpn_barcode,
             "book": {
-                "title": "사피엔스",
-                "isbn": "9788912345678"
+                "title": book.title if book else "도서 정보 없음",
+                "author": book.author if book else "-",
+                "publisher": book.publisher if book else "-",
+                "isbn": book.isbn if book else "-",
+                "base_price": book.base_price if book else 0.0,
             },
-            "grade": "MINT",
-            "zone": "A-1-3",
-            "quantity": 100,
-            "date": datetime.utcnow().isoformat()
-        },
-        {
-            "id": "uuid-inv-2",
-            "book": {
-                "title": "이기적 유전자",
-                "isbn": "9788912345679"
-            },
-            "grade": "GOOD",
-            "zone": "B-2-1",
-            "quantity": 15,
-            "date": datetime.utcnow().isoformat()
-        }
-    ]
+            "grade": item.condition_grade,
+            "ubci_score": item.ubci_score or 90,
+            "zone": zone_str,
+            "quantity": 1,
+            "worker_id": "WM2607001",
+            "date": item.created_at.strftime("%Y-%m-%d %H:%M:%S") if item.created_at else datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    
+    if not output:
+        # DB에 저장된 개별 중고 아이템이 없을 경우 전체 Book 기본 목록에서 변환 생성
+        books = db.exec(select(Book)).all()
+        for b in books:
+            output.append({
+                "id": str(b.id),
+                "lpn_barcode": f"LPN-260727-{str(b.id)[:4].upper()}",
+                "book": {
+                    "title": b.title,
+                    "author": b.author or "-",
+                    "publisher": b.publisher or "-",
+                    "isbn": b.isbn,
+                    "base_price": b.base_price,
+                },
+                "grade": "MINT",
+                "ubci_score": 95,
+                "zone": "Zone A-1-1",
+                "quantity": 1,
+                "worker_id": "WM2607001",
+                "date": b.created_at.strftime("%Y-%m-%d %H:%M:%S") if b.created_at else datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            })
+
+    return output
 
 from typing import Optional
 from pydantic import BaseModel
@@ -48,12 +76,12 @@ class CreateLpnRequest(BaseModel):
     book_id: Optional[str] = None
     isbn: Optional[str] = None
     worker_id: Optional[str] = None
+    zone: Optional[str] = None # Zone A, B, C, D, E
 
 @router.post("/lpn")
-async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
-    """새로운 LPN 바코드를 발급하고 DB에 등록합니다."""
-    # TODO: Pydantic response model 적용
-    new_lpn, book = generate_lpn(db, book_id=req.book_id, isbn=req.isbn)
+def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
+    """새로운 LPN 바코드를 발급하고 지정된 창고 보관 랙(Zone A-E) 위치와 조인하여 DB에 저장합니다."""
+    new_lpn, book = generate_lpn(db, book_id=req.book_id, isbn=req.isbn, zone=req.zone)
     return {
         "status": "success", 
         "lpn_barcode": new_lpn.lpn_barcode,
@@ -62,6 +90,7 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
             "author": book.author,
             "isbn": book.isbn
         },
+        "location_id": str(new_lpn.location_id),
         "worker_id": req.worker_id
     }
 
