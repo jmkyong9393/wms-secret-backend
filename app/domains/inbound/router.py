@@ -124,8 +124,10 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
             print(f"Error saving image: {e}")
             
     job_store[job_id] = {
+        "lpn": request.lpn,
         "image_paths": image_paths,
-        "category": parsed_category
+        "category": parsed_category,
+        "book_metadata": request.book_metadata
     }
 
     return {"job_id": job_id, "lpn": request.lpn, "message": "Evaluation job queued successfully"}
@@ -134,8 +136,11 @@ async def real_ai_worker(job_id: str):
     job_data = job_store.get(job_id, {})
     image_paths = job_data.get("image_paths", [])
     book_category = job_data.get("category", "GENERAL")
+    lpn_code = job_data.get("lpn")
+    book_meta = job_data.get("book_metadata") or {}
+    
     if not image_paths:
-        yield f"data: {json.dumps({'job_id': job_id, 'progress': 100, 'message': '에러: 이미지 없음', 'grade': 'N/A', 'ubci_score': 0})}\n\n"
+        yield f"data: {json.dumps({'job_id': job_id, 'progress': 100, 'message': '에러: 이미지 없음', 'grade': None, 'ubci_score': None})}\n\n"
         return
 
     yield f"data: {json.dumps({'job_id': job_id, 'progress': 10, 'message': 'AI 검수 초기화 중...', 'grade': None})}\n\n"
@@ -162,7 +167,7 @@ async def real_ai_worker(job_id: str):
         updates = await asyncio.to_thread(run_graph_sync)
         
         grade = "NORMAL"
-        ubci_score = 100
+        ubci_score = 75
         defect_coordinates = []
         defect_description = "정상"
         for out in updates:
@@ -175,7 +180,7 @@ async def real_ai_worker(job_id: str):
                 await asyncio.sleep(0.5)
             if "policy_agent" in out:
                 yield f"data: {json.dumps({'job_id': job_id, 'progress': 70, 'message': '사내 규정(Policy) 매칭 완료'})}\n\n"
-                grade = out["policy_agent"].get("ubci_grade", grade)
+                grade = out["policy_agent"].get("ubci_grade") or out["policy_agent"].get("grade") or grade
                 ubci_score = out["policy_agent"].get("ubci_score", ubci_score)
                 if "matched_rule" in out["policy_agent"]:
                     defect_description = out["policy_agent"]["matched_rule"]
@@ -188,7 +193,43 @@ async def real_ai_worker(job_id: str):
                 grade = "HITL_REQUIRED"
                 await asyncio.sleep(0.5)
                 
-        
+        # [실제 DB 저장 연동] AI 검수 최종 판정 결과를 InventoryUsedItem DB 테이블에 동기화
+        if lpn_code:
+            try:
+                from app.db.session import engine
+                from app.domains.inventory.service import assign_rack_location_after_inspection
+                isbn = book_meta.get("isbn")
+                
+                with Session(engine) as session:
+                    book_obj = None
+                    if isbn:
+                        book_obj = session.exec(select(Book).where(Book.isbn == isbn)).first()
+                    
+                    item = session.exec(select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode == lpn_code)).first()
+                    if not item:
+                        item = InventoryUsedItem(
+                            book_id=book_obj.id if book_obj else None,
+                            lpn_barcode=lpn_code,
+                            ubci_score=ubci_score,
+                            condition_grade=grade,
+                            item_status="IN_STOCK" if grade != "REJECT" else "REJECTED"
+                        )
+                        session.add(item)
+                    else:
+                        item.ubci_score = ubci_score
+                        item.condition_grade = grade
+                        item.item_status = "IN_STOCK" if grade != "REJECT" else "REJECTED"
+                        if book_obj and not item.book_id:
+                            item.book_id = book_obj.id
+                        session.add(item)
+                    session.commit()
+                    session.refresh(item)
+                    
+                    # 창고 랙 위치 (Zone A-E) 배치
+                    assign_rack_location_after_inspection(session, lpn_code, grade)
+            except Exception as db_err:
+                print(f"DB InventoryUsedItem Save Error: {db_err}")
+
         # Save result to experiment_data
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         experiment_dir = os.path.join(base_dir, "experiment_data", job_id)
@@ -197,6 +238,7 @@ async def real_ai_worker(job_id: str):
                 json.dump({
                     'job_id': job_id, 
                     'grade': grade, 
+                    'ubci_score': ubci_score,
                     'timestamp': datetime.datetime.now().isoformat(),
                     'defect_coordinates': defect_coordinates,
                     'defect_description': defect_description
