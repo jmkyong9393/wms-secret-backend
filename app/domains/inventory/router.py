@@ -88,3 +88,17 @@ async def get_lpn_list(skip: int = 0, limit: int = 100, db: Session = Depends(ge
     """발급된 모든 LPN 내역을 조회합니다 (프론트 대시보드 연동용)."""
     lpns = get_all_lpn(db, skip=skip, limit=limit)
     return [{"lpn_barcode": l.lpn_barcode, "book_id": l.book_id, "status": l.item_status} for l in lpns]
+
+class BinPackRequest(BaseModel):
+    books: List[Dict[str, Any]]
+
+@router.post("/bin-pack")
+def recommend_box_packing(req: BinPackRequest):
+    """주문 도서들의 판정 체적 기반 3D Bin Packing 최적 박스 추천 알고리즘 API입니다."""
+    from app.domains.inventory.bin_packing import recommend_optimal_box
+    recommended_box = recommend_optimal_box(req.books)
+    return {
+        "recommended_box": recommended_box,
+        "item_count": len(req.books),
+        "message": f"3D 패킹 연산 결과 최적 포장 상자: [{recommended_box}] 추천 완료"
+    }
