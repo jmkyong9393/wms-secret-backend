@@ -19,23 +19,34 @@ from app.models.wms import User
 router = APIRouter()
 
 @router.post("/init-master", status_code=status.HTTP_201_CREATED)
-@limiter.limit("2/minute")
+@limiter.limit("5/minute")
 def init_master(request: Request, session: Session = Depends(get_db)):
     """
-    (초기 셋업 전용) DB에 유저가 존재하지 않을 때 최초의 MASTER 계정을 발급합니다.
+    (초기 셋업 전용) DB에 유저가 존재하지 않을 때 최초의 MASTER 계정(WM2607001 / 장문경)을 발급합니다.
     """
     existing_user = session.exec(select(User)).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Database is already initialized with users.")
         
-    user_in = UserCreate(company_prefix="WM", name="System Admin", role="MASTER")
+    user_in = UserCreate(company_prefix="WM", name="장문경", role="MASTER")
     user, temp_password = user_service.register_user(session=session, user_in=user_in)
     
+    # 개발/시연 편의를 위한 1234 해시 자동 세팅
+    user.email = "jmkyong2000@naver.com"
+    user.password_hash = user_service.get_password_hash("1234")
+    user.must_change_password = False
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
     return {
         "message": "Initial Master account created successfully.",
         "employee_id": user.employee_id,
-        "temporary_password": temp_password,
-        "note": "Please login with this account and change the password in the onboarding screen."
+        "name": user.name,
+        "email": user.email,
+        "role": user.role,
+        "password": "1234",
+        "note": "Initial Master account initialized with employee_id 'WM2607001' and password '1234'."
     }
 
 @router.post("/issue", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -59,12 +70,17 @@ def login(request: Request, response: Response, login_req: LoginRequest, session
     user = user_service.authenticate_user(session=session, employee_id=login_req.employee_id, password=login_req.password)
     if not user:
         raise InvalidCredentialsException()
-    if user.status != "ACTIVE":
+    
+    # Status Enum 문자열 변환 및 비교
+    user_status_str = str(user.status.value) if hasattr(user.status, 'value') else str(user.status)
+    if user_status_str != "ACTIVE":
         raise InactiveAccountException()
         
+    role_str = str(user.role.value) if hasattr(user.role, 'value') else str(user.role)
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = user_service.create_access_token(
-        data={"sub": user.employee_id, "role": user.role}, expires_delta=access_token_expires
+        data={"sub": user.employee_id, "role": role_str}, expires_delta=access_token_expires
     )
     
     response.set_cookie(
@@ -78,7 +94,7 @@ def login(request: Request, response: Response, login_req: LoginRequest, session
     
     response.set_cookie(
         key="role",
-        value=user.role,
+        value=role_str,
         httponly=False,
         secure=False,
         samesite="lax",

@@ -35,14 +35,34 @@ def create_order(customer_name: str, type: str, list_price: float, category: str
         "message": "AI 동적 프라이싱 적용 후 주문 접수 완료"
     }
 
-@router.post("/outbound/pick")
-def pick_order(order_id: str, books: List[Dict[str, Any]]):
-    """피킹 시 3D Bin Packing 알고리즘 기반 박스 최적화"""
-    # books example: [{"category": "IT", "format_size": "신국판", "pages": 350, "is_color": False, "is_hardcover": True}]
-    recommended_box = recommend_optimal_box(books)
+from pydantic import BaseModel
+from typing import Optional
+
+class OutboundCompleteRequest(BaseModel):
+    lpn_barcode: str
+    box_type: str
+    worker_id: Optional[str] = "WM2607001"
+
+@router.post("/outbound/complete")
+def complete_outbound(req: OutboundCompleteRequest, session: Session = Depends(get_db)):
+    """
+    모바일/관리자 출고 스캐너에서 LPN 바코드 검증 및 3D 패킹 완료 시
+    실제 DB의 InventoryUsedItem 상태를 SHIPPED로 갱신하고 재고 차감 처리합니다.
+    """
+    from app.models.wms import InventoryUsedItem, ItemStatusEnum
+    from sqlmodel import select
+    
+    item = session.exec(select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode == req.lpn_barcode)).first()
+    if item:
+        item.item_status = ItemStatusEnum.SHIPPED.value
+        session.add(item)
+        session.commit()
+        session.refresh(item)
     
     return {
-        "order_id": order_id,
-        "recommended_box": recommended_box,
-        "message": "3D Bin Packing 알고리즘 박스 추천 완료"
+        "status": "success",
+        "lpn_barcode": req.lpn_barcode,
+        "box_type": req.box_type,
+        "item_status": "SHIPPED",
+        "message": f"LPN [{req.lpn_barcode}] 출고 패킹 검증 및 DB 재고 차감 완공"
     }

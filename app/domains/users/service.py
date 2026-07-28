@@ -18,7 +18,10 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class UserService:
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        return pwd_context.verify(plain_password, hashed_password)
+        try:
+            return pwd_context.verify(plain_password, hashed_password)
+        except Exception:
+            return False
 
     def get_password_hash(self, password: str) -> str:
         return pwd_context.hash(password)
@@ -93,11 +96,16 @@ class UserService:
         return user_repository.update_user(session, user)
 
     def authenticate_user(self, session: Session, employee_id: str, password: str) -> User | None:
+        """
+        PostgreSQL DB의 users 테이블 레코드를 100% 순수 SQL Query 및 bcrypt 패스워드 검증으로 인증합니다.
+        """
         user = user_repository.get_user_by_employee_id(session, employee_id)
         if not user:
             return None
+
         if not self.verify_password(password, user.password_hash):
             return None
+
         return user
 
     def get_all_users_for_admin(self, session: Session, keyword: str | None = None, role: str | None = None, status: str | None = None, sort_by: str = "role", sort_order: str = "asc", skip: int = 0, limit: int = 20) -> tuple[list[User], int]:
