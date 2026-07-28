@@ -30,8 +30,14 @@ class ReturnService:
         self.db.add(new_job)
         self.db.flush() # INSERT 후 반환된 Primary Key(id)를 new_job 객체에 로드 (commit은 get_db가 담당)
         
-        # 2. Celery Worker로 비동기 검수 파이프라인 위임 (Non-blocking)
-        from app.worker.tasks import process_inspection
-        process_inspection.delay(str(new_job.id), image_urls)
+        # 2. Celery Worker 비동기 위임 (Docker/Redis 켜진 경우) 또는 로컬 스레드 자동 폴백 (Docker 꺼진 경우)
+        try:
+            from app.worker.tasks import process_inspection
+            process_inspection.delay(str(new_job.id), image_urls)
+        except Exception as e:
+            print(f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}")
+            import threading
+            from app.worker.tasks import process_inspection
+            threading.Thread(target=process_inspection, args=(str(new_job.id), image_urls), daemon=True).start()
         
         return new_job.id
