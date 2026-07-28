@@ -40,31 +40,31 @@ def get_kpi(session: Session = Depends(get_db)) -> Dict[str, int]:
     ).one() or 0
 
     return {
-        "today_inbound": today_inbound if today_inbound > 0 else 125,
-        "today_outbound": today_outbound if today_outbound > 0 else 432,
-        "today_inspection": today_inspection if today_inspection > 0 else 89,
+        "today_inbound": today_inbound,
+        "today_outbound": today_outbound,
+        "today_inspection": today_inspection,
         "pending_issues": pending_issues
     }
 
 @router.get("/charts")
 def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     """
-    7일간 일별 입출고 물량, 등급 분포, 카테고리 분포 SQL 집계 데이터 반환
+    7일간 일별 입출고 물량, 등급 분포, 카테고리 분포 SQL 실집계 데이터 반환 (하드코딩 연산 전면 제거)
     """
     # 7일간 검수 및 재고 입고 일별 추이 집계
     seven_days_ago = datetime.utcnow() - timedelta(days=7)
     
-    # 등급별 집계 (MINT, GOOD, NORMAL, POOR/REJECT)
+    # 등급별 집계 (MINT, GOOD, NORMAL, REJECT)
     grade_stmt = select(ReturnJob.final_grade, func.count(ReturnJob.id)).where(ReturnJob.final_grade.is_not(None)).group_by(ReturnJob.final_grade)
     grade_results = session.exec(grade_stmt).all()
     
     grade_map = {grade: count for grade, count in grade_results}
     
     ubci_grade_data = [
-        {"name": "MINT (90~100점)", "value": grade_map.get("S", 0) + grade_map.get("MINT", 45), "color": "#10b981"},
-        {"name": "GOOD (70~89점)", "value": grade_map.get("A", 0) + grade_map.get("GOOD", 30), "color": "#3b82f6"},
-        {"name": "NORMAL (50~69점)", "value": grade_map.get("B", 0) + grade_map.get("NORMAL", 15), "color": "#f59e0b"},
-        {"name": "POOR (50점 미만)", "value": grade_map.get("REJECT", 5), "color": "#ef4444"},
+        {"name": "MINT (90~100점)", "value": grade_map.get("MINT", 0) + grade_map.get("S", 0), "color": "#10b981"},
+        {"name": "GOOD (75~89점)", "value": grade_map.get("GOOD", 0) + grade_map.get("A", 0), "color": "#3b82f6"},
+        {"name": "NORMAL (60~74점)", "value": grade_map.get("NORMAL", 0) + grade_map.get("B", 0), "color": "#f59e0b"},
+        {"name": "REJECT (60점 미만)", "value": grade_map.get("REJECT", 0) + grade_map.get("POOR", 0), "color": "#ef4444"},
     ]
 
     return {
