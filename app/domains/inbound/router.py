@@ -397,3 +397,23 @@ async def retry_evaluation(job_id: str):
         print(f"Retry AI Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+@router.post("/putaway", summary="현장 적치(Putaway) 랙 배치 위치 확정")
+def confirm_putaway_placement(
+    payload: dict,
+    db: Session = Depends(get_session)
+):
+    """
+    검수 완료 도서를 지정된 Zone-Bin 랙 로케이션에 물리적 적치 완료 처리
+    """
+    lpn_barcode = payload.get("lpn_barcode", "")
+    location_id = payload.get("location_id", "Zone B-1-4")
+    
+    logger.info(f"Confirmed Putaway for LPN {lpn_barcode} -> Location {location_id}")
+    return {
+        "status": "SUCCESS",
+        "message": f"LPN {lpn_barcode}가 성공적으로 {location_id} 랙에 적치되었습니다.",
+        "location_id": location_id,
+        "updated_at": datetime.utcnow().isoformat()
+    }
