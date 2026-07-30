@@ -7,7 +7,11 @@ from pydantic import BaseModel
 from app.db.session import get_db
 from app.models.wms import Order, OrderStatusEnum, InventoryUsedItem, ItemStatusEnum, Book
 from app.domains.inventory.bin_packing import recommend_optimal_box
-from app.domains.orders.service import calculate_b2b_price, calculate_dynamic_discount_rate
+from app.domains.orders.service import (
+    calculate_b2b_price,
+    calculate_dynamic_discount_rate,
+    calculate_price_elasticity_revenue_optimization
+)
 from app.ai.bin_packing_agent import bin_packing_agent
 
 router = APIRouter(prefix="/orders", tags=["Orders & Outbound"])
@@ -24,19 +28,22 @@ def create_order(
     type: str = "WHOLESALE", 
     list_price: float = 35000, 
     category: str = "Novel", 
-    ubci_score: float = 85, 
-    days_in_inventory: int = 30, 
+    ubci_score: float = 78, 
+    days_in_inventory: int = 120, 
     session: Session = Depends(get_db)
 ):
-    """동적 프라이싱 적용 주문 생성 (AI B2B Dynamic Pricing)"""
-    base_b2b_price = calculate_b2b_price(list_price, category, ubci_score)
-    discount_rate = calculate_dynamic_discount_rate(ubci_score, days_in_inventory, category)
-    final_total_price = base_b2b_price * (1 - discount_rate)
+    """동적 프라이싱 적용 주문 생성 (XGBoost 2-Step Price Elasticity & Expected Revenue Optimization)"""
+    opt_res = calculate_price_elasticity_revenue_optimization(
+        list_price=list_price,
+        ubci_score=ubci_score,
+        days_in_inventory=days_in_inventory,
+        category=category
+    )
     
     new_order = Order(
         customer_name=customer_name,
         type=type,
-        total_price=final_total_price,
+        total_price=opt_res["final_price"],
         status=OrderStatusEnum.PENDING.value
     )
     session.add(new_order)
@@ -47,11 +54,14 @@ def create_order(
         "order_id": str(new_order.id), 
         "customer_name": customer_name,
         "type": type,
-        "base_b2b_price": base_b2b_price,
-        "discount_rate": f"{int(discount_rate * 100)}%",
-        "final_price": final_total_price,
+        "base_supply_price": opt_res["base_supply_price"],
+        "discount_rate": opt_res["discount_percent"],
+        "final_price": opt_res["final_price"],
+        "predicted_purchase_probability": opt_res["predicted_purchase_probability"],
+        "max_expected_revenue": opt_res["max_expected_revenue"],
         "status": new_order.status,
-        "message": "AI 동적 프라이싱 적용 후 주문 접수 완공"
+        "optimization_model": opt_res["optimization_model"],
+        "message": "AI 2-Step 가격 탄력성 기대 수익 극대화 모델 적용 주문 접수 완공"
     }
 
 @router.post("/outbound/pick")
