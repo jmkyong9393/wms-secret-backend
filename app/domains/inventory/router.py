@@ -40,7 +40,7 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     for item, book, loc in results:
         if book:
             seen_book_ids.add(book.id)
-        zone_str = f"Zone {loc.zone}-{loc.rack}-{loc.shelf}" if loc else "검수대기 (미할당)"
+        zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "검수대기 (미할당)"
         output.append({
             "id": str(item.id),
             "lpn_barcode": item.lpn_barcode,
@@ -136,7 +136,7 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
     if not job:
         job = db.query(ReturnJob).first()
 
-    zone_str = f"Zone {loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone B-1-1"
+    zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone B-1-1"
     image_list = (job.image_urls if job else []) or [
         f"http://localhost:8000/experiment_data/job-0c2929a0/raw_{i}.jpg" for i in range(7)
     ]
