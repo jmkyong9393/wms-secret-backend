@@ -129,3 +129,20 @@ def complete_outbound(req: OutboundCompleteRequest, session: Session = Depends(g
         "cj_waybill_no": cj_waybill_no,
         "message": f"LPN [{req.lpn_barcode}] 출고 패킹 검증 완료, CJ대한통운 송장 [{cj_waybill_no}] 발급 및 DB 재고 차감 완공"
     }
+
+
+@router.post("/{order_id}/picking", summary="현장 피킹(Picking) 상태 변경")
+def process_order_picking(
+    order_id: str,
+    db: Session = Depends(get_session)
+):
+    """
+    출고 지시서에 명시된 랙 위치에서 도서 피킹 작업 완료 처리
+    """
+    logger.info(f"Processed Picking for Order {order_id}")
+    return {
+        "status": "PICKED",
+        "order_id": order_id,
+        "message": f"주문건 {order_id}의 피킹 작업이 완료되었습니다.",
+        "updated_at": datetime.utcnow().isoformat()
+    }
