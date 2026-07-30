@@ -110,18 +110,26 @@ class DimensionCalculatorAgent:
 
 class FragilitySafetyAgent:
     """
-    SubAgent 2: 출고 포장 순수 물리적 충격 흡수 파손 방지 안전도(Packaging Safety Score) 산출 에이전트
-    (UBCI 도서 입고 품질 지수 분리: 포장 적재율 50% + 완충재 비율 30% + 양장본 결함 방지 20%)
+    SubAgent 2: 박스 높이 적재율(Height Fill Ratio) 및 유격 페널티 기반 파손 방지 안전도 산출 에이전트
+    Height Fill Ratio = (Fixed Book Stack 56.7mm / Box Height) * 100
+    Safety Score = (Height Fill Ratio * 0.65) + (Air Cushion Ratio * 2.5) + Cover Protection - Void Penalty
     """
-    def evaluate(self, books: List[Dict[str, Any]], fill_eff: float = 91.2, air_ratio: float = 8.5) -> Dict[str, Any]:
+    def evaluate(self, books: List[Dict[str, Any]], box_height_mm: float = 60.0, air_ratio: float = 8.5) -> Dict[str, Any]:
         has_hardcover = any(b.get("is_hardcover", False) for b in books)
-        
-        # Pure physical packaging safety score formula (0~100)
-        fit_score = (fill_eff / 100.0) * 50.0  # Max 50
-        cushion_score = min(30.0, (air_ratio / 10.0) * 30.0)  # Max 30
-        cover_protection = 20.0 if has_hardcover else 15.0  # Max 20
+        total_stack_mm = sum(b.get("calculated_thickness_mm", 24) for b in books) + 9.0 # 56.7mm
 
-        safety_score = round(fit_score + cushion_score + cover_protection, 1)
+        height_fill_ratio = min(100.0, (total_stack_mm / box_height_mm) * 100.0)
+        void_space_mm = max(0.0, box_height_mm - total_stack_mm)
+
+        # Dynamic Safety Score Calculation
+        fill_score = (height_fill_ratio / 100.0) * 65.0 # Max 65
+        cushion_score = min(20.0, air_ratio * 2.35) # Max 20
+        cover_protection = 15.0 if has_hardcover else 10.0 # Max 15
+
+        # Void Penalty: Extra empty space causes books to shake & collide
+        void_penalty = (void_space_mm / box_height_mm) * 40.0 if height_fill_ratio < 85.0 else 0.0
+
+        safety_score = max(15.0, round(fill_score + cushion_score + cover_protection - void_penalty, 1))
 
         if safety_score >= 88.0:
             safety_level = f"SAFE (A+) [{safety_score}점]"
@@ -129,14 +137,18 @@ class FragilitySafetyAgent:
             safety_level = f"SAFE (A) [{safety_score}점]"
         elif safety_score >= 60.0:
             safety_level = f"CAUTION (B) [{safety_score}점]"
-        else:
+        elif safety_score >= 45.0:
             safety_level = f"WARNING (C) [{safety_score}점]"
+        else:
+            safety_level = f"HAZARD (D) [{safety_score}점]"
 
         stacking_order = "하단: 4륙판 수평 받침대 ➔ 중단: 신국판 하드커버 ➔ 상단: 슬림 앰버 완충 Pad"
 
         return {
             "safety_score": safety_score,
             "safety_level": safety_level,
+            "height_fill_ratio": round(height_fill_ratio, 1),
+            "void_space_mm": round(void_space_mm, 1),
             "stacking_order": stacking_order
         }
 
@@ -212,7 +224,7 @@ class BinPackingAgent:
 
         # Step 1~3: Execute SubAgents
         dim_res = self.dim_agent.calculate(enriched_books)
-        frag_res = self.frag_agent.evaluate(enriched_books, dim_res['fill_efficiency'], dim_res['air_cushion_ratio'])
+        frag_res = self.frag_agent.evaluate(enriched_books, dim_res['selected_box']['height'], dim_res['air_cushion_ratio'])
         rationale = self.planner_agent.generate_rationale(enriched_books, dim_res, frag_res)
 
         return {
