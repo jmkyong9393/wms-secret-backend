@@ -194,3 +194,7 @@ class BinPackingAgent:
             "stacking_order": frag_res["stacking_order"],
             "rationale": rationale
         }
+
+
+# Singleton Instance for Router Import
+bin_packing_agent = BinPackingAgent()
