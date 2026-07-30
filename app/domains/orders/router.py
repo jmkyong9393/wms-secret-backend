@@ -153,3 +153,21 @@ def process_order_picking(
         "message": f"주문건 {order_id}의 피킹 작업이 완료되었습니다.",
         "updated_at": datetime.utcnow().isoformat()
     }
+
+class DynamicPriceRequest(BaseModel):
+    list_price: float = 35000
+    ubci_score: float = 78
+    days_in_inventory: int = 120
+    category: str = "Novel"
+
+@router.post("/calculate-dynamic-price")
+def calculate_dynamic_price(req: DynamicPriceRequest):
+    """
+    실시간 2-Step 가격 탄력성 및 기대 수익 극대화 동적 가격 시뮬레이션 엔드포인트
+    """
+    return calculate_price_elasticity_revenue_optimization(
+        list_price=req.list_price,
+        ubci_score=req.ubci_score,
+        days_in_inventory=req.days_in_inventory,
+        category=req.category
+    )
