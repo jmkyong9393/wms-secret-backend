@@ -52,18 +52,22 @@ def calculate_dynamic_discount_rate(ubci_score: float, days_in_inventory: int, c
 def calculate_price_elasticity_revenue_optimization(
     list_price: float,
     ubci_score: float,
-    days_in_inventory: int,
-    category: str
+    days_in_inventory: int = 0,
+    category: str = "Novel"
 ) -> Dict[str, Any]:
     """
-    [08_Dynamic_Pricing_합성_데이터_생성_명세서 연동]
-    가격 탄력성(Price Elasticity) 기반 예측-최적화 2-Step 기대 수익 극대화 알고리즘
-    Step 1: P_sold(delta) 고객 구매 확률 시뮬레이션
-    Step 2: Expected Revenue E(delta) = P_sold(delta) * (P_base * (1 - delta)) 극대화 할인율 delta* 탐색
+    [도서 물류 동적 프라이싱: 유행 민감 카테고리(수험서/IT/잡지) 한정 개정 감가 모델]
+    일반 도서/소설/스테디셀러는 체류 일수와 무관하게 감가 0% (Dwell Decay = 0%).
+    유행 민감 카테고리(IT/Textbook/Magazine)에 한해 미세 트렌드 개정 보정(-5%) 적용.
     """
     seasonality = CATEGORY_SEASONALITY.get(category, 1.0)
     base_price = list_price * CATEGORY_BASE_RATE.get(category, 0.40)
     
+    # Category Trend Sensitivity (Books do NOT expire like food!)
+    trend_sensitive_categories = ["IT", "Textbook", "Magazine"]
+    trend_decay = 0.05 if category in trend_sensitive_categories else 0.0
+    trend_badge_text = f"카테고리 트렌드 보정: -{int(trend_decay*100)}% ({category})" if trend_decay > 0 else "카테고리 트렌드 보정: 0% (스테디셀러)"
+
     best_discount = 0.05
     max_expected_revenue = 0.0
     best_p_sold = 0.0
@@ -78,7 +82,7 @@ def calculate_price_elasticity_revenue_optimization(
             (delta * 0.80) -
             (((100.0 - ubci_score) / 100.0) * 0.60) +
             ((seasonality - 1.0) * 0.40) -
-            (min(days_in_inventory, 365) / 365.0 * 0.10)
+            trend_decay
         )
         p_sold = max(0.05, min(0.98, p_sold))
         
