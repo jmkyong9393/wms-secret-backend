@@ -110,20 +110,30 @@ class DimensionCalculatorAgent:
 
 class FragilitySafetyAgent:
     """
-    SubAgent 2: 파손 위험도 및 3단계 안전 적재 레이어링 설계 에이전트
+    SubAgent 2: 파손 위험도 및 동적 UBCI 안전 등급 산출 에이전트
+    Safety Score = UBCI * 0.6 + (100 - Damage Risk) * 0.4
     """
     def evaluate(self, books: List[Dict[str, Any]]) -> Dict[str, Any]:
         has_hardcover = any(b.get("is_hardcover", False) for b in books)
         high_risk = any(b.get("fragile", False) for b in books)
+        avg_ubci = sum(b.get("ubci", 92) for b in books) / max(1, len(books))
 
-        if high_risk or has_hardcover:
-            safety_level = "SAFE (A+)"
-            stacking_order = "하단: 4륙판 평면 받침 ➔ 중단: 신국판 하드커버 ➔ 상단: 에어캡 완충 Pad"
+        damage_risk_score = 15 if high_risk else (5 if has_hardcover else 0)
+        safety_score = round((avg_ubci * 0.6) + ((100 - damage_risk_score) * 0.4), 1)
+
+        if safety_score >= 88.0:
+            safety_level = f"SAFE (A+) [{safety_score}점]"
+        elif safety_score >= 75.0:
+            safety_level = f"SAFE (A) [{safety_score}점]"
+        elif safety_score >= 60.0:
+            safety_level = f"CAUTION (B) [{safety_score}점]"
         else:
-            safety_level = "SAFE (A)"
-            stacking_order = "하단: 일반 서적 ➔ 상단: 슬림 에어캡 완충재"
+            safety_level = f"WARNING (C) [{safety_score}점]"
+
+        stacking_order = "하단: 4륙판 수평 받침대 ➔ 중단: 신국판 하드커버 ➔ 상단: 슬림 앰버 완충 Pad"
 
         return {
+            "safety_score": safety_score,
             "safety_level": safety_level,
             "stacking_order": stacking_order
         }
