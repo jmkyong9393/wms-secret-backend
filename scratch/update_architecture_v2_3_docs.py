@@ -15,14 +15,14 @@ pm_content = """# LangGraph 기반 Supervisor Multi-Agent 도서 비전 검수 �
 
 본 명세서는 **다중 에이전트(Multi-Agent) 파이프라인**을 통해 B2B 도서 반품/검수 라인의 **자동화율 85% 이상, 실효 미탐율 0%**를 동시에 달성하기 위한 엔터프라이즈 AI 비전 검수 아키텍처를 정의합니다.
 
-기존 단일 객체 탐지 모델(YOLO)의 한계인 **시각적 맥락 인식 부재 및 저재현율(Recall) 문제**를 해결하기 위해, **LangGraph 기반의 Supervisor Star Topology 다중 에이전트 그래프**와 **YOLOv8 앙상블 + GPT-4o Vision 하이브리드 엔진**, 그리고 **HITL (Human-in-the-Loop) 이중 방어선**을 결합한 통합 시스템을 구축합니다.
+기존 단일 객체 탐지 모델(YOLO)의 한계인 **시각적 맥락 인식 부재 및 저재현율(Recall) 문제**를 해결하기 위해, **LangGraph 기반의 Supervisor Supervisor Pattern Multi-Agent Architecture 다중 에이전트 그래프**와 **YOLOv8 앙상블 + GPT-4o Vision 하이브리드 엔진**, 그리고 **HITL (Human-in-the-Loop) 이중 방어선**을 결합한 통합 시스템을 구축합니다.
 
 ---
 
 ## 2. 전체 시스템 멀티 에이전트 토폴로지 (System Topology & Visualizations)
 
-### A. Supervisor Star Topology 전체 구조 다이어그램
-본 시스템은 **LangGraph의 StateGraph**를 기반으로 중앙 `Supervisor` 노드가 전역 상태(`WMSInspectionState`)를 실시간 모니터링하며 최적의 에이전트로 동적 라우팅하는 **Star Topology 구조**를 채택합니다.
+### A. Supervisor Supervisor Pattern Multi-Agent Architecture 전체 구조 다이어그램
+본 시스템은 **LangGraph의 StateGraph**를 기반으로 중앙 `Supervisor` 노드가 전역 상태(`WMSInspectionState`)를 실시간 모니터링하며 최적의 에이전트로 동적 라우팅하는 **Supervisor Pattern Multi-Agent Architecture 구조**를 채택합니다.
 
 ```mermaid
 flowchart TD

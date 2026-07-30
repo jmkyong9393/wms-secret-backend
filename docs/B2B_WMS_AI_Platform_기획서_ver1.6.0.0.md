@@ -25,7 +25,7 @@
 - **WMS Core API Layer (FastAPI):** Python FastAPI 기반 메인 비즈니스 서버. 주문, 출고, 입고, 반품, 재고 증감을 모두 포괄하는 **WMS 코어 트랜잭션 전담**. 
 - **Orchestration & AI Worker Layer (API & Worker 분리):** 
   - **API Pod:** 클라이언트 요청 시 DB에 `PENDING` 큐만 적재하고 즉시 응답(`202 Accepted`)하여 병목을 원천 차단.
-  - **AI Worker 데몬:** LangGraph 기반 Supervisor (Star Topology) 상태 머신 구동. K8s 오토스케일링(HPA) 환경에서의 메모리 증발 및 중복 실행을 막기 위해 Redis 브로커 및 Celery Worker 기반 비동기 큐를 전면 채택하여 작업을 안전하게 비동기 분산 처리.
+  - **AI Worker 데몬:** LangGraph 기반 Supervisor (Supervisor Pattern Multi-Agent Architecture) 상태 머신 구동. K8s 오토스케일링(HPA) 환경에서의 메모리 증발 및 중복 실행을 막기 위해 Redis 브로커 및 Celery Worker 기반 비동기 큐를 전면 채택하여 작업을 안전하게 비동기 분산 처리.
 - **Analytics & FDS Layer (CronJob 분리):**
   - 무거운 Pandas/ML 기반 이상거래탐지(FDS) 및 주간 리포팅 로직은 API 서버 부하 방지를 위해 **K8s CronJob + 독립 Batch 스크립트** 형태로 분리하여 매일 자정 실행.
 - **Data & Storage Layer (Two-Track 전략):**

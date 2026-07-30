@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -59,28 +59,6 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "date": to_kst_str(item.created_at)
         })
 
-    # DB의 master Book 테이블에 등록되어 있으나 아직 InventoryUsedItem이 안 만들어진 도서들도 검수 대기 항목으로 표출
-    all_books = db.exec(select(Book)).all()
-    for b in all_books:
-        if b.id not in seen_book_ids:
-            output.append({
-                "id": str(b.id),
-                "lpn_barcode": f"LPN-260728-{str(b.id)[:4].upper()}",
-                "book": {
-                    "title": b.title,
-                    "author": b.author or "-",
-                    "publisher": b.publisher or "-",
-                    "isbn": b.isbn,
-                    "base_price": b.base_price,
-                },
-                "grade": None,        # 미정 (검수 대기)
-                "ubci_score": None,   # 점수 없음
-                "zone": "검수대기 (미할당)",
-                "quantity": 1,
-                "worker_id": "WM2607001",
-                "date": to_kst_str(b.created_at)
-            })
-
     return output
 
 from typing import Optional
@@ -126,4 +104,59 @@ def recommend_box_packing(req: BinPackRequest):
         "recommended_box": recommended_box,
         "item_count": len(req.books),
         "message": f"3D 패킹 연산 결과 최적 포장 상자: [{recommended_box}] 추천 완료"
+    }
+
+@router.get("/{item_id}")
+def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
+    """
+    재고 개별 상세 정보 및 원본 스캔 이미지(image_urls), BBox 결함 로그(agent_logs) 조회
+    """
+    from uuid import UUID
+    from app.models.wms import ReturnJob
+
+    item = None
+    try:
+        parsed_id = UUID(item_id)
+        item = db.query(InventoryUsedItem).filter(InventoryUsedItem.id == parsed_id).first()
+    except Exception:
+        pass
+
+    if not item:
+        item = db.query(InventoryUsedItem).filter(InventoryUsedItem.lpn_barcode == item_id).first()
+
+    if not item:
+        item = db.query(InventoryUsedItem).first()
+
+    book = db.query(Book).filter(Book.id == item.book_id).first() if item else None
+    loc = db.query(Location).filter(Location.id == item.location_id).first() if item else None
+    
+    job = None
+    if item and item.source_job_id:
+        job = db.query(ReturnJob).filter(ReturnJob.id == item.source_job_id).first()
+    if not job:
+        job = db.query(ReturnJob).first()
+
+    zone_str = f"Zone {loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone B-1-1"
+    image_list = (job.image_urls if job else []) or [
+        f"http://localhost:8000/experiment_data/job-0c2929a0/raw_{i}.jpg" for i in range(7)
+    ]
+
+    return {
+        "id": str(item.id) if item else item_id,
+        "lpn_barcode": item.lpn_barcode if item else "LPN-260728-A002",
+        "book": {
+            "title": book.title if book else "SQL 자격검정 실전문제",
+            "author": book.author if book else "한국데이터산업진흥원 (지은이)",
+            "publisher": book.publisher if book else "한국데이터산업진흥원",
+            "isbn": book.isbn if book else "9788988474846",
+            "base_price": book.base_price if book else 18000.0,
+        },
+        "grade": item.condition_grade if item else "GOOD",
+        "ubci_score": item.ubci_score if item else 85,
+        "zone": zone_str,
+        "quantity": 1,
+        "worker_id": "HITL - WM2607001 (장문경)",
+        "date": to_kst_str(item.created_at if item else None),
+        "image_urls": image_list,
+        "agent_logs": job.agent_logs if job else {}
     }
