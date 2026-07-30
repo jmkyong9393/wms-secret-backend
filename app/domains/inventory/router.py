@@ -51,8 +51,8 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
                 "isbn": book.isbn if book else "-",
                 "base_price": book.base_price if book else 0.0,
             },
-            "grade": item.condition_grade,  # 미지정 시 None 반환
-            "ubci_score": item.ubci_score,  # 미지정 시 None 반환
+            "grade": item.condition_grade if item.condition_grade else ("MINT" if (item.ubci_score or 85) >= 95 else "GOOD"),
+            "ubci_score": item.ubci_score if item.ubci_score is not None else 85,
             "zone": zone_str,
             "quantity": 1,
             "worker_id": "WM2607001",
