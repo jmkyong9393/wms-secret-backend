@@ -16,7 +16,7 @@ class DimensionCalculatorAgent:
         self.boxes = [
             # [📖 도서물류 전용 슬림 박스 (Book Logistics Slim Boxes)]
             {"id": "BOOK-S1", "category": "BOOK_SLIM", "name": "도서슬림 소형 1호", "specs": "250x150x50mm", "max_vol": 1875000, "height": 50},
-            {"id": "BOOK-S2", "category": "BOOK_SLIM", "name": "도서슬림 소형 2호 (추천)", "specs": "250x150x60mm", "max_vol": 2250000, "height": 60},
+            {"id": "BOOK-S2", "category": "BOOK_SLIM", "name": "도서슬림 소형 2호", "specs": "250x150x60mm", "max_vol": 2250000, "height": 60},
             {"id": "BOOK-M1", "category": "BOOK_SLIM", "name": "도서슬림 중형 1호", "specs": "300x200x70mm", "max_vol": 4200000, "height": 70},
             {"id": "BOOK-M2", "category": "BOOK_SLIM", "name": "도서슬림 중형 2호", "specs": "300x200x90mm", "max_vol": 5400000, "height": 90},
             
