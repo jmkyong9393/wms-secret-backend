@@ -105,5 +105,6 @@ def calculate_price_elasticity_revenue_optimization(
         "predicted_purchase_probability": round(best_p_sold * 100, 1),
         "max_expected_revenue": round(max_expected_revenue, -1),
         "final_price": final_price,
+        "trend_badge_text": trend_badge_text,
         "optimization_model": "XGBoost 2-Step Price Elasticity & Expected Revenue Maximization"
     }
