@@ -3,9 +3,15 @@ from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from typing import Optional, List, Dict, Any
 from uuid import UUID, uuid4
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from sqlalchemy import Column, Enum as SQLEnum, Text
+
+KST = timezone(timedelta(hours=9))
+
+def now_kst() -> datetime:
+    """한국 표준시(KST, UTC+9) 현재 시각 반환 헬퍼 (DB 적재용)"""
+    return datetime.now(KST).replace(tzinfo=None)
 
 # --- Enums (상태 및 타입 정의) ---
 
@@ -90,8 +96,8 @@ class User(SQLModel, table=True):
     status: UserStatusEnum = Field(default=UserStatusEnum.ACTIVE, sa_column=Column(SQLEnum(UserStatusEnum), nullable=False, default=UserStatusEnum.ACTIVE))
     must_change_password: bool = Field(default=False)
     last_login: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class Book(SQLModel, table=True):
     __tablename__ = "books"
@@ -110,8 +116,8 @@ class Book(SQLModel, table=True):
     thickness_mm: Optional[int] = Field(default=None)
     virtual_stock: int = Field(default=0)
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class InboundJob(SQLModel, table=True):
     __tablename__ = "inbound_jobs"
@@ -120,8 +126,8 @@ class InboundJob(SQLModel, table=True):
     inbound_type: str = Field(max_length=50) # InboundTypeEnum
     status: str = Field(max_length=50) # InboundStatusEnum
     supplier_name: Optional[str] = Field(default=None, max_length=255)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class InboundItem(SQLModel, table=True):
     __tablename__ = "inbound_items"
@@ -130,8 +136,8 @@ class InboundItem(SQLModel, table=True):
     inbound_job_id: UUID = Field(foreign_key="inbound_jobs.id", ondelete="CASCADE")
     book_id: UUID = Field(foreign_key="books.id", ondelete="RESTRICT")
     quantity: int = Field(default=0)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class Location(SQLModel, table=True):
     __tablename__ = "locations"
@@ -142,8 +148,8 @@ class Location(SQLModel, table=True):
     shelf: str = Field(max_length=50)
     barcode: str = Field(max_length=255, unique=True, index=True)
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class Inventory(SQLModel, table=True):
     __tablename__ = "inventory"
@@ -155,8 +161,8 @@ class Inventory(SQLModel, table=True):
     book_id: UUID = Field(foreign_key="books.id", ondelete="CASCADE")
     location_id: UUID = Field(foreign_key="locations.id", ondelete="RESTRICT")
     quantity: int = Field(default=0)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class InventoryUsedItem(SQLModel, table=True):
     __tablename__ = "inventory_used_items"
@@ -170,8 +176,8 @@ class InventoryUsedItem(SQLModel, table=True):
     certificate_url: Optional[str] = Field(default=None, max_length=255)
     item_status: str = Field(default="IN_STOCK", max_length=20) # ItemStatusEnum
     source_job_id: Optional[UUID] = Field(default=None, foreign_key="return_jobs.id", ondelete="SET NULL")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class Order(SQLModel, table=True):
     __tablename__ = "orders"
@@ -181,8 +187,8 @@ class Order(SQLModel, table=True):
     type: str = Field(max_length=20) # OrderTypeEnum
     total_price: float
     status: str = Field(max_length=20) # OrderStatusEnum
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class OrderItem(SQLModel, table=True):
     __tablename__ = "order_items"
@@ -192,8 +198,8 @@ class OrderItem(SQLModel, table=True):
     book_id: UUID = Field(foreign_key="books.id", ondelete="RESTRICT")
     quantity: int = Field(default=1)
     unit_price: float = Field(default=0.0)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class ReturnJob(SQLModel, table=True):
     __tablename__ = "return_jobs"
@@ -213,8 +219,8 @@ class ReturnJob(SQLModel, table=True):
     latency_ms: Optional[int] = Field(default=None)
     retry_count: int = Field(default=0)
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class InventoryLog(SQLModel, table=True):
     __tablename__ = "inventory_logs"
@@ -226,8 +232,8 @@ class InventoryLog(SQLModel, table=True):
     quantity_change: int
     target_lpn: Optional[str] = Field(default=None, max_length=255)
     picked_location: Optional[str] = Field(default=None, max_length=50)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class Board(SQLModel, table=True):
     __tablename__ = "boards"
@@ -235,8 +241,8 @@ class Board(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     job_id: Optional[UUID] = Field(default=None, foreign_key="return_jobs.id", ondelete="CASCADE")
     ticket_status: str = Field(max_length=20) # BoardTicketStatusEnum
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class BoardPost(SQLModel, table=True):
     __tablename__ = "board_posts"
@@ -247,8 +253,8 @@ class BoardPost(SQLModel, table=True):
     title: str = Field(max_length=255)
     content: str
     attachment_paths: List[str] = Field(default=[], sa_column=Column(JSONB))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
 
 class FdsReport(SQLModel, table=True):
     __tablename__ = "fds_reports"
@@ -257,7 +263,7 @@ class FdsReport(SQLModel, table=True):
     customer_name: str = Field(max_length=255)
     fraud_score: int
     fraud_reason: Optional[str] = Field(default=None, max_length=255)
-    detected_at: datetime = Field(default_factory=datetime.utcnow)
+    detected_at: datetime = Field(default_factory=now_kst)
 
 class WeeklyInsight(SQLModel, table=True):
     __tablename__ = "weekly_insights"
@@ -269,7 +275,7 @@ class WeeklyInsight(SQLModel, table=True):
     location_hotspots: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
     logistics_hotspots: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
     predicted_returns: int = Field(default=0)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)
 
 class AdminAuditLog(SQLModel, table=True):
     __tablename__ = "admin_audit_logs"

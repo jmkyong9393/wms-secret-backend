@@ -118,7 +118,7 @@ sequenceDiagram
     API->>DB: 8. INSERT PENDING 상태 저장
     API-->>Worker: 9. 202 Accepted (API 응답 종료)
     DB->>WorkerDaemon: 10. Celery/Redis 비동기 큐 Redis Pub/Sub SSE
-    %% [4] LangGraph Supervisor Star Topology 처리
+    %% [4] LangGraph Supervisor Supervisor Pattern Multi-Agent Architecture 처리
     DB->>Graph(Supervisor): 11. Celery/Redis 비동기 Redis Pub/Sub SSE 워커 할당
     Graph(Supervisor)->>Graph(Vision): 12. [Vision Agent] 외관/내지 불량 탐지 지시
     Graph(Vision)-->>Graph(Supervisor): 13. 불량 유무 및 BBox 결과 보고

@@ -5,7 +5,7 @@ Tech Stack#
 Python 3.11+
 FastAPI
 SQLModel / PostgreSQL (Celery 큐 Queue)
-LangGraph (Agentic Workflow & Star Topology)
+LangGraph (Agentic Workflow & Supervisor Pattern Multi-Agent Architecture)
 LangChain (LLMOps & Tracing)
 Setup#
 # 1. 패키지 동기화 및 가상환경 세팅

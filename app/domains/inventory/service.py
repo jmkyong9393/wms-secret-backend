@@ -106,7 +106,7 @@ def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: 
     
     return new_item, book
 
-def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_grade: str, final_status: str = "COMPLETED") -> InventoryUsedItem:
+def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_grade: str, final_status: str = "COMPLETED", book_id = None, ubci_score: int = 85, source_job_id: str = None, certificate_url: str = None) -> InventoryUsedItem:
     """
     [Report Agent 최종 보고서 생성 시점 랙 위치 자동 할당]
     - HITL_REQUIRED (승인 대기/이의 발생): 보관 랙 위치 할당 보류 (location_id = None, 버퍼 존 대기)
@@ -114,8 +114,52 @@ def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_g
     - COMPLETED / APPROVED (MINT, GOOD, NORMAL): 카테고리/등급/크기 3차원 알고리즘으로 Zone A, B, C 최종 랙 위치 할당
     """
     item = db.query(InventoryUsedItem).filter(InventoryUsedItem.lpn_barcode == lpn_barcode).first()
+    book = db.query(Book).filter(Book.id == (item.book_id if item else book_id)).first() if (item or book_id) else None
+
+    # 등급/카테고리/판형 3차원 알고리즘으로 Zone A/B/C/D/E 랙 위치 자동 결정
+    rec_zone, rec_rack, rec_shelf = recommend_optimal_warehouse_zone(
+        grade=final_grade,
+        category=book.category_type if book else "IT/컴퓨터",
+        base_price=book.base_price if book else 20000.0,
+        standard_size=book.standard_size if book else None
+    )
+    location = get_or_create_location(db, zone=rec_zone, rack=rec_rack, shelf=rec_shelf)
+
     if not item:
-        raise HTTPException(status_code=404, detail=f"LPN [{lpn_barcode}] not found")
+        # LPN 항목이 DB에 없으면 위치(location_id) 및 도서정보를 결합하여 새 재고 아이템 생성
+        if not book_id and book:
+            book_id = book.id
+        elif not book_id:
+            first_book = db.query(Book).first()
+            book_id = first_book.id if first_book else None
+
+        cert_code = str(source_job_id)[:6].upper() if source_job_id else "32053B"
+        generated_cert_url = certificate_url or f"/certificate/CERT-20260728-{cert_code}"
+
+        item = InventoryUsedItem(
+            book_id=book_id,
+            location_id=location.id,
+            lpn_barcode=lpn_barcode,
+            condition_grade=final_grade,
+            ubci_score=ubci_score,
+            item_status="IN_STOCK",
+            source_job_id=source_job_id,
+            certificate_url=generated_cert_url,
+            created_at=datetime.utcnow()
+        )
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        return item
+
+    # 기존 항목 업데이트 시에도 source_job_id 및 certificate_url 동기화
+    if source_job_id:
+        item.source_job_id = source_job_id
+    if certificate_url:
+        item.certificate_url = certificate_url
+    elif not item.certificate_url:
+        cert_code = str(item.source_job_id or '32053B')[:6].upper()
+        item.certificate_url = f"/certificate/CERT-20260728-{cert_code}" 
 
     book = db.query(Book).filter(Book.id == item.book_id).first()
 

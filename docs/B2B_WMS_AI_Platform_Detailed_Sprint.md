@@ -12,7 +12,7 @@
 | :--- | :---: | :--- |
 | **Tech PM & DevOps** | **장문경 (PM)** | Git Gatekeeper, DevOps/EKS Infrastructure manager, Kanban master, 통합 관리자(Integration Manager)
   * **[1.4.2.0 업데이트]** HPA(CPU) 및 KEDA(Queue 길이) 하이브리드 오토스케일링 아키텍처 배포 관리, 트러블슈터(Cross-functional Troubleshooter), 코드 검수(Code Reviewer). (NO backend API orchestration) |
-| **AI Lead** | **홍경표(Main)** | LangGraph Supervisor (Star Topology) 조립, Fast-track Routing (Mint 등급 Auto-refund) 구현 및 프롬프트 제어 |
+| **AI Lead** | **홍경표(Main)** | LangGraph Supervisor (Supervisor Pattern Multi-Agent Architecture) 조립, Fast-track Routing (Mint 등급 Auto-refund) 구현 및 프롬프트 제어 |
 | **BE-1 (Data/MLOps)** | **소한민(Main)<br/>고영빈(Sub)** | Dynamic RAG 구축, FDS 및 통계(CronJob), 오토 라벨링 데이터 적재 파이프라인 (YOLO 학습 배제) |
 | **BE-2 (Orchestration)**| **서다은(Main)** | Redis & Celery 기반 LangGraph 연동, 실시간 SSE 통신, 대시보드 API 구현 |
 | **BE-3 (WMS Core API)** | **박민우(Main)** | 전체 물류 DB 설계 및 WMS CRUD API (No Spring Boot) 전담 개발. FIFO by UBCI, 3D Bin Packing 구현 |
@@ -41,7 +41,7 @@
 * **[2주차] 코어 개발 분업**
   * `[BE-3]`: **WMS 코어 API (고객 주문 출고, 재고 차감, 정상 입고/편입)** 개발 전담.
   * `[BE-1]`: FDS(블랙컨슈머 이상거래탐지) 및 주간 통계를 위한 독립된 `report_batch.py` 및 K8s CronJob 인프라 세팅.
-  * `[AI Lead]`: LangGraph Supervisor (Star Topology) 기반 에이전트 조립 및 Fast-track Routing (Vision detects Mint -> Auto-refund, Policy/Critic 생략) 파이프라인 완성.
+  * `[AI Lead]`: LangGraph Supervisor (Supervisor Pattern Multi-Agent Architecture) 기반 에이전트 조립 및 Fast-track Routing (Vision detects Mint -> Auto-refund, Policy/Critic 생략) 파이프라인 완성.
   * `[FE-1]`: 모바일 웹 Canvas 리사이징(WebP 압축) 및 CloudFront Edge 다이렉트 업로드 연동 완료.
 * **[3주차] API 오케스트레이션 및 비동기 연동**
   * `[BE-2]`: AI 판독 결과를 `BE-3` WMS API와 내부 연결하여 자동 입/출고 완성. Redis & Celery 강제 적용. 클라이언트 SSE 푸시 적용.

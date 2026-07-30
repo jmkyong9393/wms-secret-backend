@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 
 # LLMOps 설계: gpt-4o-mini, 낮은 temperature로 정해진 규정 준수
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0)
 
 def run_policy_node(state):
     print("--- [Node: Policy Agent] 가동 ---")

@@ -106,7 +106,11 @@ def save_inspection_result(
             **(ai_result.get("agent_logs") or {}),
             **extra_logs,
         }
-        job.status = final_status
+        # HITL 수동 검수 대기 건에 대한 AI 재검수인 경우, 사람 관리자의 결재 전까지 HITL_REQUIRED 상태를 보존합니다!
+        if job.status == "HITL_REQUIRED":
+            job.status = "HITL_REQUIRED"
+        else:
+            job.status = final_status
         job.updated_at = datetime.utcnow()
      
         # 최종 DB 저장
