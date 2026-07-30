@@ -171,3 +171,34 @@ def calculate_dynamic_price(req: DynamicPriceRequest):
         days_in_inventory=req.days_in_inventory,
         category=req.category
     )
+
+@router.get("/available-books")
+def get_available_books(session: Session = Depends(get_db)):
+    """
+    3D Bin Packing 및 Dynamic Pricing 시뮬레이션용 DB 실재고 도서 및 LPN 아이템 목록 조회
+    """
+    from datetime import datetime
+    statement = select(InventoryUsedItem, Book).join(Book, InventoryUsedItem.book_id == Book.id)
+    results = session.exec(statement).all()
+    
+    now = datetime.utcnow()
+    output = []
+    for item, book in results:
+        days_in_inventory = (now - item.created_at).days if item.created_at else 120
+        days_in_inventory = max(1, days_in_inventory)
+        
+        output.append({
+            "id": str(item.id),
+            "lpn": item.lpn_barcode,
+            "title": book.title,
+            "isbn": book.isbn,
+            "category": book.category_type,
+            "listPrice": book.base_price,
+            "ubciScore": item.ubci_score or 78,
+            "conditionGrade": item.condition_grade or "A",
+            "daysInInventory": days_in_inventory,
+            "standard_size": book.standard_size or "신국판 152x225mm",
+            "thickness_mm": book.thickness_mm or 20,
+            "customer": "B2B 가맹 서점 / 교보문고"
+        })
+    return output
