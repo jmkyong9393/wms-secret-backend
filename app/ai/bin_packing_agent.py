@@ -135,7 +135,7 @@ class PackagingPlannerAgent:
             f"AI-Agent Multi-Agent 3D Pack Optimizer 분석 결과: 총 {len(books)}권 적재 시 "
             f"{'하드커버 모서리 보호 중단 배치 및' if safety['has_hardcover'] else '기초 수평 적재 후'} "
             f"{box_info['name']}({box_info['specs']})를 추천합니다. "
-            f"상단 에어캡 완충재({cushion}%)를 배치하여 적재 효율 {eff}% 및 파손 방지 A+ 등급을 달성하였습니다."
+            f"하단(퍼플), 중단(에메랄드) 층별 레이어링 및 상단 에어캡 완충재(앰버, {cushion}%)를 배치하여 적재 효율 {eff}% 및 파손 방지 A+ 등급을 달성하였습니다."
         )
 
 class BinPackingAgent:
