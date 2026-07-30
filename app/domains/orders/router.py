@@ -134,12 +134,12 @@ def complete_outbound(req: OutboundCompleteRequest, session: Session = Depends(g
 @router.post("/{order_id}/picking", summary="현장 피킹(Picking) 상태 변경")
 def process_order_picking(
     order_id: str,
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """
     출고 지시서에 명시된 랙 위치에서 도서 피킹 작업 완료 처리
     """
-    logger.info(f"Processed Picking for Order {order_id}")
+    print(f"Processed Picking for Order {order_id}")
     return {
         "status": "PICKED",
         "order_id": order_id,
