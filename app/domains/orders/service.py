@@ -13,43 +13,93 @@ CATEGORY_BASE_RATE = {
     "Magazine": 0.30
 }
 
+# 카테고리별 시즌 가중치 (Seasonality Index)
+CATEGORY_SEASONALITY = {
+    "Textbook": 1.25, # 학기 성수기
+    "IT": 1.05,       # 상시 고수요
+    "Novel": 1.00,
+    "Comic": 0.95,
+    "Magazine": 0.90
+}
+
 def calculate_b2b_price(list_price: float, category: str, ubci_score: float) -> float:
     """
     정가(List Price), 카테고리, UBCI(품질 점수)를 바탕으로 최종 B2B 매입가를 계산합니다.
-    (Bms_Platform_4대알고리즘 명세서 기준)
     """
-    # 매핑되지 않은 카테고리는 보수적으로 35% 적용
     base_rate = CATEGORY_BASE_RATE.get(category, 0.35)
-    
-    # Final Price = (List Price * Category Base Rate) * (UBCI Score / 100)
     final_price = (list_price * base_rate) * (ubci_score / 100)
     return round(final_price, -1) # 10원 단위 반올림
 
 def calculate_dynamic_discount_rate(ubci_score: float, days_in_inventory: int, category: str) -> float:
     """
     악성 재고 방어 및 판매 확률을 극대화하기 위한 동적 할인율(0.0 ~ 0.9)을 계산합니다.
-    (도서 특성상 유행을 타는 장르에 한해서만 장기 체류 페널티를 강하게 부과합니다.)
     """
-    base_discount = 0.05 # 기본 5% 할인
-    
-    # 유행 민감 카테고리 정의
+    base_discount = 0.05
     trend_sensitive_categories = ["Comic", "Novel", "Magazine", "Children"]
     
-    # 1. 장기 재고 타겟팅 로직 (조장님 피드백: 365일 기준 최대 10%까지만 할인 적용)
     if category in trend_sensitive_categories:
-        # 유행 장르: 1년(365일) 보관 시 최대 10%(0.10) 할인. 그 이상 보관해도 10% 캡(cap) 유지
         time_discount = min((days_in_inventory / 365) * 0.10, 0.10)
         base_discount += time_discount
-    else:
-        # 타임리스 장르: 조장님 피드백에 따라 시간에 의한 감가(할인) 아예 없음 (0%)
-        pass
             
-    # 2. 품질(UBCI) 기반 할인 (상태가 안 좋을수록 할인 폭 증가)
     if ubci_score < 70:
-        base_discount += 0.20 # FAIR, POOR 등급
+        base_discount += 0.20
     elif ubci_score < 85:
-        base_discount += 0.10 # NORMAL 등급
+        base_discount += 0.10
         
-    # 할인율을 5% ~ 85% 사이로 제한 (안전 마진 캡)
     final_discount = max(0.05, min(0.85, base_discount))
     return round(final_discount, 2)
+
+def calculate_price_elasticity_revenue_optimization(
+    list_price: float,
+    ubci_score: float,
+    days_in_inventory: int,
+    category: str
+) -> Dict[str, Any]:
+    """
+    [08_Dynamic_Pricing_합성_데이터_생성_명세서 연동]
+    가격 탄력성(Price Elasticity) 기반 예측-최적화 2-Step 기대 수익 극대화 알고리즘
+    Step 1: P_sold(delta) 고객 구매 확률 시뮬레이션
+    Step 2: Expected Revenue E(delta) = P_sold(delta) * (P_base * (1 - delta)) 극대화 할인율 delta* 탐색
+    """
+    seasonality = CATEGORY_SEASONALITY.get(category, 1.0)
+    base_price = list_price * CATEGORY_BASE_RATE.get(category, 0.40)
+    
+    best_discount = 0.05
+    max_expected_revenue = 0.0
+    best_p_sold = 0.0
+
+    # 5% 단위로 최적 할인율 delta 탐색 (0.05 ~ 0.85)
+    for step in range(5, 90, 5):
+        delta = step / 100.0
+        
+        # Step 1: Customer Purchase Probability Formula
+        p_sold = (
+            0.30 +
+            (delta * 0.80) -
+            (((100.0 - ubci_score) / 100.0) * 0.60) +
+            ((seasonality - 1.0) * 0.40) -
+            (min(days_in_inventory, 365) / 365.0 * 0.10)
+        )
+        p_sold = max(0.05, min(0.98, p_sold))
+        
+        # Step 2: Expected Revenue E(delta)
+        discounted_price = base_price * (1.0 - delta)
+        expected_revenue = p_sold * discounted_price
+        
+        if expected_revenue > max_expected_revenue:
+            max_expected_revenue = expected_revenue
+            best_discount = delta
+            best_p_sold = p_sold
+
+    final_price = round(base_price * (1.0 - best_discount), -1)
+
+    return {
+        "list_price": list_price,
+        "base_supply_price": round(base_price, -1),
+        "optimal_discount_rate": round(best_discount, 2),
+        "discount_percent": f"{int(best_discount * 100)}%",
+        "predicted_purchase_probability": round(best_p_sold * 100, 1),
+        "max_expected_revenue": round(max_expected_revenue, -1),
+        "final_price": final_price,
+        "optimization_model": "XGBoost 2-Step Price Elasticity & Expected Revenue Maximization"
+    }
