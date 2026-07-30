@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.wms import Order, OrderStatusEnum, InventoryUsedItem, ItemStatusEnum, Book
 from app.domains.inventory.bin_packing import recommend_optimal_box
 from app.domains.orders.service import calculate_b2b_price, calculate_dynamic_discount_rate
+from app.ai.bin_packing_agent import bin_packing_agent
 
 router = APIRouter(prefix="/orders", tags=["Orders & Outbound"])
 
@@ -65,21 +66,17 @@ def pick_outbound_3d_pack(order_id: Optional[str] = None, books: Optional[List[D
             {"category": "Novel", "format_size": "신국판", "pages": 320, "is_color": False, "is_hardcover": False}
         ]
         
-    recommended_box = recommend_optimal_box(books)
-    box_specs_map = {
-        "BOX-SMALL": "소형 A-BOX (250x150x100mm)",
-        "BOX-MEDIUM": "중형 B-BOX (300x200x150mm - 추천)",
-        "BOX-LARGE": "대형 C-BOX (400x300x200mm)",
-        "Standard-Box-B": "중형 B-BOX (300x200x150mm - 추천)"
-    }
+    ai_result = bin_packing_agent.optimize_packing(books)
     
     return {
         "order_id": order_id or f"ORD-{datetime.now().strftime('%Y%m%d')}-01",
-        "recommended_box": recommended_box,
-        "box_spec_name": box_specs_map.get(recommended_box, "중형 B-BOX (300x200x150mm)"),
-        "efficiency_percent": 94.2,
-        "buffer_margin": "15% 완충재 마진 포함",
-        "message": f"3D Bin Packing 최적 추천: {recommended_box}"
+        "recommended_box": ai_result["recommended_box"],
+        "box_specs": ai_result["box_specs"],
+        "efficiency_percent": ai_result["efficiency"],
+        "air_cushion_ratio": ai_result["air_cushion_ratio"],
+        "safety_grade": ai_result["safety_grade"],
+        "ai_reasoning_log": ai_result["ai_reasoning_log"],
+        "message": f"AI-Agent 3D Pack Optimizer 추천: {ai_result['recommended_box']}"
     }
 
 @router.post("/outbound/ship")
