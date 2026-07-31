@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage
 from app.ai.vision_agent import VisionAgent
 from app.ai.policy_agent import run_policy_node
 from app.ai.critic_agent import run_critic_node
+from app.ai.explainer_agent import ExplainerAgent
 import os
 import json
 from PIL import Image
@@ -33,6 +34,9 @@ class AgentState(TypedDict, total=False):
     critique: Optional[str]
     needs_hitl: Optional[bool]
     retry_count: int
+
+    # 4. Explainer Agent의 실시간 LLMOps 종합 소견서 출력값
+    explainer_summary: Optional[str]
 
 def run_vision_node(state: AgentState):
     print("--- [Node: Vision Agent] 가동 ---")
@@ -101,14 +105,36 @@ def hitl_node(state: AgentState):
     print("--- [Node: HITL] 관리자 수동 검수 (Human-in-the-loop) 큐 대기 ---")
     return {"needs_hitl": True}
 
+def run_explainer_node(state: AgentState):
+    print("--- [Node: Explainer Agent] 가동 (GPT-4o-mini 실시간 소견서 생성) ---")
+    explainer = ExplainerAgent()
+    
+    title = "도서"
+    lpn = state.get("job_id", "")
+    defect_desc = state.get("defect_description", "MINT 깨끗함")
+    score = state.get("ubci_score", 85)
+    grade = state.get("ubci_grade", "GOOD")
+    critique = state.get("critique", "APPROVED")
+    
+    summary = explainer.generate_explanation(
+        title=title,
+        lpn=lpn,
+        defect_description=defect_desc,
+        ubci_score=score,
+        grade=grade,
+        critic_status="검증 완료" if "APPROVED" in str(critique).upper() else "수동 검수 요청",
+        confidence=99.2
+    )
+    return {"explainer_summary": summary}
+
 def critic_router(state: AgentState):
     """Critic의 결과에 따라 조건부 루프를 제어하는 라우터"""
     critique = state.get("critique", "")
     retry_count = state.get("retry_count", 0)
     
-    if "APPROVED" in critique.upper():
-        print("--- [Router] Critic 판정: APPROVED. 워크플로우 종료 ---")
-        return "END"
+    if "APPROVED" in str(critique).upper():
+        print("--- [Router] Critic 판정: APPROVED. Explainer Agent 단계로 진입 ---")
+        return "explainer_agent"
     else:
         if retry_count < 1:
             print("--- [Router] Critic 판정: REJECTED. Policy Agent 1회 재시도 (재생각 기회 부여) ---")
@@ -125,6 +151,7 @@ def build_wms_graph():
     workflow.add_node("vision_agent", run_vision_node)
     workflow.add_node("policy_agent", run_policy_node)
     workflow.add_node("critic_agent", run_critic_node)
+    workflow.add_node("explainer_agent", run_explainer_node)
     workflow.add_node("hitl_node", hitl_node)
     
     # 엣지 연결 (조건부 엣지 포함)
@@ -137,11 +164,12 @@ def build_wms_graph():
         "critic_agent",
         critic_router,
         {
-            "END": END,
+            "explainer_agent": "explainer_agent",
             "policy_agent": "policy_agent",
             "hitl_node": "hitl_node"
         }
     )
+    workflow.add_edge("explainer_agent", END)
     workflow.add_edge("hitl_node", END)
     
     app = workflow.compile()

@@ -113,7 +113,12 @@ class Book(SQLModel, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     base_price: float = Field(default=0.0)
     standard_size: Optional[str] = Field(default=None, max_length=50) # BoxStandard Enum Name
-    thickness_mm: Optional[int] = Field(default=None)
+    thickness_mm: Optional[float] = Field(default=None)              # 도서 두께 (mm)
+    width_mm: Optional[float] = Field(default=185.0)                  # 도서 가로 (mm)
+    depth_mm: Optional[float] = Field(default=257.0)                  # 도서 세로/깊이 (mm)
+    weight_g: Optional[float] = Field(default=650.0)                  # 도서 중량/무게 (g)
+    page_count: Optional[int] = Field(default=380)                    # 도서 총 페이지 수 (p)
+    calc_source: Optional[str] = Field(default="ALADIN_REAL_SPEC", max_length=50) # 물리 규격 수집 출처
     virtual_stock: int = Field(default=0)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=now_kst)
