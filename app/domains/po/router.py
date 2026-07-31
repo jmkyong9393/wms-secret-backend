@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 from sqlmodel import Session, select
 from uuid import UUID, uuid4
 from app.db.session import get_db
-from app.models.wms import Book, Order, OrderTypeEnum, OrderStatusEnum, Inventory, Location, GradeEnum
+from app.models.wms import Book, Order, OrderTypeEnum, OrderStatusEnum, Inventory, Location, ConditionGradeEnum as GradeEnum
 
 router = APIRouter(prefix="/po", tags=["Auto PO"])
 
@@ -37,36 +37,56 @@ SEED_PO_BOOKS = [
 
 @router.get("/suggested")
 def get_suggested_po(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
-    statement = select(Book).limit(20)
+    # Query real books from DB ordered by virtual_stock ascending
+    statement = select(Book).order_by(Book.virtual_stock.asc()).limit(15)
     books = db.exec(statement).all()
 
     output = []
     if books and len(books) > 0:
         for idx, b in enumerate(books):
-            stock = b.virtual_stock if b.virtual_stock is not None else (idx % 8 + 2)
-            urgency = "CRITICAL" if stock < 10 else "HIGH"
+            stock = b.virtual_stock if (b.virtual_stock is not None and b.virtual_stock >= 0) else ((idx * 3 + 2) % 10)
+            safety_stock = 15
+            target_stock = 50
+            recommended_qty = max(10, target_stock - stock)
+            base_price = b.base_price if (b.base_price and b.base_price > 0) else 25000.0
+            unit_cost = int(base_price * 0.6)  # Wholesale price (60%)
+            estimated_cost = unit_cost * recommended_qty
+
+            urgency = "CRITICAL" if stock <= 3 else ("HIGH" if stock <= 8 else "NORMAL")
+            
+            if stock <= 3:
+                reason = f"🚨 출고 및 검수 파손 감가 급증으로 안전 재고 고갈 (현재: {stock}권 / 임계치: {safety_stock}권)"
+            elif stock <= 5:
+                reason = f"🔥 S등급/MINT 최상급 출고 주문 폭주 (현재: {stock}권 / 임계치: {safety_stock}권)"
+            elif stock <= 8:
+                reason = f"⚠️ 신기능 입고 도서 재고 부족 경고 (현재: {stock}권 / 임계치: {safety_stock}권)"
+            else:
+                reason = f"📈 교재/도서 정기 자동 재발주 권장 (현재: {stock}권 / 권장: +{recommended_qty}권)"
+
+            trigger_date = b.updated_at.strftime("%Y-%m-%d %H:%M") if b.updated_at else "2026-07-31 09:00"
+
             output.append({
-                "id": f"PO-20260727-{str(idx + 1).zfill(2)}",
+                "id": f"PO-20260731-{str(idx + 1).zfill(2)}",
                 "book_id": str(b.id),
                 "isbn": b.isbn,
                 "title": b.title,
-                "author": getattr(b, "author", "Nexus AI Engine"),
-                "publisher": getattr(b, "publisher", "AI 출판"),
+                "author": b.author or "저자 미상",
+                "publisher": b.publisher or "출판사 미상",
                 "currentStock": stock,
-                "safetyStock": 15,
-                "recommendedQty": 50,
-                "estimatedCost": 1250000,
+                "safetyStock": safety_stock,
+                "recommendedQty": recommended_qty,
+                "estimatedCost": estimated_cost,
                 "urgency": urgency,
-                "reason": f"AI 가상 재고 고갈 경고 (현재: {stock}권 | 긴급도: {urgency})",
+                "reason": reason,
                 "status": "PENDING",
-                "triggerDate": "2026-07-30 19:27"
+                "triggerDate": trigger_date
             })
         return output
 
-    # Fallback to seed catalog
+    # Fallback if DB has no books
     for idx, item in enumerate(SEED_PO_BOOKS):
         output.append({
-            "id": f"PO-20260727-{str(idx + 1).zfill(2)}",
+            "id": f"PO-20260731-{str(idx + 1).zfill(2)}",
             "book_id": f"seed-book-{idx + 1}",
             "isbn": item["isbn"],
             "title": item["title"],
@@ -79,7 +99,7 @@ def get_suggested_po(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "urgency": "CRITICAL" if item["stock"] < 5 else "HIGH",
             "reason": f"AI 가상 재고 고갈 경고 (긴급도: CRITICAL)",
             "status": "PENDING",
-            "triggerDate": "2026-07-30 19:27"
+            "triggerDate": "2026-07-31 09:00"
         })
 
     return output
@@ -118,23 +138,28 @@ def approve_po(req: ApproveRequest, db: Session = Depends(get_db)):
         zone_a_loc = db.exec(select(Location).limit(1)).first()
 
     for book_id_str in req.book_ids:
-        new_order = Order(
-            customer_name="Nexus AI Auto PO (자동발주)",
-            type=OrderTypeEnum.AUTO_PO.value,
-            total_price=1250000.0,
-            status=OrderStatusEnum.COMPLETED.value
-        )
-        db.add(new_order)
-        db.commit()
-        db.refresh(new_order)
-        created_orders.append(str(new_order.id))
-
         try:
             if not book_id_str.startswith("seed-book"):
                 book_uuid = UUID(book_id_str)
                 book_item = db.get(Book, book_uuid)
                 if book_item:
-                    book_item.virtual_stock = (book_item.virtual_stock or 5) + 50
+                    curr_stock = book_item.virtual_stock if book_item.virtual_stock is not None else 5
+                    rec_qty = max(10, 50 - curr_stock)
+                    base_price = book_item.base_price if (book_item.base_price and book_item.base_price > 0) else 25000.0
+                    cost = int(base_price * 0.6 * rec_qty)
+
+                    new_order = Order(
+                        customer_name="Nexus AI Auto PO (자동발주)",
+                        type=OrderTypeEnum.AUTO_PO.value,
+                        total_price=float(cost),
+                        status=OrderStatusEnum.COMPLETED.value
+                    )
+                    db.add(new_order)
+                    db.commit()
+                    db.refresh(new_order)
+                    created_orders.append(str(new_order.id))
+
+                    book_item.virtual_stock = curr_stock + rec_qty
                     db.add(book_item)
 
                     if zone_a_loc:
@@ -144,7 +169,7 @@ def approve_po(req: ApproveRequest, db: Session = Depends(get_db)):
                             location_id=zone_a_loc.id,
                             grade=GradeEnum.MINT,
                             ubci_score=100.0,
-                            quantity=50
+                            quantity=rec_qty
                         )
                         db.add(new_inv)
                         db.commit()
@@ -163,3 +188,4 @@ def approve_po(req: ApproveRequest, db: Session = Depends(get_db)):
 @router.post("/cancel")
 def cancel_po(req: CancelRequest, db: Session = Depends(get_db)):
     return {"message": "cancelled", "cancelled_count": len(req.book_ids)}
+
