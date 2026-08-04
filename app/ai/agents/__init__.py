@@ -35,17 +35,49 @@ DEFECT_TRANSLATION_MAP = {
 }
 
 
+# GPT-4o Vision 전송본의 긴 변 상한(px). S3 원본은 FHD(1920px)로 적재되지만 OpenAI는
+# 512px 타일 단위로 과금하므로, 원본을 그대로 보내면 YOLO가 아닌 VLM 쪽 비용만 커진다.
+# YOLO(WBF)는 로컬 풀해상도 크롭을 쓰고, VLM에는 이 상한으로 다운스케일한 사본만 보낸다.
+VLM_MAX_IMAGE_EDGE = 1536
+
+
+def _downscale_for_vlm(data: bytes) -> bytes:
+    """이미지 바이트의 긴 변이 VLM_MAX_IMAGE_EDGE를 넘으면 비율 유지 다운스케일한 JPEG 반환.
+
+    실패 시 원본 바이트를 그대로 반환한다(fail-open) - 다운스케일은 비용 최적화일 뿐
+    판독 자체를 막을 이유가 없다. 업스케일은 절대 하지 않는다.
+    """
+    try:
+        import io
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as img:
+            if max(img.size) <= VLM_MAX_IMAGE_EDGE:
+                return data
+            img = img.convert("RGB")
+            img.thumbnail((VLM_MAX_IMAGE_EDGE, VLM_MAX_IMAGE_EDGE), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90)
+            return buf.getvalue()
+    except Exception as e:
+        print(f"[Vision Agent] VLM 다운스케일 실패({e}) - 원본 바이트로 전송")
+        return data
+
+
 def _load_image_as_base64(path_or_url: str) -> Optional[str]:
-    """로컬 파일 경로 또는 HTTP(S) URL을 GPT-4o Vision에 넣을 base64 문자열로 인코딩."""
+    """로컬 파일 경로 또는 HTTP(S) URL을 GPT-4o Vision에 넣을 base64 문자열로 인코딩.
+
+    전송 직전 _downscale_for_vlm으로 긴 변 1536px 상한을 적용한다 (원본 파일은 불변).
+    """
     import base64
     try:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             import urllib.request
             req = urllib.request.Request(path_or_url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=10) as response:
-                return base64.b64encode(response.read()).decode("utf-8")
+                return base64.b64encode(_downscale_for_vlm(response.read())).decode("utf-8")
         with open(path_or_url, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
+            return base64.b64encode(_downscale_for_vlm(f.read())).decode("utf-8")
     except Exception as e:
         print(f"[Vision Agent] 이미지 로드 실패 ({path_or_url}): {e}")
         return None
@@ -91,6 +123,13 @@ class VisionResult(BaseModel):
     special_notes: Optional[str] = Field(
         default=None,
         description="UBCI 감점과 무관한 정성적 관찰 (도서관 장서 도장, 부록 CD 누락, 저자 친필 서명 등)"
+    )
+    # [2026-08-04 조장 승인 확장] 현장 촬영 컷 중 도서가 식별되지 않는 이미지(작업자 얼굴만
+    # 찍힘, 빈 배경, 심한 초점 이탈 등)의 인덱스 목록. HITL/상세 화면이 해당 컷을 "결함
+    # 미검출(정상처럼 보임)"이 아니라 "도서 미식별 컷"으로 구분·필터링하는 데 쓴다.
+    invalid_image_indexes: List[int] = Field(
+        default_factory=list,
+        description="도서가 식별되지 않는 이미지의 인덱스 목록 (0=정면 촬영 순서 기준). 모든 컷에 도서가 보이면 빈 배열",
     )
 
 class PolicyResult(BaseModel):
@@ -241,6 +280,13 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
 5. 정성적 관찰(special_notes):
    - UBCI 감점과 무관하지만 특기할 사항(도서관 장서 도장, 부록 CD/카드 누락, 저자 친필 서명 등)이
      보이면 top-level special_notes 필드에 한 줄로 기록하세요. 없으면 null로 두세요.
+6. 이미지 유효성(invalid_image_indexes):
+   - 전달된 이미지 중 도서가 식별되지 않는 컷(작업자 얼굴/신체만 찍힘, 빈 배경/책상, 심한 초점
+     이탈이나 모션 블러로 도서 판독이 불가능한 컷)의 인덱스를 invalid_image_indexes 배열에
+     기재하세요 (0번째=첫 번째 이미지).
+   - 도서가 일부라도 명확히 식별되는 컷은 유효한 이미지이며 절대 포함하지 마세요.
+   - 결함 판정(defects)은 유효한 컷에 대해서만 수행하고, 도서 미식별 컷에서는 결함을 보고하지
+     마세요. 모든 컷에 도서가 보이면 빈 배열([])로 두세요.
 """ + yolo_hint
 
         content_list = [{"type": "text", "text": prompt_vlm}]
@@ -251,11 +297,17 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
 
         special_notes = None
         vision_error = None
+        invalid_image_indexes: list = []
         try:
             res_vlm: VisionResult = structured_vlm.invoke([HumanMessage(content=content_list)])
             is_mint = res_vlm.is_mint
             defects = [d.model_dump() for d in res_vlm.defects]
             special_notes = res_vlm.special_notes
+            # 범위를 벗어난 인덱스는 VLM 환각 신호이므로 버린다 (Critic의 image_index 검증과 동일 원칙)
+            invalid_image_indexes = sorted({
+                int(i) for i in (res_vlm.invalid_image_indexes or [])
+                if isinstance(i, (int, float)) and 0 <= int(i) < len(image_paths)
+            })
         except Exception as e:
             # [수정 이력 - CRITICAL] 예전에는 여기서 `is_mint = len(defects) == 0` 이었다.
             # VLM 호출이 실패하면 defects가 빈 채로 남으므로 "결함 0건 = MINT(무결점)"으로
@@ -293,6 +345,7 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
     else:
         is_mint = len(defects) == 0
         special_notes = None
+        invalid_image_indexes = []
 
     # --- Stage 3: GPT-4o-mini 매트릭스 수식 교차 검증 (BBox/type은 유지, preliminary_deduction만 재계산) ---
     mini_verified = False
@@ -347,11 +400,14 @@ preliminary_deduction 값만 재계산해서 반환하세요.
         )
     if special_notes:
         vision_text += f" / 특이사항: {special_notes}"
+    if invalid_image_indexes:
+        vision_text += f" / 도서 미식별 컷 {len(invalid_image_indexes)}장 제외 (인덱스: {invalid_image_indexes})"
 
     result = {
         "is_mint": is_mint,
         "defects": defects,
         "vision_text": vision_text,
+        "invalid_image_indexes": invalid_image_indexes,
         "executed_agents": ["vision_agent"],
         "messages": [AIMessage(content=f"[Vision Agent] WBF+GPT-4o VLM 검수 & GPT-4o-mini 검증 완료 (is_mint: {is_mint}, 결함 {len(defects)}건)")]
     }

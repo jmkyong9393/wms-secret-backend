@@ -53,6 +53,9 @@ class WMSInspectionState(TypedDict):
     vision_failed: Optional[bool]
     defects: Optional[list]           # 결함 내역 (BBox 등)
     special_notes: Optional[str]      # UBCI 감점과 무관한 정성적 관찰 (도서관 도장, 부록 누락 등)
+    # [2026-08-04 조장 승인 확장] 도서가 식별되지 않는 촬영 컷 인덱스 목록 (작업자 얼굴만
+    # 찍힘, 빈 배경 등). HITL/상세 화면이 해당 컷을 "도서 미식별"로 구분·필터링하는 근거.
+    invalid_image_indexes: Optional[list]
 
     # 2. Policy Agent (UBCI 대조)
     ubci_score: Optional[int]         # 훼손도 기반 차감 점수 (100점 만점)

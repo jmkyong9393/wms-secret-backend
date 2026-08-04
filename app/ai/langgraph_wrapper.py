@@ -134,6 +134,9 @@ class LangGraphInspectionWrapper:
                 # WBF YOLO 앙상블 사전탐지 후보. VLM 판독이 실패해 HITL로 넘어간 경우
                 # 관리자가 육안 판단할 때 참고할 유일한 기계 증거이므로 함께 보존한다.
                 "yolo_candidates": final_state.get("yolo_candidates") or [],
+                # 도서 미식별 촬영 컷 인덱스 (Vision Agent 판정). HITL/상세 화면이
+                # "결함 미검출"과 "도서가 안 찍힌 컷"을 구분해 표시/필터링하는 근거.
+                "invalid_image_indexes": final_state.get("invalid_image_indexes") or [],
                 "vision_failed": bool(final_state.get("vision_failed")),
                 # MINT 무결점 확정 건의 자동 매입/환불 대상 여부.
                 # (예전 Fast-track 분기가 담당하던 비즈니스 기능을 플래그로 대체)
