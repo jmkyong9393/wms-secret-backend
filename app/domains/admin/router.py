@@ -289,6 +289,107 @@ def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
         "job_id": str(job.id),
     }
 
+@router.get("/{job_id}/assist")
+def get_hitl_assist_briefing(
+    job_id: str,
+    session: Session = Depends(get_db),
+    current_admin = Depends(admin_only),
+):
+    """
+    [RAG 기능 B] HITL 결재 관리자 보조 브리핑.
+
+    애매한 건을 결재해야 하는 관리자에게 판단 재료 세 가지를 모아 제공한다.
+      1) 관련 규정 조항  - ChromaDB 벡터 검색 (policy_data_master.yaml 71청크)
+      2) 유사 과거 판정  - 같은 결함 유형 + 인접 UBCI 점수대의 확정 이력 (SQL)
+      3) 쟁점 정리       - 위 둘을 근거로 GPT-4o-mini가 작성
+
+    LLM은 결재를 대신 결정하지 않는다. 최종 판단 권한은 관리자에게 있으며, 응답의
+    disclaimer 필드가 이를 명시한다.
+    """
+    from app.models.wms import Book
+    from app.core.rag_service import build_hitl_briefing
+
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
+        raise BadRequestException(f"Invalid job_id UUID: {job_id}")
+
+    job = session.get(ReturnJob, job_uuid)
+    if not job:
+        raise NotFoundException(f"ReturnJob with ID {job_id} not found")
+
+    logs = job.agent_logs or {}
+    defects = logs.get("defects") or []
+    book = session.get(Book, job.book_id) if job.book_id else None
+    book_title = book.title if book else ""
+
+    # --- 유사 과거 판정 사례 (RAG가 아니라 SQL - 우리 실제 결재 이력이 근거다) ---
+    defect_types = {str(d.get("type")) for d in defects if isinstance(d, dict) and d.get("type")}
+    similar_cases: List[Dict[str, Any]] = []
+
+    finished = session.exec(
+        select(ReturnJob)
+        .where(ReturnJob.id != job_uuid)
+        .where(ReturnJob.status.in_([JobStatusEnum.APPROVED.value, JobStatusEnum.REJECTED.value]))
+        .order_by(ReturnJob.updated_at.desc())
+        .limit(80)
+    ).all()
+
+    for past in finished:
+        past_logs = past.agent_logs or {}
+        past_types = {
+            str(d.get("type"))
+            for d in (past_logs.get("defects") or [])
+            if isinstance(d, dict) and d.get("type")
+        }
+        # 결함 유형이 하나라도 겹치거나, UBCI 점수가 ±8점 이내로 근접한 건을 유사 사례로 본다.
+        score_close = (
+            job.ubci_score is not None
+            and past.ubci_score is not None
+            and abs(past.ubci_score - job.ubci_score) <= 8
+        )
+        if not (past_types & defect_types) and not score_close:
+            continue
+
+        past_book = session.get(Book, past.book_id) if past.book_id else None
+        similar_cases.append({
+            "lpn": past_logs.get("lpn_barcode"),
+            "book_title": past_book.title if past_book else "미상",
+            "ubci_score": past.ubci_score,
+            "final_status": past.status,
+            "defect_types": sorted(past_types),
+            "admin_decision": past_logs.get("admin_decision"),
+            "admin_comment": past_logs.get("admin_comment"),
+            "decided_at": to_kst_iso(past.updated_at),
+        })
+        if len(similar_cases) >= 5:
+            break
+
+    briefing = build_hitl_briefing(
+        book_title=book_title,
+        ubci_score=job.ubci_score,
+        suggested_grade=logs.get("suggested_grade"),
+        defects=defects,
+        critic_reason=logs.get("critic_text") or logs.get("supervisor_rationale") or logs.get("repair_directive"),
+        similar_cases=similar_cases,
+    )
+
+    return {
+        "job_id": str(job.id),
+        "lpn_barcode": logs.get("lpn_barcode"),
+        "book_title": book_title,
+        "ubci_score": job.ubci_score,
+        "suggested_grade": logs.get("suggested_grade"),
+        # Policy Agent가 감점 시점에 이미 붙여둔 근거 조항 (있으면 그대로 노출)
+        "deduction_basis": logs.get("deduction_basis") or [],
+        **briefing,
+    }
+
+
+def to_kst_iso(dt) -> Optional[str]:
+    return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else None
+
+
 @router.get("/completed", response_model=List[HitlTaskResponse])
 def get_completed_hitl_tasks(
     session: Session = Depends(get_db),

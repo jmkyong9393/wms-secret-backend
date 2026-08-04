@@ -467,10 +467,39 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         else:
             policy_text = f"UBCI v2.0.0.0 공식 매트릭스 적용 ➔ 결함 없음 (UBCI {score}점 / {grade_str} / 처분: {decision_str})"
 
+    # --- RAG 근거 조항 인용 (Grounding) ---
+    #
+    # [중요] 점수(score)는 위에서 이미 결정론적 산식으로 확정됐다. 아래 검색은 그 감점의
+    # **출처를 규정집에서 찾아 붙이기만** 하며, 어떤 경우에도 score를 바꾸지 않는다.
+    # 검색 결과가 점수에 영향을 주면 같은 도서가 실행할 때마다 다른 등급을 받게 되어
+    # UBCI 등급의 재현성과 감사 추적성이 깨진다 (등급은 매입가를 결정하는 값이다).
+    #
+    # RAG 서버가 죽어 있거나 인덱스가 없으면 조용히 빈 목록을 반환한다(fail-open).
+    deduction_basis = []
+    try:
+        from app.core.rag_service import cite_deduction_basis
+
+        cited_types = set()
+        for d in defects:
+            dtype = str(d.get("type") or "")
+            if not dtype or dtype in cited_types:
+                continue
+            cited_types.add(dtype)
+            basis = cite_deduction_basis(dtype, DEFECT_TRANSLATION_MAP.get(dtype, ""))
+            if basis:
+                deduction_basis.append({"defect_type": dtype, **basis})
+    except Exception as e:
+        print(f"[Policy Agent] 근거 조항 인용 실패 - 점수는 그대로 유지하고 인용만 생략합니다: {e}")
+
+    if deduction_basis:
+        refs = ", ".join(f"{b['doc_title']} {b['clause_ref']}" for b in deduction_basis)
+        policy_text += f" | 근거 조항: {refs}"
+
     return {
         "defects": defects,
         "ubci_score": score,
         "policy_text": policy_text,
+        "deduction_basis": deduction_basis,
         "reason_code": None,
         "repair_directive": None,
         "executed_agents": ["policy_agent"],
