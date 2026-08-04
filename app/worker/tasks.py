@@ -74,8 +74,14 @@ def push_to_dlq(task_id: str, return_job_id: str, error_msg: str, retries: int) 
     }
     
     try:
-        # 우측 끝에 밀어넣기 (큐 형태 보장)
-        redis_client.rpush(DLQ_KEY, json.dumps(dlq_payload))
+        # 우측 끝에 밀어넣기 (큐 형태 보장) + 보관정책 원자 적용:
+        # 최대 N건 초과 시 오래된 항목부터 절삭(LTRIM), 마지막 적재 후 TTL 갱신(EXPIRE)
+        from app.core.config import settings
+        with redis_client.pipeline(transaction=True) as pipeline:
+            pipeline.rpush(DLQ_KEY, json.dumps(dlq_payload))
+            pipeline.ltrim(DLQ_KEY, -settings.INSPECTION_DLQ_MAX_ENTRIES, -1)
+            pipeline.expire(DLQ_KEY, settings.INSPECTION_DLQ_TTL_SECONDS)
+            pipeline.execute()
         logger.error(f"[DLQ] Task {task_id} for job {return_job_id} safely pushed to DLQ.")
         _notify_agent_error(return_job_id, error_msg)
     except Exception as e:

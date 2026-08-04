@@ -25,6 +25,30 @@ class Settings(BaseSettings):
     # Celery & Redis (추후 비동기 작업 및 상태 캐싱을 위해 사용 예정)
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # 검수 DLQ 보관정책: 최대 1000건, 마지막 실패 적재 후 14일 보관
+    # (무한 적재로 인한 Redis 메모리 누수 방지 — 상한 초과 시 오래된 항목부터 절삭)
+    INSPECTION_DLQ_MAX_ENTRIES: int = 1000
+    INSPECTION_DLQ_TTL_SECONDS: int = 60 * 60 * 24 * 14
+
+    # 라벨 QR이 가리킬 프론트엔드 공개 주소 (품질보증서 /certificate/{lpn} 생성용)
+    PUBLIC_WEB_BASE_URL: str = "http://localhost:3000"
+
+    # 네트워크 라벨 프린터 (Xprinter XP-423B, LAN Raw TCP)
+    # 개발·테스트 환경에서는 False로 두어 프린터 연결 실패가
+    # 입고·검수 처리 실패로 이어지지 않게 한다. 실제 장비 IP는 .env에서 주입.
+    LABEL_PRINTER_ENABLED: bool = False
+    LABEL_PRINTER_HOST: str = ""
+    LABEL_PRINTER_PORT: int = 9100
+    LABEL_PRINTER_TIMEOUT_SECONDS: float = 5.0
+
+    # XP-423B: 203 DPI(약 8 dots/mm), 라벨 50mm × 30mm
+    LABEL_PRINTER_DPI: int = 203
+    LABEL_PRINTER_LABEL_WIDTH_MM: int = 50
+    LABEL_PRINTER_LABEL_HEIGHT_MM: int = 30
+
+    # ZPL 전송 인코딩 (프린터 한글 설정에 따라 utf-8 또는 euc-kr)
+    LABEL_PRINTER_ENCODING: str = "utf-8"
+
     # JWT & Auth
     SECRET_KEY: str = "wms_secret_master_jwt_token_key_2026_8f9a2b4c1d6e7f8a9b0c1d2e3f4a5b6c"
     ALGORITHM: str = "HS256"
