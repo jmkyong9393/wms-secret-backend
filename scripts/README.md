@@ -10,7 +10,25 @@
 | `seed/` | 데모·테스트 데이터 시딩 (도서 50권, HITL 항목, 재고, 리시드) |
 | `debug/` | DB/데이터 상태 점검, 추적, 비밀번호 유틸 (`check_*`, `trace_lpn`, `test_query` 등) |
 | `oneoff/` | 과거 일회성 마이그레이션·패치 스크립트 (`fix_*`, `patch_*`, `migrate.py` 등) — **재실행 금지**, 이력 보존용 |
-| (루트) | 현행 유틸: S3 백필, 합성 데이터셋 생성, 시딩, 오토라벨링 실행 배치 |
+| (루트) | 현행 유틸: S3 백필, 합성 데이터셋 생성, 시딩, 오토라벨링 실행 배치, **프린트 브리지 에이전트** |
+
+## 프린트 브리지 에이전트 (`print_bridge_agent.py`)
+
+클라우드 배포 시 백엔드가 창고 프린터(XP-423B LAN)에 닿을 수 없으므로,
+창고 PC에서 이 에이전트를 상시 실행해 인쇄 큐를 중계한다. **표준 라이브러리만 사용**
+(창고 PC에 파이썬만 있으면 됨 — 레포 클론·venv 불필요, 파일 하나 복사로 배포 가능).
+
+```
+# 백엔드 .env: LABEL_PRINT_MODE=QUEUE 로 전환 후
+set NEXUS_API_BASE=https://api.example.com
+set NEXUS_BRIDGE_ID=WM2608001
+set NEXUS_BRIDGE_PW=****
+set PRINTER_HOST=192.168.0.50
+python scripts/print_bridge_agent.py
+```
+
+- 로컬/시연 환경은 `LABEL_PRINT_MODE=DIRECT`(기본)라 에이전트 불필요 — 백엔드가 직접 전송
+- `DRY_RUN=1`로 프린터 없이 리허설 가능. 401 시 자동 재로그인, 장애 시 지수 백오프
 
 ## 실행 방법 (중요)
 

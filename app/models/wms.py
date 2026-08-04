@@ -508,3 +508,23 @@ class AdminAuditLog(SQLModel, table=True):
     review_duration_ms: Optional[int] = Field(default=None)
     
     created_at: datetime = Field(default_factory=now_kst)
+
+
+class LabelPrintJob(SQLModel, table=True):
+    """
+    LPN/UBCI 라벨 인쇄 작업 큐 (클라우드 배포용).
+
+    LABEL_PRINT_MODE=QUEUE일 때 /labels/print가 직접 전송 대신 이 테이블에 적재하고,
+    창고 PC의 프린트 브리지 에이전트(scripts/print_bridge_agent.py)가 폴링해
+    로컬 프린터(Raw TCP 9100)로 중계한 뒤 결과를 보고한다.
+    """
+    __tablename__ = "label_print_jobs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    lpn: str = Field(max_length=64, index=True)
+    mode: str = Field(default="LPN", max_length=8)  # LPN | UBCI
+    zpl: str
+    status: str = Field(default="PENDING", max_length=12, index=True)  # PENDING | PRINTED | FAILED
+    error: Optional[str] = Field(default=None, max_length=500)
+    created_at: datetime = Field(default_factory=now_kst)
+    printed_at: Optional[datetime] = Field(default=None)
