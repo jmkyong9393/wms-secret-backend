@@ -87,6 +87,7 @@ def submit_hitl_override(
     """
     audit_logs = []
     processed_count = 0
+    rejected_job_ids = []  # 커밋 후 Restock 판정 그래프(자동 발주 제안)를 태울 반려 확정 건
 
     # 이 오버라이드를 실제로 결재한 관리자. InventoryUsedItem.inspected_by에 그대로 기록해
     # 재고 상세/보증서 화면의 "입고 처리 담당자"가 하드코딩 상수가 아니라 실제 결재자를
@@ -156,6 +157,7 @@ def submit_hitl_override(
                 )
             except Exception as ex:
                 logger.error(f"Failed to assign rack location (reject): {ex}")
+            rejected_job_ids.append(str(job.id))
         elif item.decision in ["RE_CHECK", "AI_REINSPECT"]:
             # [수정 이력] 존재하지 않는 app.domains.returns.service.process_inspection을 import해서
             # 실제로 호출되면 100% ImportError로 죽던 코드였다 (Pipeline A/B 통합 이전의 잔재).
@@ -227,7 +229,16 @@ def submit_hitl_override(
         processed_count += 1
         
     session.commit()
-    
+
+    # 반려(매입 불가) 확정 건은 커밋 완료 후 Restock 판정 그래프를 비동기로 태워
+    # 자동 발주 제안(order_proposals)을 생성한다. 커밋 전에 큐잉하면 태스크가 새 세션에서
+    # primary_reason_code가 저장되기 전의 agent_logs를 읽는 레이스가 생긴다.
+    # 라우터는 큐잉만 하고 즉시 응답한다 (판정/집행 분리 - 관리자 화면은 LLM을 기다리지 않는다).
+    if rejected_job_ids:
+        from app.worker.tasks import enqueue_restock_proposal
+        for rejected_id in rejected_job_ids:
+            enqueue_restock_proposal(rejected_id)
+
     return {
         "status": "success",
         "processed_count": processed_count,
