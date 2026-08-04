@@ -1,0 +1,46 @@
+# 저재고 자동 발주 제안 스캔 CronJob
+# 매일 03:00 KST(18:00 UTC)에 배치 파드를 띄워 Celery 워커 풀로 스캔을 큐잉한다.
+# 실제 LLM 스캔은 celery-worker(KEDA ScaledObject)에서 실행되므로 파드는 수 초 내 종료된다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restock-scan-batch
+  namespace: wms
+spec:
+  schedule: "0 18 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      # 큐잉만 하는 파드라 5분이면 충분 — 행 걸린 파드가 다음 스케줄을 막지 않게 한다
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          containers:
+          - name: restock-scan-batch
+            image: REPLACE_WITH_ECR_URI:latest
+            imagePullPolicy: IfNotPresent
+            command: ["python", "-m", "app.batch.restock_scan"]
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wms-backend-secret
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              value: "redis://redis-master.wms.svc.cluster.local:6379/0"
+            # 브로커 장애 폴백(인프로세스 스캔) 시에만 사용된다
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wms-backend-secret
+                  key: OPENAI_API_KEY
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "256Mi"
+              limits:
+                cpu: "250m"
+                memory: "512Mi"
+          restartPolicy: OnFailure

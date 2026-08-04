@@ -316,6 +316,33 @@ def enqueue_restock_proposal(return_job_id: str) -> None:
             logger.error(f"[Restock] 인프로세스 폴백마저 실패 - 제안 생성 건너뜀: {e2}")
 
 
+@celery_app.task(
+    name="app.worker.tasks.scan_safety_stock_proposals",
+    max_retries=1,
+)
+def scan_safety_stock_proposals() -> Dict[str, Any]:
+    """
+    저재고 스캔 배치 본체. 가용 재고가 안전선 미만인 도서를 순회하며
+    Restock 판정 그래프로 제안 카드를 적재한다 (수동 트리거 API와 동일 로직).
+
+    k8s CronJob(app/batch/restock_scan.py)이 이 태스크를 큐잉하고 즉시 종료하므로,
+    LLM 호출 비용이 큰 실제 스캔은 상시 워커 풀에서 실행된다.
+    """
+    from app.db.session import engine
+    from app.domains.po.service import po_service
+
+    try:
+        with Session(engine) as session:
+            result = po_service.scan_safety_stock(session)
+        logger.info(
+            f"[Restock] 저재고 스캔 배치 완료 - 생성 {result.get('createdCount', 0)}건"
+        )
+        return result
+    except Exception as e:
+        logger.exception(f"[Restock] 저재고 스캔 배치 실패: {e}")
+        return {"status": "FAILED", "error": str(e)}
+
+
 # celery task
 @celery_app.task(
         bind=True,
