@@ -30,7 +30,7 @@ _TYPE_PRESETS: Dict[str, Dict[str, str]] = {
     "HITL_REQUIRED": {"category": "정책상 관리자 검토", "severity": "WARN", "link_url": "/admin/hitl"},
     "RESTOCK_PROPOSAL": {"category": "자동발주 알림", "severity": "INFO", "link_url": "/admin/po"},
     "FDS_ALERT": {"category": "FDS 이상거래", "severity": "CRITICAL", "link_url": "/admin/fds"},
-    "INSPECTION_DONE": {"category": "검수 완료", "severity": "INFO", "link_url": "/admin/inspections"},
+    "INSPECTION_DONE": {"category": "검수 완료", "severity": "INFO", "link_url": "/inspections"},
 }
 
 
