@@ -1,53 +1,17 @@
 from typing import Dict, Any, List, Optional
 
-# 카테고리별 매입 방어율 (Category Base Rate)
-CATEGORY_BASE_RATE = {
-    "IT": 0.55,
-    "Textbook": 0.55,
-    "Self-help": 0.45,
-    "Economy": 0.45,
-    "Novel": 0.40,
-    "Essay": 0.40,
-    "Children": 0.40,
-    "Comic": 0.30,
-    "Magazine": 0.30
-}
-
-# 카테고리별 시즌 가중치 (Seasonality Index)
-CATEGORY_SEASONALITY = {
-    "Textbook": 1.25, # 학기 성수기
-    "IT": 1.05,       # 상시 고수요
-    "Novel": 1.00,
-    "Comic": 0.95,
-    "Magazine": 0.90
-}
-
-def calculate_b2b_price(list_price: float, category: str, ubci_score: float) -> float:
-    """
-    정가(List Price), 카테고리, UBCI(품질 점수)를 바탕으로 최종 B2B 매입가를 계산합니다.
-    """
-    base_rate = CATEGORY_BASE_RATE.get(category, 0.35)
-    final_price = (list_price * base_rate) * (ubci_score / 100)
-    return round(final_price, -1) # 10원 단위 반올림
-
-def calculate_dynamic_discount_rate(ubci_score: float, days_in_inventory: int, category: str) -> float:
-    """
-    악성 재고 방어 및 판매 확률을 극대화하기 위한 동적 할인율(0.0 ~ 0.9)을 계산합니다.
-    """
-    base_discount = 0.05
-    trend_sensitive_categories = ["Comic", "Novel", "Magazine", "Children"]
-    
-    if category in trend_sensitive_categories:
-        time_discount = min((days_in_inventory / 365) * 0.10, 0.10)
-        base_discount += time_discount
-            
-    if ubci_score < 70:
-        base_discount += 0.20
-    elif ubci_score < 85:
-        base_discount += 0.10
-        
-    final_discount = max(0.05, min(0.85, base_discount))
-    return round(final_discount, 2)
+# [수정 이력] 이 모듈에 CATEGORY_BASE_RATE / calculate_b2b_price /
+# calculate_dynamic_discount_rate가 pricing.py와 **완전히 중복 정의**되어 있었다.
+# orders/router.py는 pricing.py 쪽을 import하고 이 파일은 자기 사본을 쓰는 이중 상태여서,
+# 요율을 한쪽만 고치면 경로에 따라 서로 다른 가격이 나오는 구조였다.
+# 단일 소스(pricing.py)로 통일하고 여기서는 재노출만 한다.
+from app.domains.orders.pricing import (  # noqa: F401  (기존 import 경로 호환 유지)
+    CATEGORY_BASE_RATE,
+    CATEGORY_SEASONALITY,
+    calculate_b2b_price,
+    calculate_dynamic_discount_rate,
+    normalize_category,
+)
 
 def calculate_price_elasticity_revenue_optimization(
     list_price: float,
@@ -61,8 +25,12 @@ def calculate_price_elasticity_revenue_optimization(
     - 도서는 썩지 않기 때문에 체류일(days_in_inventory)에 따른 감가를 최소화(최대 -10% 방어)
     - 120일 체류 시: (120/365)*10% = -3.2% 미세 방어 보정 적용
     """
-    seasonality = CATEGORY_SEASONALITY.get(category, 1.0)
-    base_price = list_price * CATEGORY_BASE_RATE.get(category, 0.40)
+    # 요율 조회 전 카테고리를 표준 키로 정규화한다. DB에는 한글 분류("컴퓨터/모바일")와
+    # "GENERAL"이 대부분이라, 정규화 없이 조회하면 거의 전 건이 기본값 폴백으로 떨어져
+    # 카테고리별 차등이 사라진다.
+    canonical_category = normalize_category(category)
+    seasonality = CATEGORY_SEASONALITY.get(canonical_category, 1.0)
+    base_price = list_price * CATEGORY_BASE_RATE.get(canonical_category, CATEGORY_BASE_RATE["General"])
     
     # Non-perishable Book Dwell Defense (-10% max penalty)
     dwell_decay = round(min(days_in_inventory, 365) / 365.0 * 0.10, 3)

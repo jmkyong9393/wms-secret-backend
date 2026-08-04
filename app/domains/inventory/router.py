@@ -354,6 +354,26 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
     agent_logs = (job.agent_logs if job else {}) or {}
     inspector = resolve_inspector(item, job)
 
+    # [수정 이력] 가격을 프론트가 `정가 × UBCI/100`으로 직접 계산하고 있었다. UBCI 100점(MINT)
+    # 이면 계수가 1.0이라 **중고 판매가가 신품 정가와 완전히 동일**하게 표시됐고(정가 20,000원 /
+    # 중고 판매가 20,000원), 카테고리별 차등도 전혀 반영되지 않았다.
+    # 산정 책임을 백엔드 단일 엔진(orders/pricing.py)으로 옮기고 근거까지 함께 내려준다.
+    from app.domains.orders.pricing import build_pricing_breakdown
+
+    days_in_inventory = 0
+    if item.created_at:
+        days_in_inventory = max(0, (datetime.now() - item.created_at).days)
+
+    pricing = build_pricing_breakdown(
+        list_price=book.base_price if book else 0.0,
+        category=book.category_type if book else None,
+        ubci_score=item.ubci_score,
+        days_in_inventory=days_in_inventory,
+        # 절판/한정판 등 희소성 프리미엄 판정에 쓰인다 (명세 §3 description_premium)
+        description=book.description if book else None,
+        title=book.title if book else None,
+    )
+
     return {
         "id": str(item.id),
         "lpn_barcode": item.lpn_barcode,
@@ -371,6 +391,8 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
         "quantity": 1,
         "worker_id": inspector["label"],
         "inspector": inspector,
+        # 카테고리별 차등이 적용된 가격 산정 내역 (프론트는 렌더만 한다)
+        "pricing": pricing,
         "date": to_kst_str(item.created_at),
         # 컨테이너 절대경로가 아니라 브라우저가 실제로 열 수 있는 URL로 정규화해 내려준다.
         "image_urls": to_browser_image_urls(job.image_urls if job else []),
