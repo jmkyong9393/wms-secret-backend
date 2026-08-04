@@ -16,6 +16,7 @@ from app.domains.admin.router import router as admin
 from app.domains.research.router import router as research
 from app.domains.notifications import router as notifications
 from app.domains.fds import router as fds
+from app.domains.labels import router as labels
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -161,6 +162,7 @@ app.include_router(admin, prefix=settings.API_V1_STR)
 app.include_router(research, prefix=settings.API_V1_STR)
 app.include_router(notifications.router, prefix=settings.API_V1_STR)
 app.include_router(fds.router, prefix=settings.API_V1_STR)
+app.include_router(labels.router, prefix=settings.API_V1_STR)
 
 import os
 from fastapi.staticfiles import StaticFiles
