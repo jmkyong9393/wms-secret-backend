@@ -63,6 +63,76 @@ async def get_book_lookup(isbn: str) -> Dict[str, Any]:
     return result
 
 
+class FasttrackRequest(BaseModel):
+    isbn: str
+    title: Optional[str] = None
+    imageUrl: Optional[str] = None
+    qty: int = 1
+
+
+@router.post("/fasttrack", summary="신품 도서 Fast-Track 0초 입고 (사진/UBCI 판정 스킵)")
+async def fasttrack_inbound(request: FasttrackRequest, db: Session = Depends(get_db)):
+    """
+    신품 도서를 ISBN만으로 즉시 재고에 편입한다. 사진 촬영·AI 검수(UBCI 등급 판정)를 100%
+    건너뛰는 것이 설계 의도이며, LangGraph 파이프라인/ReturnJob을 아예 타지 않는다.
+    신품은 개별 LPN 없이 Inventory(묶음 재고) 테이블에 수량으로 관리된다.
+
+    [수정 이력 2026-08-04] 프론트(src/app/inbound/page.tsx)가 처음부터 이 경로를 호출하고
+    있었으나 백엔드에 라우트가 존재하지 않아 Fast-Track 입고가 100% 404로 실패하던 것을 구현.
+    """
+    isbn = (request.isbn or "").strip()
+    if not isbn or len(isbn) < 4:
+        raise HTTPException(status_code=400, detail="유효한 ISBN이 필요합니다.")
+    qty = max(1, int(request.qty or 1))
+
+    # 1) Book 조회, 없으면 생성 (알라딘 실조회로 저자/출판사/정가/택배 규격까지 보강)
+    book = db.exec(select(Book).where(Book.isbn == isbn)).first()
+    if not book:
+        meta = await lookup_book_by_isbn(isbn) or {}
+        category_name = meta.get("categoryName", "")
+        parts = [p.strip() for p in category_name.split(">") if p.strip()]
+        parsed_category = parts[1] if len(parts) > 1 else (parts[0] if parts else "GENERAL")
+
+        book_kwargs: Dict[str, Any] = dict(
+            isbn=isbn,
+            title=meta.get("title") or request.title or "신품 도서",
+            author=meta.get("author"),
+            publisher=meta.get("publisher"),
+            published_date=meta.get("pubDate"),
+            base_price=float(meta.get("price", 0.0) or 0.0),
+            description=meta.get("description"),
+            cover_image_url=meta.get("imageUrl") or request.imageUrl,
+            category_type=parsed_category,
+        )
+        for field in ("width_mm", "depth_mm", "thickness_mm", "weight_g", "page_count"):
+            if meta.get(field) is not None:
+                book_kwargs[field] = meta[field]
+
+        book = Book(**book_kwargs)
+        db.add(book)
+        db.commit()
+        db.refresh(book)
+
+    # 2) Zone A(신품존) 묶음 재고 upsert + virtual_stock 가산 + INBOUND 원장 기록.
+    #    자동 발주(OrderProposal) 승인 입고와 동일한 공용 관문(fasttrack_new_stock_inbound)을 사용한다.
+    from app.domains.inventory.service import fasttrack_new_stock_inbound
+
+    inv, location = fasttrack_new_stock_inbound(db, book, qty)
+    db.commit()
+    db.refresh(inv)
+
+    return {
+        "status": "SUCCESS",
+        "message": f"⚡ [신품 Fast-Track] '{book.title}' {qty}권이 Zone A 신품존 재고로 즉시 입고되었습니다. (AI 검수 스킵)",
+        "book_id": str(book.id),
+        "isbn": book.isbn,
+        "title": book.title,
+        "added_qty": qty,
+        "total_qty": inv.quantity,
+        "zone": f"{location.zone}-{location.rack}-{location.shelf}",
+    }
+
+
 @router.post("/upload-cookie")
 async def get_upload_cookie(request: UploadCookieRequest) -> Dict[str, Any]:
     """
