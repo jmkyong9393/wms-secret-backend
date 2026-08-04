@@ -2,7 +2,7 @@
 애플리케이션 환경변수 및 전역 설정을 중앙에서 관리하는 파일입니다.
 pydantic-settings를 사용하여 .env 파일의 값을 자동으로 읽고 타입 검증(Type Validation)을 수행합니다.
 """
-from typing import Optional
+from typing import Optional, Literal
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,6 +48,11 @@ class Settings(BaseSettings):
 
     # ZPL 전송 인코딩 (프린터 한글 설정에 따라 utf-8 또는 euc-kr)
     LABEL_PRINTER_ENCODING: str = "utf-8"
+
+    # 라벨 인쇄 경로 선택:
+    # DIRECT = 백엔드가 프린터 LAN IP로 직접 전송 (로컬/온프레미스 — 시연 기본값)
+    # QUEUE  = DB 큐에 적재 후 창고 PC의 프린트 브리지 에이전트가 중계 (클라우드 배포)
+    LABEL_PRINT_MODE: Literal["DIRECT", "QUEUE"] = "DIRECT"
 
     # JWT & Auth
     SECRET_KEY: str = "wms_secret_master_jwt_token_key_2026_8f9a2b4c1d6e7f8a9b0c1d2e3f4a5b6c"
