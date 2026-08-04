@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 :: [중요] 배치파일이 어느 위치에서 실행되더라도 백엔드 루트 폴더로 자동 이동
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 cls
 echo ===================================================
