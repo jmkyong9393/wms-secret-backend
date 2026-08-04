@@ -19,9 +19,15 @@ spec:
         spec:
           containers:
           - name: restock-scan-batch
-            image: REPLACE_WITH_ECR_URI:latest
+            # ECR 레포 이름은 ecr-push.yml 워크플로우와 동일 (secret-backend-repo).
+            # <AWS_ACCOUNT_ID>만 실제 계정 ID로 치환 (GitHub Secrets AWS_ACCOUNT_ID와 동일 값)
+            image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-2.amazonaws.com/secret-backend-repo:latest
             imagePullPolicy: IfNotPresent
             command: ["python", "-m", "app.batch.restock_scan"]
+            # wms-backend-secret은 클러스터에 아직 없음 — 배포 전 1회 생성 필요:
+            #   kubectl -n wms create secret generic wms-backend-secret \
+            #     --from-literal=DATABASE_URL='postgresql://...' \
+            #     --from-literal=OPENAI_API_KEY='sk-...'
             env:
             - name: DATABASE_URL
               valueFrom:
