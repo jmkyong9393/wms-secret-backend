@@ -70,6 +70,44 @@ def get_or_create_location(db: Session, zone: str = "A", rack: str = "1", shelf:
     return loc
 
 
+def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int):
+    """
+    신품 도서 Fast-Track 입고의 공용 집행 로직.
+    Zone A(신품존) 묶음 재고(Inventory) upsert + virtual_stock 가산 + INBOUND 원장 기록.
+
+    신품은 개별 LPN을 발급하지 않고 수량으로만 관리한다. 호출처는 두 곳:
+    1) POST /inbound/fasttrack - 현장 ISBN 스캔 입고
+    2) 자동 발주(OrderProposal) 승인 - AUTO_PO로 입고되는 신품도 동일 관문을 통과시켜
+       "발주 입고 = MINT 중고 LPN 생성"이던 기존 오류 경로를 제거한다.
+
+    commit은 호출자가 담당한다 (트랜잭션 단위를 호출자가 결정).
+    """
+    from app.models.wms import Inventory, InventoryLog
+
+    location = get_or_create_location(db, zone="A", rack="1", shelf="1")
+    inv = db.exec(
+        select(Inventory).where(Inventory.book_id == book.id, Inventory.location_id == location.id)
+    ).first()
+    if inv:
+        inv.quantity += qty
+        inv.updated_at = now_kst()
+    else:
+        inv = Inventory(book_id=book.id, location_id=location.id, quantity=qty)
+    db.add(inv)
+
+    book.virtual_stock = (book.virtual_stock or 0) + qty
+    book.updated_at = now_kst()
+    db.add(book)
+    db.add(InventoryLog(
+        transaction_type="INBOUND",
+        book_id=book.id,
+        condition_grade="NEW",
+        quantity_change=qty,
+        picked_location=f"{location.zone}-{location.rack}-{location.shelf}",
+    ))
+    return inv, location
+
+
 def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: str = "WM2608001") -> tuple[InventoryUsedItem, Book]:
     """
     [1단계: 선부착 (Label First)]
