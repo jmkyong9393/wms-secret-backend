@@ -22,6 +22,7 @@
 import json
 import math
 from datetime import timedelta
+import logging
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -36,6 +37,8 @@ from app.models.wms import (
     OrderProposal,
     now_kst,
 )
+
+logger = logging.getLogger(__name__)
 
 # 발주 판단 상수 (결정론적 산식의 근거 - 문서/발표 시 그대로 인용)
 LEAD_TIME_DAYS = 7      # 도매처 발주 → 입고 리드타임 가정
@@ -300,4 +303,18 @@ def generate_and_store_proposal(
     db.add(proposal)
     db.commit()
     db.refresh(proposal)
+
+    # 새로 생성된 제안만 알림으로 올린다 (기존 카드 갱신은 소음이 되므로 제외).
+    # 알림 실패가 제안 적재를 무효화해서는 안 되므로 예외는 삼킨다.
+    if not existing:
+        try:
+            from app.domains.notifications.service import notify_restock_proposal
+            notify_restock_proposal(
+                book_title=book.title,
+                qty=decision["reorder_quantity"],
+                proposal_id=str(proposal.id),
+            )
+        except Exception as e:
+            logger.warning(f"[Notification] 발주 제안 알림 발행 실패: {e}")
+
     return proposal
