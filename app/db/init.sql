@@ -185,6 +185,28 @@ CREATE TABLE board_posts (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- 11-1. WMS 전역 알림 이력 (notifications)
+-- 이 테이블이 없던 시절에는 프론트 Header.tsx가 더미 4건을 하드코딩해 들고 있었고,
+-- SSE로 받은 실시간 이벤트는 메모리에만 쌓여 새로고침 시 소실됐다.
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- AGENT_ERROR / HITL_REQUIRED / RESTOCK_PROPOSAL / FDS_ALERT / INSPECTION_DONE
+    type VARCHAR(40) NOT NULL,
+    severity VARCHAR(20) DEFAULT 'INFO',   -- INFO / WARN / CRITICAL
+    category VARCHAR(50) NOT NULL,         -- 화면 뱃지 표기용 한국어 분류명
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    link_url VARCHAR(255),                 -- 클릭 시 이동할 프론트 경로
+    ref_type VARCHAR(40),                  -- RETURN_JOB / INVENTORY_ITEM / FDS_REPORT 등
+    ref_id VARCHAR(100),
+    target_role VARCHAR(20),               -- NULL이면 전체 공개
+    is_read BOOLEAN DEFAULT FALSE,
+    read_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_notifications_created_at ON notifications (created_at DESC);
+CREATE INDEX idx_notifications_is_read ON notifications (is_read);
+
 -- 12. FDS 적발 이력 (fds_reports)
 CREATE TABLE fds_reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

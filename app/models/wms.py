@@ -414,6 +414,43 @@ class BoardPost(SQLModel, table=True):
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
+class Notification(SQLModel, table=True):
+    """
+    WMS 전역 알림 이력.
+
+    [수정 이력 2026-08-04] 종전에는 알림을 저장하는 테이블 자체가 없었다. 프론트
+    Header.tsx가 하드코딩된 더미 4건을 useState 초기값으로 들고 있었고, SSE로 들어온
+    실시간 이벤트는 메모리에만 쌓여 새로고침하면 전부 사라졌다. 읽음 상태도 마찬가지.
+    또한 notifications:global 채널에 발행하는 곳이 데모용 /trigger-fds 하나뿐이라
+    실제 파이프라인 사건(HITL 이관, 검수 실패, 발주 제안)은 알림이 되지 않았다.
+
+    [설계 노트] is_read는 관제 콘솔 단위의 전역 읽음 상태다. 사용자별 읽음 분리가
+    필요해지면 notification_reads(user_id, notification_id) 조인 테이블을 추가한다.
+    현 단계에서는 단일 관제실 운용을 전제로 컬럼 하나로 유지한다.
+    """
+    __tablename__ = "notifications"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    # 이벤트 종류: AGENT_ERROR / HITL_REQUIRED / RESTOCK_PROPOSAL / FDS_ALERT / INSPECTION_DONE
+    type: str = Field(max_length=40, index=True)
+    # INFO / WARN / CRITICAL - 프론트 뱃지 색상 결정
+    severity: str = Field(default="INFO", max_length=20)
+    # 화면 뱃지에 표시할 한국어 분류명 (예: "자동발주 알림")
+    category: str = Field(max_length=50)
+    title: str = Field(max_length=255)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # 알림 클릭 시 이동할 프론트 경로 (예: /admin/hitl)
+    link_url: Optional[str] = Field(default=None, max_length=255)
+    # 원인이 된 도메인 객체 추적용 (RETURN_JOB / INVENTORY_ITEM / FDS_REPORT / ORDER_PROPOSAL)
+    ref_type: Optional[str] = Field(default=None, max_length=40)
+    ref_id: Optional[str] = Field(default=None, max_length=100)
+    # 이 알림을 볼 역할. None이면 전체 공개 (WORKER에게 FDS 알림을 띄우지 않기 위함)
+    target_role: Optional[str] = Field(default=None, max_length=20)
+    is_read: bool = Field(default=False, index=True)
+    read_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=now_kst, index=True)
+
+
 class FdsReport(SQLModel, table=True):
     """
     FDS(Fraud Detection System) 적발 이력.

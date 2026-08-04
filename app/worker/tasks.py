@@ -50,6 +50,15 @@ redis_client = Redis.from_url(REDIS_URL)
 
 DLQ_KEY = "wms:dlq:inspection_tasks"
 
+def _notify_agent_error(return_job_id: str, error_msg: str) -> None:
+    """DLQ 격리 발생을 관제 콘솔 알림으로 올린다. 실패해도 DLQ 적재를 방해하지 않는다."""
+    try:
+        from app.domains.notifications.service import notify_agent_error
+        notify_agent_error(job_id=return_job_id, error_message=error_msg)
+    except Exception as e:
+        logger.warning(f"[Notification] 에이전트 오류 알림 발행 실패: {e}")
+
+
 def push_to_dlq(task_id: str, return_job_id: str, error_msg: str, retries: int) -> None:
     """
     Celery 최대 재시도(Max Retries) 초과 시, 작업을 버리지 않고 
@@ -68,6 +77,7 @@ def push_to_dlq(task_id: str, return_job_id: str, error_msg: str, retries: int) 
         # 우측 끝에 밀어넣기 (큐 형태 보장)
         redis_client.rpush(DLQ_KEY, json.dumps(dlq_payload))
         logger.error(f"[DLQ] Task {task_id} for job {return_job_id} safely pushed to DLQ.")
+        _notify_agent_error(return_job_id, error_msg)
     except Exception as e:
         # 최악의 경우 Redis마저 뻗었다면 시스템 치명적 결함이므로 로그로 흔적을 짙게 남김
         logger.critical(f"FATAL: Failed to push DLQ! task={task_id}, job={return_job_id}, err={str(e)}")
@@ -403,6 +413,33 @@ def process_inspection(self, return_job_id: str) -> Dict[str, Any]:
             job=job,
             celery_task_id=celery_task_id,
         )
+
+        # 관제 콘솔 전역 알림 발행.
+        # [수정 이력] 종전에는 실제 파이프라인 사건이 알림을 하나도 만들지 않아, 프론트가
+        # 더미 4건을 하드코딩해 들고 있었다. 알림 발행 실패가 검수 결과를 무효화해서는
+        # 안 되므로 예외는 여기서 삼킨다.
+        try:
+            from app.domains.notifications.service import notify_hitl_required, notify_inspection_done
+
+            job_logs = job.agent_logs or {}
+            book_title = (job_logs.get("book_metadata") or {}).get("title") or "도서"
+
+            if job.status == "HITL_REQUIRED":
+                notify_hitl_required(
+                    job_id=str(job.id),
+                    book_title=book_title,
+                    ubci_score=job.ubci_score,
+                    reason=job_logs.get("supervisor_rationale") or job_logs.get("critic_text") or "",
+                )
+            elif job.status == "APPROVED":
+                notify_inspection_done(
+                    lpn=job_logs.get("lpn_barcode") or "-",
+                    book_title=book_title,
+                    grade=ai_result.get("final_grade", "-"),
+                    ubci_score=job.ubci_score,
+                )
+        except Exception as notify_err:
+            logger.warning(f"[Notification] 검수 완료 알림 발행 실패(검수 결과에는 영향 없음): {notify_err}")
 
         logger.info(
             f"process_inspection completed gracefully. task_id={celery_task_id} return_job_id={job.id} status={job.status}"
