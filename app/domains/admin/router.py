@@ -87,7 +87,17 @@ def submit_hitl_override(
     """
     audit_logs = []
     processed_count = 0
-    
+
+    # 이 오버라이드를 실제로 결재한 관리자. InventoryUsedItem.inspected_by에 그대로 기록해
+    # 재고 상세/보증서 화면의 "입고 처리 담당자"가 하드코딩 상수가 아니라 실제 결재자를
+    # 가리키게 한다 (기존에는 "HITL - WM2608001 (장문경)" 문자열이 라우터에 박혀 있었다).
+    admin_employee_id = str(getattr(current_admin, "employee_id", "") or "").strip()
+    admin_name = str(getattr(current_admin, "name", "") or "").strip()
+    if admin_employee_id and admin_name:
+        hitl_inspector = f"{admin_employee_id} ({admin_name})"
+    else:
+        hitl_inspector = admin_employee_id or admin_name or "HITL 관리자"
+
     for item in payload.items:
         # Find ReturnJob (using ticketId as UUID string for now)
         try:
@@ -106,47 +116,78 @@ def submit_hitl_override(
             job.status = JobStatusEnum.APPROVED
             # HITL 최종 결재 승인 시: 창고 보관 랙(Zone B-12-4 등) 위치 할당 및 재고(InventoryUsedItem) 편입
             from app.domains.inventory.service import assign_rack_location_after_inspection
-            target_grade = item.targetGrade or (job.agent_logs.get("suggested_grade") if job.agent_logs else "B")
+            target_grade = item.targetGrade or (job.agent_logs.get("suggested_grade") if job.agent_logs else "NORMAL")
             lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or f"LPN-260728-A002"
             try:
                 cert_code = str(job.id)[:6].upper()
                 cert_url = f"/certificate/CERT-20260728-{cert_code}"
                 assign_rack_location_after_inspection(
-                    session, 
-                    lpn_barcode=lpn, 
-                    final_grade=target_grade, 
-                    book_id=job.book_id, 
+                    session,
+                    lpn_barcode=lpn,
+                    final_grade=target_grade,
+                    book_id=job.book_id,
                     ubci_score=job.ubci_score or 85,
                     source_job_id=str(job.id),
-                    certificate_url=cert_url
+                    certificate_url=cert_url,
+                    inspection_source="HITL",
+                    inspected_by=hitl_inspector,
                 )
             except Exception as ex:
                 logger.error(f"Failed to assign rack location: {ex}")
         elif item.decision.startswith("REJECT"):
             job.status = JobStatusEnum.REJECTED
+            # [수정 이력] 승인(APPROVE) 분기와 달리 반려 분기는 랙 배정 자체를 호출하지 않아,
+            # HITL에서 반려된 건은 Zone E(격리/폐기) 배정도 안 되고 InventoryUsedItem row도
+            # 안 만들어져 실물 추적이 안 되고 있었다 - 자동 반려 경로(worker/tasks.py)와
+            # 동일하게 Zone E 격리 랙 배정을 호출하도록 교정.
+            from app.domains.inventory.service import assign_rack_location_after_inspection
+            lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or f"LPN-260728-A002"
+            try:
+                assign_rack_location_after_inspection(
+                    session,
+                    lpn_barcode=lpn,
+                    final_grade="REJECT",
+                    final_status="REJECTED",
+                    book_id=job.book_id,
+                    ubci_score=job.ubci_score or 40,
+                    source_job_id=str(job.id),
+                    inspection_source="HITL",
+                    inspected_by=hitl_inspector,
+                )
+            except Exception as ex:
+                logger.error(f"Failed to assign rack location (reject): {ex}")
         elif item.decision in ["RE_CHECK", "AI_REINSPECT"]:
+            # [수정 이력] 존재하지 않는 app.domains.returns.service.process_inspection을 import해서
+            # 실제로 호출되면 100% ImportError로 죽던 코드였다 (Pipeline A/B 통합 이전의 잔재).
+            # 상태만 PENDING으로 되돌리고 아무것도 재큐잉하지 않아 작업이 그대로 멈춰있던 문제도
+            # 함께 수정 - /admin/hitl/{job_id}/re-inspect와 동일하게 Celery로 재큐잉한다.
             job.status = JobStatusEnum.PENDING
             job.retry_count += 1
-            if item.decision == "AI_REINSPECT":
+            session.add(job)
+            session.commit()
+
+            from app.worker.tasks import process_inspection
+            try:
+                process_inspection.delay(str(job.id))
+            except Exception as e:
+                logger.warning(f"Celery 재큐잉 실패, 인프로세스로 폴백: {e}")
                 import threading
-                from app.domains.returns.service import process_inspection
-                thread = threading.Thread(
-                    target=process_inspection,
-                    args=(str(job.id), job.image_urls or [])
-                )
-                thread.daemon = True
-                thread.start()
+                threading.Thread(target=process_inspection, args=(str(job.id),), daemon=True).start()
         else:
             raise BadRequestException(f"Unknown decision: {item.decision}")
         
         # Save Agent Logs / Comments
-        if not job.agent_logs:
-            job.agent_logs = {}
-        
-        job.agent_logs["admin_decision"] = item.decision
-        job.agent_logs["admin_comment"] = item.reasonComment
-        job.agent_logs["primary_reason_code"] = item.primaryReasonCode
-        job.agent_logs["target_grade"] = item.targetGrade
+        # [수정 이력] 기존에는 job.agent_logs 딕셔너리를 제자리 변경(in-place mutation)했는데,
+        # SQLAlchemy는 JSONB 컬럼의 제자리 변경을 감지하지 못해(MutableDict 미적용) UPDATE문에
+        # 아예 포함되지 않았다. 그 결과 관리자의 결정/등급/메모가 DB에 한 번도 저장된 적이 없다.
+        # 새 dict를 할당해 변경을 확실히 감지시킨다.
+        job.agent_logs = {
+            **(job.agent_logs or {}),
+            "admin_decision": item.decision,
+            "admin_comment": item.reasonComment,
+            "primary_reason_code": item.primaryReasonCode,
+            "target_grade": item.targetGrade,
+        }
         
         session.add(job)
         
@@ -199,7 +240,14 @@ def submit_hitl_override(
 def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
     """
     [Master AI Re-inspection Engine]
-    스캔 이미지 '마다' (Per-Image) 정밀 Multi-BBox 좌표 파싱 및 이미지별 독립 BBox 매핑
+    HITL 관리자가 재검수를 요청하면, 앱 전체가 공유하는 단일 Celery 파이프라인
+    (app.worker.tasks.process_inspection - WBF+GPT-4o Vision Agent, Redlock+DLQ)으로
+    재큐잉한다.
+
+    [수정 이력] 과거에는 요청을 블로킹하며 이미 폐기된 app.ai.graph.build_wms_graph()를
+    동기 실행했고, 존재하지 않는 JobStatusEnum.INSPECTED 값을 대입하는 등 실행 자체가
+    불가능한 버그가 있었다 (Pipeline A/B 통합 작업 중 발견). /inbound/retry와 동일한
+    비동기 재큐잉 패턴으로 통일한다.
     """
     try:
         job_uuid = UUID(job_id)
@@ -208,267 +256,37 @@ def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
 
     job = session.get(ReturnJob, job_uuid)
     if not job:
+        # 재고 상세 화면은 InventoryUsedItem.id로 재검수를 요청하므로 원본 검수 작업으로 환원한다.
+        from app.models.wms import InventoryUsedItem
+        used_item = session.get(InventoryUsedItem, job_uuid)
+        if used_item and used_item.source_job_id:
+            job = session.get(ReturnJob, used_item.source_job_id)
+
+    # [수정 이력] 여기서 `job = session.query(ReturnJob).first()`로 폴백하고 있었다.
+    # 잘못된 ID로 재검수를 눌러도 404가 아니라 "DB의 아무 검수 작업 한 건"을 다시 큐에
+    # 밀어넣어, 전혀 관계없는 도서가 재검수되고 그 등급이 덮어써졌다. 정직하게 404를 낸다.
+    if not job:
         raise NotFoundException(f"ReturnJob with ID {job_id} not found")
 
-    image_urls = job.image_urls if (job.image_urls and len(job.image_urls) > 0) else [
-        "http://localhost:8000/static/scans/sample_front_cover.jpg",
-        "http://localhost:8000/static/scans/sample_inner_page_1.jpg"
-    ]
+    if not job.image_urls:
+        raise BadRequestException("No images found for this job.")
 
-    DEFECT_TRANSLATION_MAP = {
-        "DMG_INT_DOODLE": "내지 손글씨/낙서",
-        "DMG_INT_STAIN": "내지 오염/이물질",
-        "DMG_EXT_CRUSH": "표지 모서리 찌그러짐",
-        "DMG_EXT_WET": "외부 습기/침수",
-        "DMG_EXT_TEAR": "커버 찢어짐",
-        "DMG_INT_DISCOLOR": "내지 황변/변색",
-        "DMG_EXT_SCRATCH": "표지 긁힘/스크래치",
-        "DMG_EXT_STICKER": "스티커/바코드 자국",
-        "DMG_EDGE_WEAR": "모서리 마모",
-        "DMG_SPINE_CRACK": "책등 갈라짐",
-    }
-
-    # 도서 제목 기반 수험서/문제집 여부 판별
-    from app.models.wms import Book
-    book_obj = session.get(Book, job.book_id) if job.book_id else None
-    book_title = book_obj.title if book_obj else ""
-    is_workbook = any(k in book_title for k in ["수험서", "문제집", "기출", "자격검정", "실전문제", "학습", "교재", "AIVLE", "SQL"])
-
-    # 이미지 '마다' (Per-Image) 정밀 Multi-BBox 좌표 파싱
-    per_image_defect_coordinates = []
-    all_defects_flattened = []
-    all_deduction_items = []
-    edge_wear_added = False # 도서 전체 모서리 마모 -5점 단일 Cap 플래그
-    doodle_workbook_added = False # 수험서 도서 전체 필기 -15점 단일 Cap 플래그
-
-    for idx, img_url in enumerate(image_urls):
-        bboxes = []
-        if idx == 0:
-            # [이미지 #0: 앞표지 (Front Cover)] -> 조장님 지적 반영: 찌그러짐 없는 깨끗한 정상 상태 (Clean, bboxes = [])
-            bboxes = []
-        elif idx == 1:
-            # [이미지 #1: 뒷표지 (Back Cover)] -> 깨끗한 정상 상태 (Clean)
-            bboxes = []
-        elif idx == 2:
-            # [이미지 #2: 속지 #1 (Inner Page 1)] -> 조장님 지적 반영: 실제 손글씨 구역만 정확히 2건 타겟팅
-            # 1) 문제 42번 지문/보기 연필 필기 (10:10:00 & 연필 낙서)
-            # 2) 하단 연필 손글씨 쿼리문 (LOC When 'NewYork' Then 'EAST')
-            bboxes = [
-                {
-                    "xmin": 310.20, "ymin": 300.50, "xmax": 650.80, "ymax": 410.30,
-                    "label": "DMG_INT_DOODLE (42번 문제/보기 필기: 10:10:00)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.978, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 440.10, "ymin": 780.20, "xmax": 920.50, "ymax": 940.60,
-                    "label": "DMG_INT_DOODLE (하단 손글씨 필기: LOC When...)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.985, "ratio": 15, "text_overlap": True
-                }
-            ]
-        elif idx == 3:
-            # [이미지 #3: 속지 #2 (Inner Page 2)] -> 조장님 지적 반영: 상단 42번 문제 필기(10:10:00 & ㄱ704) + 보기 ③번 동그라미 + 하단 필기 Multi-BBox 3건
-            bboxes = [
-                {
-                    "xmin": 180.20, "ymin": 300.50, "xmax": 650.80, "ymax": 410.30,
-                    "label": "DMG_INT_DOODLE (42번 문제/보기 필기: 10:10:00 & ㄱ704)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.975, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 140.50, "ymin": 370.20, "xmax": 270.80, "ymax": 415.50,
-                    "label": "DMG_INT_DOODLE (42번 보기 ③번 정답 동그라미)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.968, "ratio": 5, "text_overlap": True
-                },
-                {
-                    "xmin": 440.10, "ymin": 780.20, "xmax": 920.50, "ymax": 940.60,
-                    "label": "DMG_INT_DOODLE (하단 손글씨 필기: LOC When...)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.985, "ratio": 15, "text_overlap": True
-                }
-            ]
-        elif idx == 4:
-            # [이미지 #4: 속지 #3 (Inner Page 3)] -> 조장님 지적 반영: 보기 ①,②,③,④ 전체 연필 밑줄 및 동그라미 4중 Multi-BBox
-            bboxes = [
-                {
-                    "xmin": 510.20, "ymin": 400.50, "xmax": 710.80, "ymax": 470.30,
-                    "label": "DMG_INT_DOODLE (풀이 필기: outer join ①)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.958, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 80.50, "ymin": 500.20, "xmax": 680.50, "ymax": 610.80,
-                    "label": "DMG_INT_DOODLE (보기 ①번 동그라미 & 삭제여부=N 밑줄)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.972, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 310.10, "ymin": 640.20, "xmax": 660.50, "ymax": 700.80,
-                    "label": "DMG_INT_DOODLE (보기 ②,③번 쿼리 연필 밑줄)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.948, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 310.10, "ymin": 760.20, "xmax": 660.50, "ymax": 840.80,
-                    "label": "DMG_INT_DOODLE (보기 ④번 쿼리 연필 밑줄)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.952, "ratio": 10, "text_overlap": True
-                }
-            ]
-        elif idx == 5:
-            # [이미지 #5: 속지 #4 (Inner Page 4)] -> 조장님 지적 반영: 좌측 인쇄 마진 오탐 삭제 및 실제 필기 5건 100% 타겟팅 Multi-BBox
-            bboxes = [
-                {
-                    "xmin": 750.20, "ymin": 140.50, "xmax": 950.80, "ymax": 220.30,
-                    "label": "DMG_INT_DOODLE (우상단 필기: WHERE!)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.978, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 580.10, "ymin": 400.20, "xmax": 760.50, "ymax": 450.60,
-                    "label": "DMG_INT_DOODLE (34번 표 내부 연필 필기)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.965, "ratio": 5, "text_overlap": True
-                },
-                {
-                    "xmin": 380.10, "ymin": 520.20, "xmax": 460.50, "ymax": 600.60,
-                    "label": "DMG_INT_DOODLE (34번 보기 ①번 진한 동그라미 낙서)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.988, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 600.10, "ymin": 520.20, "xmax": 950.50, "ymax": 620.60,
-                    "label": "DMG_INT_DOODLE (우측여백 필기: not and or)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.982, "ratio": 15, "text_overlap": True
-                },
-                {
-                    "xmin": 780.10, "ymin": 840.20, "xmax": 880.50, "ymax": 910.60,
-                    "label": "DMG_INT_DOODLE (35번 보기 ④번 정답 동그라미)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.972, "ratio": 5, "text_overlap": True
-                }
-            ]
-        else:
-            # [이미지 #6: 속지 #5 (Inner Page 5)] -> 조장님 지적 반영: 51번 문제 번호 오탐 삭제 & 실제 필기/묶음괄호/동그라미 6건 Multi-BBox
-            bboxes = [
-                {
-                    "xmin": 380.20, "ymin": 430.50, "xmax": 460.80, "ymax": 480.30,
-                    "label": "DMG_INT_DOODLE (51번 좌측 묶음괄호 필기: 상위)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.985, "ratio": 5, "text_overlap": True
-                },
-                {
-                    "xmin": 380.20, "ymin": 490.50, "xmax": 460.80, "ymax": 550.30,
-                    "label": "DMG_INT_DOODLE (51번 좌측 묶음괄호 필기: 동일)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.982, "ratio": 5, "text_overlap": True
-                },
-                {
-                    "xmin": 460.10, "ymin": 430.20, "xmax": 910.50, "ymax": 470.60,
-                    "label": "DMG_INT_DOODLE (51번 ①번 지문 밑줄 & X 필요하다)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.978, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 450.10, "ymin": 480.20, "xmax": 510.50, "ymax": 600.60,
-                    "label": "DMG_INT_DOODLE (51번 정답 보기 ②, ④번 동그라미)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.989, "ratio": 10, "text_overlap": True
-                },
-                {
-                    "xmin": 510.10, "ymin": 820.20, "xmax": 820.50, "ymax": 860.60,
-                    "label": "DMG_INT_DOODLE (52번 ③번 보기 동그라미 및 밑줄)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.968, "ratio": 5, "text_overlap": True
-                },
-                {
-                    "xmin": 510.10, "ymin": 860.20, "xmax": 750.50, "ymax": 960.60,
-                    "label": "DMG_INT_DOODLE (52번 ④번 동그라미 & 하단 필기: 속도 향상)", "type": "DMG_INT_DOODLE",
-                    "confidence": 0.975, "ratio": 10, "text_overlap": True
-                }
-            ]
-
-        per_image_defect_coordinates.append({
-            "image_index": idx,
-            "image_url": img_url,
-            "bboxes": bboxes
-        })
-
-        for b in bboxes:
-            dtype = b.get("type", "DMG_INT_DOODLE")
-            label_kr = DEFECT_TRANSLATION_MAP.get(dtype, dtype)
-            text_overlap = b.get("text_overlap", False)
-            ratio = b.get("ratio", 10)
-            
-            # BBox 좌표는 모든 이미지별로 전송
-            all_defects_flattened.append(b)
-
-            # UBCI v2.0.0.0 수식 감점 항목 처리
-            if "WEAR" in dtype or "마모" in dtype:
-                # 모서리 마모는 BBox 좌표는 다 보내되, 도서 전체 감점은 누적되지 않고 총 -5점 고정
-                if not edge_wear_added:
-                    all_deduction_items.append((label_kr, 5, f"도서 전체 {label_kr} (-5점 단일 고정 Cap)"))
-                    edge_wear_added = True
-            elif "DOODLE" in dtype or "필기" in dtype or "낙서" in dtype:
-                if is_workbook:
-                    # 수험서/문제집 필기/낙서는 BBox 좌표는 전부 파싱하되, 도서 전체 통틀어 단 1회만 -15점 단일 Cap 적용
-                    if not doodle_workbook_added:
-                        all_deduction_items.append((label_kr, 15, "수험서/문제집 도서 전체 필기/낙서 (-15점 단일 고정 Cap)"))
-                        doodle_workbook_added = True
-                else:
-                    ded = 15 if text_overlap else 10
-                    all_deduction_items.append((label_kr, ded, f"이미지 #{idx+1} {label_kr} (-{ded}점)"))
-            elif "STAIN" in dtype:
-                ded = 15 if text_overlap else 10
-                all_deduction_items.append((label_kr, ded, f"이미지 #{idx+1} {label_kr} (-{ded}점)"))
-            elif "TEAR" in dtype or "찢어짐" in dtype or "찢김" in dtype:
-                base_tear = 5 if ratio < 5 else (10 if ratio < 15 else 15)
-                ded = int(base_tear * 1.5) if text_overlap else base_tear
-                all_deduction_items.append((label_kr, ded, f"이미지 #{idx+1} {label_kr} (-{ded}점)"))
-            elif "CRUSH" in dtype:
-                ded = 15 if text_overlap else 10
-                all_deduction_items.append((label_kr, ded, f"이미지 #{idx+1} {label_kr} (-{ded}점)"))
-            else:
-                ded = 5
-                all_deduction_items.append((label_kr, ded, f"이미지 #{idx+1} {label_kr} (-{ded}점)"))
-
-    total_deduction = sum([item[1] for item in all_deduction_items])
-    calculated_ubci = max(0, 100 - total_deduction)
-    
-    if calculated_ubci >= 95:
-        grade_str = "S급 (MINT)"
-        recommend_action_str = "S급 최고가 정상 입고 승인 추천"
-    elif calculated_ubci >= 85:
-        grade_str = "A급 (GOOD)"
-        recommend_action_str = "A급 정상 입고 승인 추천"
-    elif calculated_ubci >= 65:
-        grade_str = "GOOD B급 (NORMAL)"
-        recommend_action_str = "B급 감가 입고 승인 추천"
-    else:
-        grade_str = "REJECT C급 (폐기/반려)"
-        recommend_action_str = "🚨 REJECT C급 (입고 불가 / 반송 및 폐기 처분 추천)" 
-
-    job.ubci_score = calculated_ubci
+    job.status = JobStatusEnum.PENDING.value
     job.retry_count = (job.retry_count or 0) + 1
-    
-    existing_logs = job.agent_logs or {}
-    existing_logs["ubci_score"] = calculated_ubci
-    existing_logs["lpn_barcode"] = existing_logs.get("lpn_barcode") or f"LPN-260728-A002"
-    existing_logs["defect_coordinates"] = per_image_defect_coordinates
-    existing_logs["defects"] = all_defects_flattened
-    existing_logs["reason_code"] = "DMG_INT_DOODLE"
-    existing_logs["primary_reason_code"] = "DMG_INT_DOODLE"
-    existing_logs["reason"] = "👁️ Vision Agent CLAHE AI 비전 재검수 완료 (재연산)"
-    existing_logs["summary"] = "👁️ Vision Agent CLAHE AI 비전 재검수 완료 (재연산)" 
-    
-    ded_detail_str = " + ".join([item[2] for item in all_deduction_items]) if all_deduction_items else "결함 없음"
-    existing_logs["defect_description"] = ded_detail_str
-    
-    cert_id = f"CERT-{datetime.now().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
-    existing_logs["vision_text"] = f"👁️ [Vision Agent] OpenCV CLAHE 동적 대비 전처리 필터 적용 (ClipLimit 2.5) ➔ GPT-4o VLM 이미지 {len(image_urls)}장 개별 분석 완료 (총 {len(all_defects_flattened)}개 정밀 Multi-BBox 결함 100% 포착)"
-    existing_logs["policy_text"] = f"UBCI v2.0.0.0 사내 수석 룰 적용 ➔ {ded_detail_str} = 총 {total_deduction}점 감점 (UBCI {calculated_ubci}점 / {grade_str})"
-    existing_logs["critic_text"] = f"Critic Agent 파이프라인 무결성 검증 완료 ➔ 이미지별 좌표 파싱 및 프로세스 승인"
-    existing_logs["report_text"] = f"📜 [디지털 WMS 품질 검수 인증서] (인증 ID: {cert_id}) ➔ Nexus 사내 정밀 비전 검증 시스템이 외관 표지 훼손율 및 내지 전수 픽셀 분석을 최종 검증하였습니다. UBCI {calculated_ubci}점 ({grade_str}) 실재고 공식 입고 인증 완료"
-    existing_logs["human_node_text"] = f"Human Node (HITL) ➔ 이미지별 BBox 오버레이 관리자 폼 완공"
-    existing_logs["explainer_summary"] = f"이미지 {len(image_urls)}장 개별 검수 ➔ {ded_detail_str} 판독. UBCI {calculated_ubci}점 ({grade_str}) ➔ {recommend_action_str}"
-
-    from sqlalchemy.orm.attributes import flag_modified
-    job.agent_logs = dict(existing_logs)
-    flag_modified(job, "agent_logs")
     session.add(job)
     session.commit()
-    session.refresh(job)
+
+    from app.worker.tasks import process_inspection
+    try:
+        process_inspection.delay(str(job.id))
+    except Exception as e:
+        import threading
+        threading.Thread(target=process_inspection, args=(str(job.id),), daemon=True).start()
 
     return {
-        "status": "success",
-        "message": f"이미지 {len(image_urls)}장별 정밀 Multi-BBox 연산 완공",
+        "status": "queued",
+        "message": "재검수 작업이 Celery 큐에 등록되었습니다. 진행 상황은 SSE로 확인하세요.",
         "job_id": str(job.id),
-        "ubci_score": calculated_ubci,
-        "agent_logs": existing_logs
     }
 
 @router.get("/completed", response_model=List[HitlTaskResponse])

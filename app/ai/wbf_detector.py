@@ -19,6 +19,47 @@ MODEL_RECALL_PATH = AI_DIR / "yolov8_high_recall_best.pt"
 MODEL_PRECISION_PATH = AI_DIR / "yolov8_high_precision_base.pt"
 MODEL_DOODLE_PATH = AI_DIR / "yolov8_doodle_ocr.pt"
 
+
+def ensure_model_weights() -> None:
+    """
+    로컬에 없는 YOLO 가중치 파일(.pt)을 S3(s3://{AWS_S3_BUCKET}/models/)에서 내려받아
+    정확히 위 경로 상수 자리에 저장한다. Docker 이미지/git 저장소에 150MB짜리 가중치를
+    더 이상 baked-in 하지 않기 위한 최초 1회(워커 프로세스당) 다운로드 로직.
+
+    자격증명이 없으면 조용히 폴백하지 않고 명시적으로 예외를 던진다 - 모델이 없으면
+    검수 자체가 불가능하므로 목업으로 얼버무릴 수 없는 종류의 실패다. Celery 태스크
+    입장에서는 이 예외가 그대로 올라가 재시도(추후 DLQ)로 이어진다.
+    """
+    missing = [p for p in (MODEL_RECALL_PATH, MODEL_PRECISION_PATH, MODEL_DOODLE_PATH) if not p.exists()]
+    if not missing:
+        return
+
+    import boto3
+    from app.core.config import settings
+
+    if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
+        raise RuntimeError(
+            f"YOLO 모델 가중치가 로컬에 없습니다 ({[p.name for p in missing]}). "
+            "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY가 설정되어 있지 않아 S3에서도 내려받을 수 없습니다 "
+            "- .env에 자격증명을 설정하세요."
+        )
+
+    s3_client = boto3.client(
+        "s3",
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_REGION,
+    )
+
+    for path in missing:
+        s3_key = f"models/{path.name}"
+        print(f"[WBF Detector] {path.name} 로컬에 없음 - s3://{settings.AWS_S3_BUCKET}/{s3_key} 에서 다운로드 중...")
+        try:
+            s3_client.download_file(settings.AWS_S3_BUCKET, s3_key, str(path))
+            print(f"  - {path.name} 다운로드 완료 ({path.stat().st_size / 1024 / 1024:.1f}MB)")
+        except Exception as e:
+            raise RuntimeError(f"S3에서 {s3_key} 다운로드 실패: {e}") from e
+
 def calculate_iou(box1: np.ndarray, box2: np.ndarray) -> float:
     """[x1, y1, x2, y2] 포맷의 두 BBox 간 IoU(Intersection over Union) 계산"""
     x1 = max(box1[0], box2[0])
@@ -119,6 +160,7 @@ class WBFBookDefectDetector:
     """WBF 앙상블 도서 결함 픽셀 추론 엔진 (3-Model Hybrid Ensemble)"""
     def __init__(self):
         print(f"[WBF Detector] Loading 3-Model Ensemble Pipeline...")
+        ensure_model_weights()
         self.model_recall = None
         self.model_precision = None
         self.model_doodle = None
@@ -231,6 +273,8 @@ class WBFBookDefectDetector:
 
         return results
 
+# 모듈 레벨 싱글턴 - 워커 프로세스당 1회만 3개 YOLO 모델을 로드한다 (요청마다 재로드 금지).
+wbf_detector = WBFBookDefectDetector()
+
 if __name__ == "__main__":
-    detector = WBFBookDefectDetector()
     print("[WBF Detector Init Check] Class initialized successfully!")

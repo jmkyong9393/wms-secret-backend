@@ -60,3 +60,13 @@ runs/
 *.pt
 *.onnx
 *.engine
+
+# --- 시크릿 및 로컬 전용 산출물 (2026-08-04 추가) ---
+# 실제 AWS 액세스 키가 평문으로 들어있는 1회성 스크래치 스크립트. 절대 커밋 금지.
+2.env
+*.env
+scratch_*.py
+# 검수 원본 이미지. S3(CloudFront)가 정본이며 로컬 사본은 YOLO 추론 캐시일 뿐이라 커밋 대상이 아니다.
+app/experiment_data/
+# RAG 벡터 DB 빌드 산출물
+ai_knowledge_base/chroma_db/

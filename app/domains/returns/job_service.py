@@ -1,13 +1,14 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlmodel import Session, select
 
 
 from app.db.session import engine
 from app.models.wms import ReturnJob
+from app.models.wms import now_kst
 
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ def update_return_job_status(
         status: str,
 ) -> None:
     job.status = status
-    job.updated_at = datetime.utcnow()
+    job.updated_at = now_kst()
 
     session.add(job)
     session.commit()
@@ -41,7 +42,7 @@ def update_return_job_status(
 def prepare_processing_job(
         return_job_id: str,
         celery_task_id: str,
-) -> Tuple[uuid.UUID, uuid.UUID, str, str]:
+) -> Tuple[uuid.UUID, uuid.UUID, str, List[str], Dict[str, Any]]:
     
     parsed_return_job_id = uuid.UUID(return_job_id)
     
@@ -59,7 +60,7 @@ def prepare_processing_job(
         # task_id 저장
         if job.task_id is None:
             job.task_id = celery_task_id
-            job.updated_at = datetime.utcnow()
+            job.updated_at = now_kst()
             session.add(job)
             session.commit()
             session.refresh(job)
@@ -75,7 +76,8 @@ def prepare_processing_job(
             job.id,
             job.book_id,
             str(job.order_id),
-            job.image_url or "",
+            job.image_urls or [],
+            job.agent_logs or {},
         )
     
 
@@ -102,7 +104,12 @@ def save_inspection_result(
         # AI 결과를 ReturnJob에 저장
         job.ubci_score = ai_result.get("ubci_score")
         job.final_report = ai_result.get("final_report")
+        # [수정 이력] 기존에는 job.agent_logs를 AI 결과로 완전히 덮어써서, 입고 시점에
+        # inbound/router.py가 심어둔 lpn_barcode/book_category/book_metadata가 검수 완료와
+        # 동시에 사라졌다. HITL 관리자 승인 화면이 이 lpn_barcode를 못 찾아 하드코딩된
+        # fallback LPN으로 랙 배정을 시도하게 되는 원인이었다 - 원본 값을 보존하도록 교정.
         job.agent_logs = {
+            **(job.agent_logs or {}),
             **(ai_result.get("agent_logs") or {}),
             **extra_logs,
         }
@@ -111,7 +118,7 @@ def save_inspection_result(
             job.status = "HITL_REQUIRED"
         else:
             job.status = final_status
-        job.updated_at = datetime.utcnow()
+        job.updated_at = now_kst()
      
         # 최종 DB 저장
         session.add(job)
@@ -161,7 +168,7 @@ def save_inspection_failed(
                 "task_id": celery_task_id,
             },
         }
-        job.updated_at = datetime.utcnow()
+        job.updated_at = now_kst()
 
         session.add(job)
         session.commit()

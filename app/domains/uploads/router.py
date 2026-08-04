@@ -38,7 +38,8 @@ def get_presigned_url(file_name: str, file_type: str = "image/jpeg"):
     S3 다이렉트 업로드를 위한 Pre-signed URL 발급
     """
     if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
-        # S3 설정이 없을 경우 임시 Mock URL 반환 (로컬 개발용)
+        # S3 설정이 없을 경우 임시 Mock URL 반환 (로컬 개발용) - 실제 업로드로 착각하지 않도록 명시적으로 로그
+        print(f"[MOCK MODE] AWS 자격증명 미설정 - {file_name}에 대해 가짜 업로드 URL을 반환합니다 (실제 S3 업로드 아님).")
         unique_id = uuid.uuid4().hex[:8]
         return {
             "upload_url": f"http://localhost:8000/mock-upload/{unique_id}_{file_name}",
@@ -58,7 +59,7 @@ def get_presigned_url(file_name: str, file_type: str = "image/jpeg"):
         response = s3_client.generate_presigned_url(
             'put_object',
             Params={
-                'Bucket': settings.AWS_BUCKET_NAME,
+                'Bucket': settings.AWS_S3_BUCKET,
                 'Key': unique_file_name,
                 'ContentType': file_type
             },
@@ -69,5 +70,5 @@ def get_presigned_url(file_name: str, file_type: str = "image/jpeg"):
 
     return {
         "upload_url": response,
-        "file_url": f"https://{settings.AWS_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{unique_file_name}"
+        "file_url": f"https://{settings.AWS_S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/{unique_file_name}"
     }

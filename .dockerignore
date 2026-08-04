@@ -16,3 +16,5 @@ dist
 build
 *.egg-info
 experiment_data/
+# YOLO 가중치는 S3(models/ 프리픽스)에서 워커 최초 기동 시 다운로드한다 - 이미지에 baked-in 하지 않는다.
+*.pt

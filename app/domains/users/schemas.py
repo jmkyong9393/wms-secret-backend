@@ -7,15 +7,13 @@ class UserCreate(BaseModel):
     name: str
     role: str = Field(default="WORKER")
 
-class OnboardingRequest(BaseModel):
-    new_password: str = Field(..., min_length=4)
-
 class UserUpdate(BaseModel):
+    # 비밀번호는 이 스키마로 다루지 않는다 - PATCH /api/v1/auth/password 단일 엔드포인트로만 변경한다
+    # (과거 이 필드로 프로필 수정에 비밀번호 변경을 얹었던 것이 old-password 검증 없이 통과되는 구멍이었음)
     name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     address: Optional[str] = None
-    password: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: UUID
@@ -27,14 +25,6 @@ class UserResponse(BaseModel):
     role: str
     status: str
     must_change_password: bool
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-class LoginRequest(BaseModel):
-    employee_id: str
-    password: str
 
 # --- Admin / Employee Management Schemas ---
 

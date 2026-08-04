@@ -31,9 +31,16 @@ CREATE TABLE books (
     isbn VARCHAR(13) UNIQUE NOT NULL,
     category_type VARCHAR(50) DEFAULT 'GENERAL',
     cover_image_url VARCHAR(255),
+    description TEXT,
     base_price DECIMAL NOT NULL DEFAULT 0,
     standard_size VARCHAR(50),
-    thickness_mm INT,
+    -- 택배 송장/3D Bin Packing용 실측 물리 규격 (알라딘 OptResult=packing 연동, GET /inbound/book-lookup)
+    thickness_mm DOUBLE PRECISION,
+    width_mm DOUBLE PRECISION DEFAULT 185.0,
+    depth_mm DOUBLE PRECISION DEFAULT 257.0,
+    weight_g DOUBLE PRECISION DEFAULT 650.0,
+    page_count INT DEFAULT 380,
+    calc_source VARCHAR(50) DEFAULT 'ALADIN_REAL_SPEC',
     virtual_stock INT DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -99,6 +106,8 @@ CREATE TABLE order_items (
     book_id UUID NOT NULL REFERENCES books(id) ON DELETE RESTRICT,
     quantity INT NOT NULL DEFAULT 1,
     unit_price DECIMAL NOT NULL DEFAULT 0,
+    -- 주문 시점 재고 유형 선호: "NEW" | "USED" | NULL(중고 우선 자동 할당)
+    condition_pref VARCHAR(10),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -133,6 +142,12 @@ CREATE TABLE inventory_used_items (
     certificate_url VARCHAR(255),
     item_status VARCHAR(20) DEFAULT 'IN_STOCK',
     source_job_id UUID REFERENCES return_jobs(id) ON DELETE SET NULL,
+    -- 이 품목의 등급을 최종 확정한 주체 (AI_AUTO / HITL / PENDING_HITL / MANUAL).
+    -- 이 컬럼이 없던 시절에는 재고 상세 API가 "HITL - WM2608001 (장문경)" 문자열을
+    -- 하드코딩해 모든 품목에 같은 담당자를 표시했다.
+    inspection_source VARCHAR(20) DEFAULT 'AI_AUTO',
+    inspected_by VARCHAR(100),
+    inspected_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -176,6 +191,12 @@ CREATE TABLE fds_reports (
     customer_name VARCHAR(255) NOT NULL,
     fraud_score INT NOT NULL,
     fraud_reason VARCHAR(255),
+    -- 발동 룰: R1_BLIND_APPROVAL / R2_GRADE_OVERRIDE / R3_NIGHT_BULK / R4_RETURN_ABUSE / SIMULATED
+    rule_code VARCHAR(30),
+    -- 적발 대상 유형: CUSTOMER(고객사) / ADMIN(내부 관리자)
+    target_type VARCHAR(20),
+    -- FDS Analyst Agent(gpt-4o-mini) 생성 권고 조치
+    recommended_action TEXT,
     detected_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -188,5 +209,71 @@ CREATE TABLE weekly_insights (
     location_hotspots JSONB,
     logistics_hotspots JSONB,
     predicted_returns INT DEFAULT 0,
+    -- Insight Analyst Agent(gpt-4o-mini) 생성 주간 경영 서사 (수치는 결정론적 집계)
+    ai_narrative TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 14. AI 피킹 지시서 (picking_instructions, picking_instruction_items)
+-- app/models/wms.py의 PickingInstruction/PickingInstructionItem 모델에 대응.
+-- 할당·피킹 순서(pick_seq)는 결정론적 규칙 엔진(FIFO + Zone 동선)이 확정하고,
+-- LLM은 route_summary/worker_note 내러티브 생성에만 관여한다.
+CREATE TABLE picking_instructions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    instruction_no VARCHAR(50) UNIQUE NOT NULL,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    total_items INT DEFAULT 0,
+    picked_items INT DEFAULT 0,
+    route_summary TEXT,
+    worker_note TEXT,
+    ai_source VARCHAR(50) DEFAULT 'RULE_FIFO_ZONE+LLM_NARRATIVE',
+    box_id VARCHAR(20),
+    cj_waybill_no VARCHAR(50),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_picking_instructions_order_id ON picking_instructions(order_id);
+
+CREATE TABLE picking_instruction_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instruction_id UUID NOT NULL REFERENCES picking_instructions(id) ON DELETE CASCADE,
+    order_item_id UUID REFERENCES order_items(id) ON DELETE SET NULL,
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE RESTRICT,
+    used_item_id UUID REFERENCES inventory_used_items(id) ON DELETE SET NULL,
+    stock_type VARCHAR(10) NOT NULL,
+    lpn_barcode VARCHAR(255),
+    isbn VARCHAR(13) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    quantity INT DEFAULT 1,
+    picked_quantity INT DEFAULT 0,
+    zone VARCHAR(50) DEFAULT 'A',
+    rack VARCHAR(50) DEFAULT '01',
+    shelf VARCHAR(50) DEFAULT '01',
+    pick_seq INT DEFAULT 1,
+    unit_price DECIMAL DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    picked_at TIMESTAMP,
+    picked_by VARCHAR(50),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_picking_instruction_items_instruction_id ON picking_instruction_items(instruction_id);
+
+-- 15. HITL 관리자 결재 감사 로그 (admin_audit_logs)
+-- app/models/wms.py의 AdminAuditLog 모델에 대응. HITL 오버라이드(/admin/hitl/override) 시
+-- 관리자의 판단 근거와 체류 시간을 규제 대응(ISMS-P)용으로 남긴다.
+CREATE TABLE admin_audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    target_type VARCHAR(50) NOT NULL,
+    target_id VARCHAR(255) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    previous_state VARCHAR(255) NOT NULL,
+    new_state VARCHAR(255) NOT NULL,
+    target_grade VARCHAR(10),
+    primary_reason_code VARCHAR(50),
+    defect_coordinates JSONB,
+    review_duration_ms INT,
     created_at TIMESTAMP DEFAULT NOW()
 );

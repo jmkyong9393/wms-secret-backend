@@ -1,16 +1,27 @@
 import random
 from datetime import datetime
+from uuid import UUID
 from fastapi import APIRouter, Depends, status, Query, HTTPException, Response
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.db.session import get_db
-from app.models.wms import Order, OrderStatusEnum, InventoryUsedItem, ItemStatusEnum, Book
+from app.models.wms import (
+    Order, OrderItem, OrderStatusEnum, InventoryUsedItem, ItemStatusEnum, Book,
+    Inventory, InventoryLog, PickingInstruction, PickingInstructionItem, now_kst,
+)
 from app.domains.inventory.bin_packing import recommend_optimal_box
 from app.domains.orders.service import (
     calculate_b2b_price,
     calculate_dynamic_discount_rate,
-    calculate_price_elasticity_revenue_optimization
+    calculate_price_elasticity_revenue_optimization,
+    calculate_line_price,
+    calculate_order_pricing,
+)
+from app.domains.orders.picking import (
+    create_picking_instruction,
+    serialize_instruction,
+    publish_outbound_notification,
 )
 from app.ai.bin_packing_agent import bin_packing_agent
 
@@ -64,6 +75,438 @@ def create_order(
         "message": "AI 2-Step 가격 탄력성 기대 수익 극대화 모델 적용 주문 접수 완공"
     }
 
+# ==========================================
+# Order → AI 피킹 지시서 → 출고 파이프라인
+# ==========================================
+
+class OrderLineRequest(BaseModel):
+    # available-books 응답의 id 체계 그대로 수신: "NEW-BOOK-<uuid>"(신품) 또는 중고 item uuid
+    id: str
+    quantity: int = 1
+
+class CreateOrderRequest(BaseModel):
+    customer_name: str = "교보문고 B2B 지점"
+    order_type: str = "B2B_ORDER"
+    items: List[OrderLineRequest]
+    auto_picking_instruction: bool = True  # 주문 즉시 AI 피킹지시서 발행 여부
+
+def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> List[Dict[str, Any]]:
+    """
+    프론트 선택 항목을 (book, is_new, quantity, ubci, days) 라인으로 해석.
+    같은 book의 중고 LPN 여러 개는 개별 라인(각 1권)으로 유지해 LPN별 UBCI 가격을 보존한다.
+    """
+    lines: List[Dict[str, Any]] = []
+    now = now_kst()
+    for line in items:
+        qty = max(1, line.quantity)
+        if line.id.startswith("NEW-BOOK-"):
+            book = session.get(Book, UUID(line.id.replace("NEW-BOOK-", "")))
+            if not book:
+                raise HTTPException(404, f"신품 도서를 찾을 수 없습니다: {line.id}")
+            lines.append({
+                "book": book, "is_new": True, "quantity": qty,
+                "ubci_score": None, "days_in_inventory": 1,
+            })
+        else:
+            used = session.get(InventoryUsedItem, UUID(line.id))
+            if not used:
+                raise HTTPException(404, f"중고 재고(LPN)를 찾을 수 없습니다: {line.id}")
+            if used.item_status != ItemStatusEnum.IN_STOCK.value:
+                raise HTTPException(409, f"이미 할당/출고된 LPN입니다: {used.lpn_barcode}")
+            book = session.get(Book, used.book_id)
+            days = max(1, (now - used.created_at).days) if used.created_at else 120
+            lines.append({
+                "book": book, "is_new": False, "quantity": 1,
+                "ubci_score": used.ubci_score, "days_in_inventory": days,
+            })
+    return lines
+
+@router.post("/create-with-items", status_code=status.HTTP_201_CREATED)
+def create_order_with_items(req: CreateOrderRequest, session: Session = Depends(get_db)):
+    """
+    실제 Order + OrderItem 생성 엔드포인트.
+    라인별 신품(도서정가제 10%)/중고(탄력성 모델) 가격을 주문 시점에 확정 저장하고,
+    옵션에 따라 AI 피킹 지시서까지 즉시 발행한다.
+    """
+    if not req.items:
+        raise HTTPException(400, "주문 항목이 비어 있습니다.")
+
+    lines = _resolve_order_lines(session, req.items)
+    pricing = calculate_order_pricing([
+        {
+            "is_new": ln["is_new"],
+            "list_price": ln["book"].base_price or 15000,
+            "ubci_score": ln["ubci_score"],
+            "days_in_inventory": ln["days_in_inventory"],
+            "category": ln["book"].category_type or "GENERAL",
+            "quantity": ln["quantity"],
+            "title": ln["book"].title,
+            "isbn": ln["book"].isbn,
+        }
+        for ln in lines
+    ])
+
+    order = Order(
+        customer_name=req.customer_name,
+        type=req.order_type,
+        total_price=pricing["final_price"],
+        status=OrderStatusEnum.PENDING.value,
+    )
+    session.add(order)
+    session.flush()
+
+    for ln, priced in zip(lines, pricing["lines"]):
+        session.add(OrderItem(
+            order_id=order.id,
+            book_id=ln["book"].id,
+            quantity=ln["quantity"],
+            unit_price=priced["unit_price"],
+            condition_pref="NEW" if ln["is_new"] else "USED",
+        ))
+    session.commit()
+    session.refresh(order)
+
+    instruction_payload = None
+    if req.auto_picking_instruction:
+        instruction = create_picking_instruction(session, order)
+        instruction_payload = serialize_instruction(session, instruction)
+
+    return {
+        "order_id": str(order.id),
+        "customer_name": order.customer_name,
+        "status": order.status,
+        "pricing": pricing,
+        "picking_instruction": instruction_payload,
+        "message": f"주문 접수 완료 (총 {pricing['total_quantity']}권 / {pricing['final_price']:,.0f}원)"
+                   + (" - AI 피킹 지시서 발행 완료" if instruction_payload else ""),
+    }
+
+@router.post("/simulate-b2b", status_code=status.HTTP_201_CREATED)
+def simulate_b2b_order(session: Session = Depends(get_db)):
+    """
+    B2B 묶음 주문 랜덤 시뮬레이션 - DB 실재고에서 2~4종을 무작위 선택해
+    실제 Order + OrderItem + AI 피킹 지시서를 생성한다. (기존 mock 버튼 대체)
+    """
+    customers = ["교보문고 B2B 지점", "알라딘 중고매장 강남점", "예스24 B2B 물류센터", "영풍문고 종로본점"]
+
+    new_books = session.exec(select(Book).where(Book.is_active == True)).all()
+    used_items = session.exec(
+        select(InventoryUsedItem).where(InventoryUsedItem.item_status == ItemStatusEnum.IN_STOCK.value)
+    ).all()
+
+    picks: List[OrderLineRequest] = []
+    if new_books:
+        for b in random.sample(new_books, min(len(new_books), random.randint(1, 2))):
+            picks.append(OrderLineRequest(id=f"NEW-BOOK-{b.id}", quantity=random.randint(1, 3)))
+    if used_items:
+        for u in random.sample(used_items, min(len(used_items), random.randint(1, 2))):
+            picks.append(OrderLineRequest(id=str(u.id), quantity=1))
+    if not picks:
+        raise HTTPException(409, "시뮬레이션에 사용할 재고가 없습니다.")
+
+    return create_order_with_items(
+        CreateOrderRequest(customer_name=random.choice(customers), items=picks),
+        session=session,
+    )
+
+@router.get("/picking-instructions")
+def list_picking_instructions(
+    active_only: bool = Query(default=False, description="True면 SHIPPED/CANCELLED 제외"),
+    limit: int = Query(default=20, le=100),
+    session: Session = Depends(get_db),
+):
+    """피킹 지시서 목록 (관리자 출고 페이지 / 작업자 스캐너 공용)"""
+    stmt = select(PickingInstruction).order_by(PickingInstruction.created_at.desc()).limit(limit)
+    rows = session.exec(stmt).all()
+    if active_only:
+        rows = [r for r in rows if r.status not in ("SHIPPED", "CANCELLED")]
+    return [serialize_instruction(session, r) for r in rows]
+
+@router.get("/picking-instructions/{instruction_id}")
+def get_picking_instruction(instruction_id: UUID, session: Session = Depends(get_db)):
+    instruction = session.get(PickingInstruction, instruction_id)
+    if not instruction:
+        raise HTTPException(404, "피킹 지시서를 찾을 수 없습니다.")
+    return serialize_instruction(session, instruction)
+
+@router.post("/{order_id}/picking-instruction", status_code=status.HTTP_201_CREATED)
+def issue_picking_instruction(order_id: UUID, session: Session = Depends(get_db)):
+    """기존 주문에 대해 AI 피킹 지시서를 발행한다 (규칙 할당 + LLM 지시문)."""
+    order = session.get(Order, order_id)
+    if not order:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    existing = session.exec(
+        select(PickingInstruction).where(PickingInstruction.order_id == order.id)
+    ).first()
+    if existing and existing.status not in ("CANCELLED",):
+        return serialize_instruction(session, existing)
+    try:
+        instruction = create_picking_instruction(session, order)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return serialize_instruction(session, instruction)
+
+class AcceptInstructionRequest(BaseModel):
+    worker_id: str = "WM2608001"
+
+@router.post("/picking-instructions/{instruction_id}/accept")
+def accept_picking_instruction(instruction_id: UUID, req: AcceptInstructionRequest, session: Session = Depends(get_db)):
+    """worker의 피킹 지시서 수락 (PENDING → ACCEPTED). 작업 배정 기록을 남긴다."""
+    instruction = session.get(PickingInstruction, instruction_id)
+    if not instruction:
+        raise HTTPException(404, "피킹 지시서를 찾을 수 없습니다.")
+    if instruction.status != "PENDING":
+        raise HTTPException(409, f"수락 대기 상태가 아닙니다. (현재: {instruction.status})")
+
+    instruction.status = "ACCEPTED"
+    instruction.accepted_by = req.worker_id
+    instruction.accepted_at = now_kst()
+    instruction.updated_at = now_kst()
+    session.add(instruction)
+    session.commit()
+    return serialize_instruction(session, instruction)
+
+class PickingScanRequest(BaseModel):
+    barcode: str                      # LPN(중고) 또는 13자리 ISBN(신품)
+    worker_id: str = "WM2608001"
+    instruction_id: Optional[UUID] = None  # 미지정 시 활성 지시서 전체에서 매칭
+
+@router.post("/picking-scan")
+def picking_scan(req: PickingScanRequest, session: Session = Depends(get_db)):
+    """
+    현장 스캐너 피킹 검증 - 바코드로 지시서 라인을 매칭해 피킹 완료 처리.
+    중고는 LPN 정확 일치, 신품은 ISBN 일치 + 잔여 수량 기준으로 1권씩 차감한다.
+    """
+    barcode = req.barcode.strip()
+    is_isbn = barcode.replace("-", "").isdigit() and len(barcode.replace("-", "")) == 13
+
+    stmt = select(PickingInstructionItem).join(
+        PickingInstruction, PickingInstructionItem.instruction_id == PickingInstruction.id
+    ).where(PickingInstruction.status.in_(["PENDING", "ACCEPTED", "IN_PROGRESS"]))
+    if req.instruction_id:
+        stmt = stmt.where(PickingInstructionItem.instruction_id == req.instruction_id)
+    if is_isbn:
+        stmt = stmt.where(PickingInstructionItem.isbn == barcode.replace("-", ""))
+        stmt = stmt.where(PickingInstructionItem.stock_type == "NEW")
+    else:
+        stmt = stmt.where(PickingInstructionItem.lpn_barcode == barcode)
+    stmt = stmt.order_by(PickingInstructionItem.pick_seq.asc())
+
+    candidates = session.exec(stmt).all()
+    target = next((c for c in candidates if c.picked_quantity < c.quantity), None)
+    if not target:
+        raise HTTPException(
+            404,
+            f"활성 피킹 지시서에서 바코드 [{barcode}] 매칭 항목을 찾을 수 없거나 이미 피킹 완료되었습니다.",
+        )
+
+    target.picked_quantity += 1
+    target.picked_by = req.worker_id
+    target.picked_at = now_kst()
+    if target.picked_quantity >= target.quantity:
+        target.status = "PICKED"
+    target.updated_at = now_kst()
+    session.add(target)
+
+    instruction = session.get(PickingInstruction, target.instruction_id)
+    # PENDING 상태에서 바로 스캔 시 자동 수락 처리 (현장 유연성)
+    if instruction.status == "PENDING" and not instruction.accepted_by:
+        instruction.accepted_by = req.worker_id
+        instruction.accepted_at = now_kst()
+    instruction.picked_items += 1
+    if instruction.picked_items >= instruction.total_items:
+        instruction.status = "PICKED"
+    elif instruction.status in ("PENDING", "ACCEPTED"):
+        instruction.status = "IN_PROGRESS"
+    instruction.updated_at = now_kst()
+    session.add(instruction)
+    session.commit()
+
+    if instruction.status == "PICKED":
+        # admin 실시간 알림: 전량 피킹 완료 - 패킹 확정 대기
+        publish_outbound_notification(
+            event_type="PICKING_COMPLETED",
+            category="피킹 완료",
+            title=f"피킹 전량 완료 [{instruction.instruction_no}]",
+            description=f"작업자 {req.worker_id} 피킹 {instruction.total_items}권 완료 - 출고 최적화 화면에서 패킹 박스 확정 및 송장 발급을 진행하세요.",
+            extra={"instruction_id": str(instruction.id), "instruction_no": instruction.instruction_no},
+        )
+
+    return {
+        "status": "success",
+        "matched_item": {
+            "id": str(target.id),
+            "title": target.title,
+            "stock_type": target.stock_type,
+            "isbn": target.isbn,
+            "lpn_barcode": target.lpn_barcode,
+            "location_label": f"{target.zone}-{target.rack}-{target.shelf}",
+            "picked_quantity": target.picked_quantity,
+            "quantity": target.quantity,
+            "item_status": target.status,
+        },
+        "instruction_no": instruction.instruction_no,
+        "instruction_status": instruction.status,
+        "progress": f"{instruction.picked_items}/{instruction.total_items}",
+        "all_picked": instruction.status == "PICKED",
+        "message": f"[{target.title}] 피킹 검증 완료 ({instruction.picked_items}/{instruction.total_items}권)",
+    }
+
+class ConfirmPackingRequest(BaseModel):
+    box_id: str
+    cushion_name: Optional[str] = None
+    force: bool = False  # True면 전량 피킹 전에도 확정 허용 (데모 유연성)
+
+def _issue_waybill_no(session: Session) -> str:
+    issued = session.exec(
+        select(PickingInstruction).where(PickingInstruction.cj_waybill_no.is_not(None))
+    ).all()
+    return f"CJ-2026-{datetime.now().strftime('%m%d')}-{len(issued) + 1:04d}"
+
+@router.post("/picking-instructions/{instruction_id}/confirm-packing")
+def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: Session = Depends(get_db)):
+    """
+    [admin] 패킹 박스 확정 → CJ 송장 발급 → DB 재고 실차감 (신품 inventory 차감 / 중고 SHIPPED 전환)
+    상태는 PACKED로 전이되며, worker가 송장/적재 가이드를 확인하고 포장 완료(complete-packing)해야 최종 SHIPPED가 된다.
+    """
+    instruction = session.get(PickingInstruction, instruction_id)
+    if not instruction:
+        raise HTTPException(404, "피킹 지시서를 찾을 수 없습니다.")
+    if instruction.status == "SHIPPED":
+        raise HTTPException(409, f"이미 출고 완료된 지시서입니다. (송장: {instruction.cj_waybill_no})")
+    if instruction.status == "PACKED":
+        raise HTTPException(409, f"이미 송장이 발급되어 worker 포장 대기 중입니다. (송장: {instruction.cj_waybill_no})")
+    if instruction.status not in ("PICKED",) and not req.force:
+        raise HTTPException(
+            409,
+            f"전 품목 피킹 완료 전입니다 ({instruction.picked_items}/{instruction.total_items}). "
+            "강제 확정은 force=true로 요청하세요.",
+        )
+
+    items = session.exec(
+        select(PickingInstructionItem).where(PickingInstructionItem.instruction_id == instruction.id)
+    ).all()
+
+    for it in items:
+        if it.stock_type == "USED" and it.used_item_id:
+            used = session.get(InventoryUsedItem, it.used_item_id)
+            if used:
+                used.item_status = ItemStatusEnum.SHIPPED.value
+                used.updated_at = now_kst()
+                session.add(used)
+            session.add(InventoryLog(
+                transaction_type="OUTBOUND",
+                book_id=it.book_id,
+                condition_grade=(used.condition_grade if used else "GOOD"),
+                quantity_change=-1,
+                target_lpn=it.lpn_barcode,
+                picked_location=f"{it.zone}-{it.rack}-{it.shelf}",
+            ))
+        else:
+            remaining = it.quantity
+            inv_rows = session.exec(
+                select(Inventory).where(Inventory.book_id == it.book_id)
+                .where(Inventory.quantity > 0)
+                .order_by(Inventory.created_at.asc())
+            ).all()
+            for inv in inv_rows:
+                if remaining <= 0:
+                    break
+                deduct = min(inv.quantity, remaining)
+                inv.quantity -= deduct
+                inv.updated_at = now_kst()
+                session.add(inv)
+                remaining -= deduct
+            if remaining > 0:
+                # inventory 테이블 미등록 신품은 books.virtual_stock에서 차감
+                book = session.get(Book, it.book_id)
+                if book and book.virtual_stock:
+                    book.virtual_stock = max(0, book.virtual_stock - remaining)
+                    session.add(book)
+            session.add(InventoryLog(
+                transaction_type="OUTBOUND",
+                book_id=it.book_id,
+                condition_grade="MINT",
+                quantity_change=-it.quantity,
+                picked_location=f"{it.zone}-{it.rack}-{it.shelf}",
+            ))
+
+    waybill = _issue_waybill_no(session)
+    instruction.status = "PACKED"
+    instruction.box_id = req.box_id
+    instruction.cushion_name = req.cushion_name
+    instruction.cj_waybill_no = waybill
+    instruction.packed_at = now_kst()
+    instruction.updated_at = now_kst()
+    session.add(instruction)
+    session.commit()
+
+    # worker 실시간 알림: 송장 발급 - 포장 작업 요청
+    publish_outbound_notification(
+        event_type="WAYBILL_ISSUED",
+        category="송장 발급",
+        title=f"CJ 송장 발급 [{waybill}]",
+        description=f"{instruction.instruction_no} 패킹 확정 (박스: {req.box_id}) - 스캐너 화면의 적재 가이드에 따라 포장 후 완료 처리하세요.",
+        extra={"instruction_id": str(instruction.id), "instruction_no": instruction.instruction_no},
+    )
+
+    return {
+        "status": "PACKED",
+        "instruction_no": instruction.instruction_no,
+        "order_id": str(instruction.order_id),
+        "box_id": req.box_id,
+        "cushion_name": req.cushion_name,
+        "courier": "CJ대한통운",
+        "cj_waybill_no": waybill,
+        "packed_at": instruction.packed_at.isoformat(),
+        "message": f"패킹 확정 및 CJ 송장 [{waybill}] 발급, DB 재고 차감 완료 - worker 포장 대기",
+    }
+
+class CompletePackingRequest(BaseModel):
+    worker_id: str = "WM2608001"
+
+@router.post("/picking-instructions/{instruction_id}/complete-packing")
+def complete_packing(instruction_id: UUID, req: CompletePackingRequest, session: Session = Depends(get_db)):
+    """
+    [worker] 발급된 송장/적재 가이드 확인 후 실물 포장 완료 → 최종 출고(SHIPPED) 전이
+    """
+    instruction = session.get(PickingInstruction, instruction_id)
+    if not instruction:
+        raise HTTPException(404, "피킹 지시서를 찾을 수 없습니다.")
+    if instruction.status == "SHIPPED":
+        raise HTTPException(409, "이미 출고 완료된 지시서입니다.")
+    if instruction.status != "PACKED":
+        raise HTTPException(409, f"송장 발급(패킹 확정) 전입니다. (현재: {instruction.status}) - 관리자 출고 화면에서 패킹 확정을 먼저 진행하세요.")
+
+    instruction.status = "SHIPPED"
+    instruction.shipped_at = now_kst()
+    instruction.updated_at = now_kst()
+    session.add(instruction)
+
+    order = session.get(Order, instruction.order_id)
+    if order:
+        order.status = OrderStatusEnum.SHIPPED.value
+        order.updated_at = now_kst()
+        session.add(order)
+    session.commit()
+
+    publish_outbound_notification(
+        event_type="OUTBOUND_SHIPPED",
+        category="출고 완료",
+        title=f"최종 출고 완료 [{instruction.instruction_no}]",
+        description=f"작업자 {req.worker_id} 포장 완료 - 송장 {instruction.cj_waybill_no} CJ대한통운 인계 대기.",
+        extra={"instruction_id": str(instruction.id), "instruction_no": instruction.instruction_no},
+    )
+
+    return {
+        "status": "SHIPPED",
+        "instruction_no": instruction.instruction_no,
+        "cj_waybill_no": instruction.cj_waybill_no,
+        "box_id": instruction.box_id,
+        "shipped_at": instruction.shipped_at.isoformat(),
+        "message": f"[{instruction.instruction_no}] 포장 완료 및 최종 출고 확정 (송장: {instruction.cj_waybill_no})",
+    }
+
 @router.post("/outbound/pick")
 def pick_outbound_3d_pack(order_id: Optional[str] = None, books: Optional[List[Dict[str, Any]]] = None):
     """
@@ -110,7 +553,7 @@ def ship_outbound_cj_waybill(order_id: str, session: Session = Depends(get_db)):
 class OutboundCompleteRequest(BaseModel):
     lpn_barcode: str
     box_type: str
-    worker_id: Optional[str] = "WM2607001"
+    worker_id: Optional[str] = "WM2608001"
 
 @router.post("/outbound/complete")
 def complete_outbound(req: OutboundCompleteRequest, session: Session = Depends(get_db)):
@@ -151,7 +594,7 @@ def process_order_picking(
         "status": "PICKED",
         "order_id": order_id,
         "message": f"주문건 {order_id}의 피킹 작업이 완료되었습니다.",
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": now_kst().isoformat()
     }
 
 class DynamicPriceRequest(BaseModel):
@@ -168,25 +611,20 @@ class MultiDynamicPriceRequest(BaseModel):
 @router.post("/calculate-dynamic-price")
 def calculate_dynamic_price(req: Dict[str, Any]):
     """
-    실시간 2-Step 가격 탄력성 및 기대 수익 극대화 동적 가격 시뮬레이션 엔드포인트 (단일/N권 다중 묶음 연산 지원)
+    실시간 동적 가격 시뮬레이션 (Two-Track: 신품 도서정가제 정율 / 중고 2-Step 탄력성 모델)
+    - 라인별 quantity(수량), is_new(신품 여부), ubci_score(null 안전) 반영
+    - 총액 = Σ(권당 확정가 x 수량) - 이전 버전의 '전체를 중고 평균으로 뭉개는' 연산 제거
     """
     items = req.get("items")
     if items and isinstance(items, list) and len(items) > 0:
-        total_list_price = sum(item.get("list_price", 35000) for item in items)
-        avg_ubci = sum(item.get("ubci_score", 78) for item in items) / len(items)
-        max_days = max(item.get("days_in_inventory", 120) for item in items)
-        primary_category = items[0].get("category", "Novel")
-
-        res = calculate_price_elasticity_revenue_optimization(
-            list_price=total_list_price,
-            ubci_score=avg_ubci,
-            days_in_inventory=max_days,
-            category=primary_category
-        )
-        res["item_count"] = len(items)
-        res["total_list_price"] = total_list_price
-        res["trend_badge_text"] = f"B2B {len(items)}권 묶음 출고 할인 (-{(min(30.0, len(items)*2.5)):.1f}% 추가 우대)"
-        return res
+        pricing = calculate_order_pricing(items)
+        # 기존 프론트 호환 필드 유지
+        max_days = max((item.get("days_in_inventory") or 1) for item in items)
+        dwell_decay = round(min(max_days, 365) / 365.0 * 0.10, 3)
+        pricing["trend_badge_text"] = pricing["pricing_label"]
+        pricing["dwell_badge_text"] = f"비부패성 보관료 방어: -{round(dwell_decay*100, 1)}% ({max_days}일 체류)"
+        pricing["item_count"] = len(items)
+        return pricing
     else:
         list_price = req.get("list_price", 35000)
         ubci_score = req.get("ubci_score", 78)
@@ -194,7 +632,7 @@ def calculate_dynamic_price(req: Dict[str, Any]):
         category = req.get("category", "Novel")
         return calculate_price_elasticity_revenue_optimization(
             list_price=list_price,
-            ubci_score=ubci_score,
+            ubci_score=ubci_score if ubci_score is not None else 85,
             days_in_inventory=days_in_inventory,
             category=category
         )
@@ -236,6 +674,7 @@ CATEGORY_DEFAULT_SPECS = {
 }
 
 from functools import lru_cache
+from app.models.wms import now_kst
 
 @lru_cache(maxsize=512)
 def fetch_aladin_real_packing_spec(isbn: str) -> dict:
@@ -244,9 +683,14 @@ def fetch_aladin_real_packing_spec(isbn: str) -> dict:
     """
     import urllib.request
     import json
-    
-    ttb_key = "ttbprom971030001"
-    url = f"http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx?ttbkey={ttb_key}&itemIdType=ISBN13&ItemId={isbn}&output=js&Version=20130701&OptResult=packing"
+    from app.core.config import settings
+
+    # [수정 이력] 이 키는 설정값(settings.ALADIN_TTB_KEY)과 다른 하드코딩된 키를 쓰고 있어
+    # 알라딘 API 호출이 조용히 실패(빈 dict 폴백)하고 있었다 - 실제 발급된 키로 교정.
+    ttb_key = settings.ALADIN_TTB_KEY
+    # http는 알라딘 서버가 https로 301 리다이렉트한다 - 리다이렉트 왕복 지연(0.8s 타임아웃 내
+    # 예산 초과 위험)을 피하기 위해 https를 직접 호출한다.
+    url = f"https://www.aladin.co.kr/ttb/api/ItemLookUp.aspx?ttbkey={ttb_key}&itemIdType=ISBN13&ItemId={isbn}&output=js&Version=20130701&OptResult=packing"
     
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -280,103 +724,79 @@ def fetch_aladin_real_packing_spec(isbn: str) -> dict:
 @router.get("/available-books")
 def get_available_books(response: Response, session: Session = Depends(get_db)):
     """
-    3D Bin Packing 및 Dynamic Pricing 시뮬레이션용 DB 실재고 도서 (알라딘 API 1순위 + 종이 공학 2-Step 파이프라인)
+    3D Bin Packing 및 Dynamic Pricing 시뮬레이션용 DB 실재고 도서
+    - 1순위: DB books 테이블의 신품 도서 44권 (LPN 미발급, Zone A)
+    - 2순위: DB inventory_used_items 테이블의 중고 도서 (LPN 바코드, Zone B/C/D)
     """
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     from datetime import datetime
-    statement = select(InventoryUsedItem, Book).join(Book, InventoryUsedItem.book_id == Book.id)
-    results = session.exec(statement).all()
     
-    # Fallback to direct Book query if InventoryUsedItem is empty
-    if not results:
-        all_books = session.exec(select(Book)).all()
-        # Mock pseudo items from Books table
-        class MockItem:
-            def __init__(self, book_id, idx):
-                self.id = f"ITEM-{idx+1:04d}"
-                self.lpn_barcode = f"LPN-20260731-{idx+1:04d}"
-                self.created_at = datetime.utcnow()
-                self.ubci_score = 90 - (idx % 30)
-                self.condition_grade = "MINT" if idx % 3 == 0 else "A"
-        results = [(MockItem(b.id, idx), b) for idx, b in enumerate(all_books)]
-    
-    now = datetime.utcnow()
     output = []
-    
-    # 20개 다양한 실재고 도서 메타데이터 사전
-    book_specs_catalog = [
-        {"title": "불편한 편의점", "isbn": "9791161571188", "pages": 268, "w": 140.0, "d": 205.0, "price": 14000, "cat": "Novel", "weight": 420.0},
-        {"title": "SQL 자격검정 실전문제 (국가공인 SQLD/SQLP)", "isbn": "9791196150242", "pages": 220, "w": 188.0, "d": 257.0, "price": 22000, "cat": "Textbook", "weight": 450.0},
-        {"title": "Do it! 점프 투 파이썬 (개정 2판)", "isbn": "9791163033455", "pages": 408, "w": 188.0, "d": 257.0, "price": 35000, "cat": "IT", "weight": 910.0},
-        {"title": "역행자 (확장판)", "isbn": "9791198225306", "pages": 360, "w": 145.0, "d": 210.0, "price": 19500, "cat": "SelfHelp", "weight": 520.0},
-        {"title": "파이썬 라이브러리를 활용한 데이터 분석", "isbn": "9791169210089", "pages": 680, "w": 188.0, "d": 245.0, "price": 38000, "cat": "IT", "weight": 1450.0},
-        {"title": "원피스 ONE PIECE 108 (만화)", "isbn": "9791136200012", "pages": 208, "w": 128.0, "d": 188.0, "price": 5500, "cat": "Comic", "weight": 260.0},
-        {"title": "모순 (양귀자 소설)", "isbn": "9788970637389", "pages": 308, "w": 128.0, "d": 188.0, "price": 13000, "cat": "Novel", "weight": 380.0},
-        {"title": "클린 아키텍처 (Clean Architecture)", "isbn": "9788966262472", "pages": 432, "w": 185.0, "d": 235.0, "price": 32000, "cat": "IT", "weight": 890.0},
-        {"title": "리팩터링 2판", "isbn": "9791162242742", "pages": 556, "w": 188.0, "d": 240.0, "price": 35000, "cat": "IT", "weight": 1180.0},
-        {"title": "소년이 온다", "isbn": "9788936434120", "pages": 216, "w": 138.0, "d": 200.0, "price": 15000, "cat": "Novel", "weight": 340.0},
-        {"title": "트렌드 코리아 2026", "isbn": "9791193322109", "pages": 420, "w": 152.0, "d": 223.0, "price": 19000, "cat": "Economy", "weight": 610.0},
-        {"title": "빅데이터분석기사 실기 필살기", "isbn": "9791163034902", "pages": 512, "w": 188.0, "d": 257.0, "price": 28000, "cat": "IT", "weight": 1120.0},
-        {"title": "Operating System Concepts", "isbn": "9781119456339", "pages": 976, "w": 200.0, "d": 250.0, "price": 45000, "cat": "IT", "weight": 2100.0},
-        {"title": "자바 ORM 표준 JPA 프로그래밍", "isbn": "9788960777330", "pages": 736, "w": 188.0, "d": 240.0, "price": 43000, "cat": "IT", "weight": 1590.0},
-        {"title": "해커스 토익 기출 보카", "isbn": "9788953724815", "pages": 560, "w": 170.0, "d": 230.0, "price": 12900, "cat": "Language", "weight": 870.0},
-        {"title": "돈의 속성", "isbn": "9791188331796", "pages": 400, "w": 150.0, "d": 215.0, "price": 17800, "cat": "Economy", "weight": 580.0},
-        {"title": "초역 부처의 말", "isbn": "9791168340459", "pages": 240, "w": 128.0, "d": 188.0, "price": 16800, "cat": "Humanity", "weight": 310.0},
-        {"title": "세이노의 가르침", "isbn": "9791168473690", "pages": 736, "w": 152.0, "d": 223.0, "price": 7200, "cat": "SelfHelp", "weight": 1050.0},
-        {"title": "이것이 취업을 위한 코딩 테스트다", "isbn": "9791162243077", "pages": 604, "w": 188.0, "d": 257.0, "price": 34000, "cat": "IT", "weight": 1320.0},
-        {"title": "원씽 (The One Thing)", "isbn": "9788957077719", "pages": 280, "w": 148.0, "d": 210.0, "price": 16000, "cat": "SelfHelp", "weight": 440.0},
-    ]
+    now = now_kst()
 
-    for idx, (item, book) in enumerate(results):
-        days_in_inventory = (now - item.created_at).days if item.created_at else 120
+    # 1. Fetch ALL 44 NEW books from books table with 100% PURE DB inventory stock_qty
+    from app.models.wms import Inventory
+    all_books = session.exec(select(Book)).all()
+    for idx, b in enumerate(all_books):
+        # Calculate 100% pure DB inventory quantity (sum of inventory.quantity or b.virtual_stock)
+        inv_rows = session.exec(select(Inventory).where(Inventory.book_id == b.id)).all()
+        real_inv_qty = sum(inv.quantity for inv in inv_rows) if inv_rows else 0
+        pure_db_stock_qty = real_inv_qty if real_inv_qty > 0 else (b.virtual_stock if (b.virtual_stock and b.virtual_stock > 0) else 1)
+
+        output.append({
+            "id": f"NEW-BOOK-{b.id}",
+            "lpn": "LPN 미발급 (신품)",
+            "title": b.title,
+            "author": b.author or "-",
+            "publisher": b.publisher or "-",
+            "isbn": b.isbn,
+            "cover_image_url": b.cover_image_url or "",
+            "category": b.category_type or "GENERAL",
+            "listPrice": b.base_price or 15000,
+            "ubciScore": None,
+            "conditionGrade": "NEW_FASTTRACK",
+            "isNew": True,
+            "daysInInventory": 1,
+            "stock_qty": pure_db_stock_qty,
+            "width_mm": b.width_mm or 152.0,
+            "depth_mm": b.depth_mm or 223.0,
+            "thickness_mm": b.thickness_mm or 20.0,
+            "weight_g": b.weight_g or 500.0,
+            "calc_source": "REAL_DB_BOOKS_MASTER",
+            "customer": "B2B 가맹 서점 / 교보문고"
+        })
+
+    # 2. Fetch USED items from inventory_used_items (Each LPN item is uniquely 1-qty)
+    used_stmt = select(InventoryUsedItem, Book).join(Book, InventoryUsedItem.book_id == Book.id)
+    used_results = session.exec(used_stmt).all()
+    
+    for idx, (item, b) in enumerate(used_results):
+        days_in_inventory = (now - item.created_at).days if getattr(item, 'created_at', None) else 120
         days_in_inventory = max(1, days_in_inventory)
         
-        spec = book_specs_catalog[idx % len(book_specs_catalog)]
-        target_isbn = spec["isbn"] if idx < len(book_specs_catalog) else book.isbn
-        
-        # 1순위: 알라딘 Open API 실물 규격 조회 최우선 실행
-        aladin_api_spec = fetch_aladin_real_packing_spec(target_isbn)
-        cat_key = spec["cat"]
-        default_spec = CATEGORY_DEFAULT_SPECS.get(cat_key, CATEGORY_DEFAULT_SPECS["GENERAL"])
-
-        # 1순위: 알라딘 API ➔ 2순위: 사전에 정의된 실물 데이터 ➔ 3순위: 카테고리 Default
-        w_mm = aladin_api_spec.get("width_mm") or spec["w"] or getattr(book, 'width_mm', None) or default_spec["w"]
-        d_mm = aladin_api_spec.get("depth_mm") or spec["d"] or getattr(book, 'depth_mm', None) or default_spec["d"]
-        page_cnt = aladin_api_spec.get("page_count") or spec["pages"] or getattr(book, 'page_count', None) or default_spec["pages"]
-        
-        # 두께 (Thickness mm) Fallback
-        if aladin_api_spec.get("thickness_mm"):
-            thick_mm = aladin_api_spec["thickness_mm"]
-            calc_source = "ALADIN_API_1ST_PRIORITY"
-        else:
-            cover_h = 2.5 if page_cnt > 600 else default_spec["cover_h"]
-            thick_mm = round((page_cnt / 2.0 * 0.10) + cover_h, 1)
-            calc_source = "PAPER_ENGINEERING_FORMULA"
-        
-        # 무게 (Weight g) Fallback
-        if aladin_api_spec.get("weight_g"):
-            weight_g = aladin_api_spec["weight_g"]
-        else:
-            calc_weight = round((w_mm * d_mm * (page_cnt / 2.0) * 0.00009) + (w_mm * d_mm * 2 * 0.00025), 1)
-            weight_g = spec["weight"] or calc_weight
-
         output.append({
             "id": str(item.id),
             "lpn": item.lpn_barcode,
-            "title": spec["title"] if book.title == "Do it! 점프 투 파이썬" and idx > 0 else book.title,
-            "isbn": target_isbn,
-            "category": cat_key,
-            "listPrice": spec["price"] if idx < len(book_specs_catalog) else book.base_price,
-            "ubciScore": item.ubci_score or (98 if idx % 2 == 0 else 86 if idx % 3 == 0 else 72),
-            "conditionGrade": item.condition_grade or "A",
+            "title": b.title,
+            "author": b.author or "-",
+            "publisher": b.publisher or "-",
+            "isbn": b.isbn,
+            "cover_image_url": b.cover_image_url or "",
+            "category": b.category_type or "GENERAL",
+            "listPrice": b.base_price or 15000,
+            "ubciScore": item.ubci_score or 85,
+            "conditionGrade": item.condition_grade or "GOOD",
+            "isNew": False,
             "daysInInventory": days_in_inventory,
-            "standard_size": f"{w_mm}x{d_mm}mm ({page_cnt}p) [{default_spec['name']}]",
-            "page_count": page_cnt,
-            "width_mm": w_mm,
-            "depth_mm": d_mm,
-            "thickness_mm": thick_mm,
-            "weight_g": weight_g,
-            "calc_source": calc_source,
+            "stock_qty": 1,
+            "width_mm": b.width_mm or 152.0,
+            "depth_mm": b.depth_mm or 223.0,
+            "thickness_mm": b.thickness_mm or 20.0,
+            "weight_g": b.weight_g or 500.0,
+            "calc_source": "REAL_DB_USED_INVENTORY",
             "customer": "B2B 가맹 서점 / 교보문고"
         })
+
     return output
