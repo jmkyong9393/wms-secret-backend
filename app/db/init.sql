@@ -277,3 +277,35 @@ CREATE TABLE admin_audit_logs (
     review_duration_ms INT,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- 16. AI 자동 발주 제안 (order_proposals) - SCM 칸반보드 카드
+-- app/models/wms.py의 OrderProposal 모델에 대응. Restock 판정 그래프(Collector→Agent→Validator)가
+-- 입고 검수 반려/저재고 스캔 시 PENDING 카드를 적재하고, 관리자가 칸반에서 승인해야만
+-- Order(AUTO_PO) 생성 + 신품 Fast-Track 입고가 집행된다 (LLM 판정/집행 분리 게이트).
+CREATE TABLE order_proposals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE RESTRICT,
+    isbn VARCHAR(13) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    source_job_id UUID REFERENCES return_jobs(id) ON DELETE SET NULL,
+    trigger_type VARCHAR(30) NOT NULL DEFAULT 'INSPECTION_REJECT',
+    reject_reason_code VARCHAR(50),
+    current_stock INT NOT NULL DEFAULT 0,
+    sales_velocity_30d INT NOT NULL DEFAULT 0,
+    rejected_quantity INT NOT NULL DEFAULT 0,
+    baseline_quantity INT NOT NULL DEFAULT 0,
+    proposed_quantity INT NOT NULL DEFAULT 0,
+    urgency VARCHAR(10) NOT NULL DEFAULT 'MEDIUM',
+    reasoning TEXT NOT NULL DEFAULT '',
+    ai_source VARCHAR(30) NOT NULL DEFAULT 'LLM_GPT4O_MINI',
+    unit_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+    estimated_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    decided_by VARCHAR(100),
+    decided_at TIMESTAMP,
+    order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_order_proposals_book_id ON order_proposals(book_id);
+CREATE INDEX idx_order_proposals_status ON order_proposals(status);

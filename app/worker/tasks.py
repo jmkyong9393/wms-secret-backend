@@ -163,6 +163,12 @@ def execute_wms_action(
     else:
         final_status = "APPROVED" if decision == "APPROVE" else "REJECTED"
 
+    # 매입 반려 확정 = 재고 편입 무산(판매 기회 소실) 이벤트.
+    # Restock 판정 그래프를 비동기 태스크로 태워 자동 발주 제안(order_proposals)을 생성한다.
+    # 제안 생성 실패가 반려 처리 자체를 막아서는 안 되므로 enqueue만 하고 지나간다.
+    if final_status == "REJECTED":
+        enqueue_restock_proposal(source_job_id)
+
     if not lpn_barcode:
         logger.warning(f"lpn_barcode 없음 (return_job_id={source_job_id}) - 랙 위치 자동 할당을 건너뜁니다.")
         return final_status, {}
@@ -215,6 +221,83 @@ def execute_wms_action(
 
     return final_status, {}
 
+
+
+# ==========================================
+# Restock 판정 그래프 워커 (자동 발주 제안 생성)
+# ==========================================
+
+def _extract_reject_reason_code(agent_logs: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    반려 사유 코드 추출 우선순위:
+    ① HITL 관리자가 오버라이드 시 지정한 primary_reason_code (사람 판단이 최우선)
+    ② AI 파이프라인이 판독한 defects의 결함 유형(중복 제거, 최대 3종)
+    """
+    logs = agent_logs or {}
+    primary = logs.get("primary_reason_code")
+    if primary:
+        return str(primary)[:50]
+    defects = logs.get("defects") or []
+    types = sorted({d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")})
+    return ",".join(types[:3])[:50] if types else None
+
+
+@celery_app.task(name="app.worker.tasks.generate_restock_proposal", max_retries=1)
+def generate_restock_proposal(return_job_id: str) -> Dict[str, Any]:
+    """
+    반려 확정 건에 대해 Restock 판정 그래프(Collector→Agent→Validator)를 실행하고
+    order_proposals에 PENDING 제안 카드를 적재한다. ReturnJob 1건 = 도서 1권이므로
+    반려 수량은 1로 집계한다 (동일 도서 반복 반려 시 기존 PENDING 카드에 누적).
+    """
+    from app.db.session import engine
+    from app.models.wms import Book
+    from app.ai.agents.restock import generate_and_store_proposal
+
+    try:
+        parsed_job_id = uuid.UUID(return_job_id)
+        with Session(engine) as session:
+            job = session.get(ReturnJob, parsed_job_id)
+            if not job:
+                return {"status": "SKIPPED", "reason": "RETURN_JOB_NOT_FOUND"}
+            book = session.get(Book, job.book_id)
+            if not book:
+                return {"status": "SKIPPED", "reason": "BOOK_NOT_FOUND"}
+
+            proposal = generate_and_store_proposal(
+                session,
+                book,
+                trigger_type="INSPECTION_REJECT",
+                source_job_id=job.id,
+                rejected_quantity=1,
+                reject_reason_code=_extract_reject_reason_code(job.agent_logs),
+            )
+            if not proposal:
+                return {"status": "SKIPPED", "reason": "NO_RESTOCK_NEEDED"}
+            logger.info(
+                f"[Restock] 자동 발주 제안 적재 완료 - proposal={proposal.id} book='{book.title}' "
+                f"qty={proposal.proposed_quantity} urgency={proposal.urgency} source={proposal.ai_source}"
+            )
+            return {"status": "SUCCESS", "proposal_id": str(proposal.id)}
+    except Exception as e:
+        logger.exception(f"[Restock] 제안 생성 실패 (return_job_id={return_job_id}): {e}")
+        return {"status": "FAILED", "error": str(e)}
+
+
+def enqueue_restock_proposal(return_job_id: str) -> None:
+    """
+    Restock 제안 생성을 비동기로 큐잉한다. Celery 브로커 장애 시 인프로세스 스레드로
+    폴백한다 (admin/hitl re-inspect의 재큐잉 폴백과 동일 패턴). 어떤 경우에도 예외를
+    호출자(반려 처리 흐름)로 전파하지 않는다.
+    """
+    try:
+        generate_restock_proposal.delay(str(return_job_id))
+    except Exception as e:
+        logger.warning(f"[Restock] Celery 큐잉 실패, 인프로세스로 폴백: {e}")
+        try:
+            import threading
+            threading.Thread(target=generate_restock_proposal, args=(str(return_job_id),), daemon=True).start()
+        except Exception as e2:
+            logger.error(f"[Restock] 인프로세스 폴백마저 실패 - 제안 생성 건너뜀: {e2}")
 
 
 # celery task

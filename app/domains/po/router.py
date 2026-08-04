@@ -1,39 +1,75 @@
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlmodel import Session
+
 from app.db.session import get_db
+from app.core.security import RoleChecker
+from app.models.wms import UserRoleEnum
 from app.domains.po.service import po_service
 
-router = APIRouter(prefix="/po", tags=["Auto PO"])
+router = APIRouter(prefix="/po", tags=["Auto PO (SCM 칸반)"])
 
-class ApproveRequest(BaseModel):
-    book_ids: List[str]
-
-class CancelRequest(BaseModel):
-    book_ids: List[str]
-
-class DeductStockRequest(BaseModel):
-    book_id: str
-    deduct_qty: int = 10
-    reason: str = "출고/파손 폐기 차감"
+# 발주 결재는 관리자 전용 (HITL 오버라이드와 동일 권한 체계)
+admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 
 
-@router.get("/suggested")
-def get_suggested_po(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
-    return po_service.get_suggested_po(db)
+class ProposalDecisionRequest(BaseModel):
+    proposal_ids: List[str] = Field(..., description="결재할 order_proposals id 목록 (단건도 배열로)")
 
 
-@router.post("/deduct")
-def deduct_stock_simulation(req: DeductStockRequest, db: Session = Depends(get_db)):
-    return po_service.deduct_stock_simulation(db, req.book_id, req.deduct_qty)
+def _inspector_label(current_admin) -> str:
+    employee_id = str(getattr(current_admin, "employee_id", "") or "").strip()
+    name = str(getattr(current_admin, "name", "") or "").strip()
+    if employee_id and name:
+        return f"{employee_id} ({name})"
+    return employee_id or name or "PO 관리자"
 
 
-@router.post("/approve")
-def approve_po(req: ApproveRequest, db: Session = Depends(get_db)):
-    return po_service.approve_po(db, req.book_ids)
+@router.get("/proposals")
+def list_proposals(
+    status: Optional[str] = Query(default=None, description="PENDING | APPROVED | DISMISSED (미지정 시 전체)"),
+    db: Session = Depends(get_db),
+) -> List[Dict[str, Any]]:
+    """
+    SCM 칸반보드 카드 목록. 제안 생성은 반려 이벤트/저재고 스캔 시점(write-time)에 이미
+    완료되어 있으므로 이 GET은 DB 조회만 한다 - 과거 /po/suggested처럼 페이지 로드마다
+    LLM을 호출하지 않는다.
+    """
+    return po_service.list_proposals(db, status)
 
 
-@router.post("/cancel")
-def cancel_po(req: CancelRequest, db: Session = Depends(get_db)):
-    return po_service.cancel_po(req.book_ids)
+@router.post("/proposals/approve")
+def approve_proposals(
+    req: ProposalDecisionRequest,
+    db: Session = Depends(get_db),
+    current_admin=Depends(admin_only),
+):
+    """
+    제안 승인 = 집행. Order(AUTO_PO) 생성 후 신품 Fast-Track 입고(Zone A 묶음 재고 +
+    virtual_stock 가산, LPN 미발급)까지 완료한다. LLM 제안은 이 관리자 승인 게이트를
+    통과해야만 실제 발주가 된다.
+    """
+    return po_service.approve_proposals(db, req.proposal_ids, decided_by=_inspector_label(current_admin))
+
+
+@router.post("/proposals/dismiss")
+def dismiss_proposals(
+    req: ProposalDecisionRequest,
+    db: Session = Depends(get_db),
+    current_admin=Depends(admin_only),
+):
+    return po_service.dismiss_proposals(db, req.proposal_ids, decided_by=_inspector_label(current_admin))
+
+
+@router.post("/proposals/scan")
+def scan_safety_stock(
+    db: Session = Depends(get_db),
+    current_admin=Depends(admin_only),
+):
+    """
+    저재고 수동 스캔 트리거. 가용 재고(신품+중고)가 안전선(15권) 미만인 도서에 대해
+    Restock 판정 그래프를 실행해 PENDING 제안 카드를 생성한다 (1회 최대 8건).
+    """
+    return po_service.scan_safety_stock(db)
