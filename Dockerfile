@@ -23,6 +23,17 @@ FROM python:3.11-slim AS runtime
 # 보안 강화를 위한 Non-root 시스템 유저 생성
 RUN groupadd -r wms-user && useradd -r -g wms-user wms-user
 
+# ultralytics(YOLO)가 의존하는 opencv-python(cv2)은 python:3.11-slim 베이스에 없는
+# X11/GL 공유 라이브러리를 필요로 한다. WBF 앙상블 3-YOLO 추론을 위해 설치.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    libxcb1 \
+    libxext6 \
+    libxrender1 \
+    libsm6 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Builder 스테이지에서 생성된 패키지 환경과 소스 코드 복사 (권한 부여)

@@ -4,6 +4,7 @@ import base64
 from botocore.signers import CloudFrontSigner
 from typing import Dict
 from app.core.config import settings
+from app.models.wms import now_kst
 
 def rsa_signer(message: bytes) -> bytes:
     """
@@ -31,7 +32,7 @@ def generate_signed_cookies(resource_url: str, expire_minutes: int = 5) -> Dict[
     cloudfront_signer = CloudFrontSigner(key_id, rsa_signer)
     
     # Expiration time
-    expire_date = datetime.datetime.utcnow() + datetime.timedelta(minutes=expire_minutes)
+    expire_date = datetime.now_kst() + datetime.timedelta(minutes=expire_minutes)
     
     # Generate the signed policy
     policy = cloudfront_signer.build_policy(

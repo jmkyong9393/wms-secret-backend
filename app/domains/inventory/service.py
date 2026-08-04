@@ -4,6 +4,7 @@ from uuid import uuid4
 from datetime import datetime
 from fastapi import HTTPException
 import random
+from app.models.wms import now_kst
 
 def recommend_optimal_warehouse_zone(grade: str = "MINT", category: str = "IT/컴퓨터", base_price: float = 20000.0, standard_size: str = None) -> tuple[str, str, str]:
     """
@@ -12,17 +13,19 @@ def recommend_optimal_warehouse_zone(grade: str = "MINT", category: str = "IT/�
     2. 카테고리 (IT/소설/경영 등) ➔ 랙(Rack 1-5) 결정 (동일 분야 연관 서적 피킹 동선 42% 단축)
     3. 크기/판형 (신국판/대형판/문고판) ➔ 선반(Shelf 1-4) 결정 (데드 스페이스 35% 감소)
     """
-    # 1. 등급별 존 (Zone A-E)
-    if grade in ["MINT", "S"]:
-        zone = "A" # Fast-pick 고가/최상급 전용 존
+    # 1. 조장님 절대적 3D 물류 규칙: 등급별 존 (Zone A-E)
+    if grade in ["NEW", "NEW_FASTTRACK"]:
+        zone = "A" # Zone A: 신품 전용 고속 입출고 피킹 존
+    elif grade in ["MINT", "S"]:
+        zone = "B" # Zone B: MINT (S급/최상급) 중고 전용 존
     elif grade in ["GOOD", "A"]:
-        zone = "B" # 표준 B2B 출고 존
+        zone = "C" # Zone C: GOOD (A급/상급) 중고 표준 존
     elif grade in ["NORMAL", "B"]:
-        zone = "C" # 일반 중고/할인 존
+        zone = "D" # Zone D: NORMAL (B급/중급) 중고 존
     elif grade in ["POOR", "REJECT"]:
-        zone = "E" # 격리/반려/폐기 존
+        zone = "E" # Zone E: REJECT (폐기/반려) 격리 전용 랙 구역
     else:
-        zone = "D" # 특수/전집류 존
+        zone = "D"
 
     # 2. 카테고리별 랙 (Rack 1-5) (동선 최적화)
     category_rack_map = {
@@ -67,7 +70,7 @@ def get_or_create_location(db: Session, zone: str = "A", rack: str = "1", shelf:
     return loc
 
 
-def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: str = "WM2607001") -> tuple[InventoryUsedItem, Book]:
+def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: str = "WM2608001") -> tuple[InventoryUsedItem, Book]:
     """
     [1단계: 선부착 (Label First)]
     도서 입고 시 LPN 바코드 라벨(LPN-YYMMDD-XXXX)을 먼저 발급하여 실물 도서에 부착합니다.
@@ -85,10 +88,11 @@ def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: 
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
         
-    # 2. 고유 LPN 바코드 생성 로직 (YYMMDD 포맷)
-    date_str = datetime.utcnow().strftime("%y%m%d")
-    unique_suffix = str(uuid4())[:4].upper()
-    lpn_code = f"LPN-{date_str}-{unique_suffix}"
+    # 2. 고유 LPN 바코드 생성 로직 (조장님 표준 규격: LPN-260803-A003)
+    date_str = now_kst().strftime("%y%m%d")
+    zone_code = random.choice(["A", "B", "C", "D"])
+    seq_num = random.randint(1, 999)
+    lpn_code = f"LPN-{date_str}-{zone_code}{seq_num:03d}"
     
     # 3. InventoryUsedItem 선부착 대기 등록 (location_id=None, item_status=PENDING_INSPECTION)
     new_item = InventoryUsedItem(
@@ -106,12 +110,26 @@ def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: 
     
     return new_item, book
 
-def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_grade: str, final_status: str = "COMPLETED", book_id = None, ubci_score: int = 85, source_job_id: str = None, certificate_url: str = None) -> InventoryUsedItem:
+def assign_rack_location_after_inspection(
+    db: Session,
+    lpn_barcode: str,
+    final_grade: str,
+    final_status: str = "COMPLETED",
+    book_id = None,
+    ubci_score: int = 85,
+    source_job_id: str = None,
+    certificate_url: str = None,
+    inspection_source: str = "AI_AUTO",
+    inspected_by: str = None,
+) -> InventoryUsedItem:
     """
     [Report Agent 최종 보고서 생성 시점 랙 위치 자동 할당]
     - HITL_REQUIRED (승인 대기/이의 발생): 보관 랙 위치 할당 보류 (location_id = None, 버퍼 존 대기)
     - REJECT / 폐기 / 반려: E구역(Zone E - 격리/폐기 랙 구역, LOC-E-1-1) 강제 할당
     - COMPLETED / APPROVED (MINT, GOOD, NORMAL): 카테고리/등급/크기 3차원 알고리즘으로 Zone A, B, C 최종 랙 위치 할당
+
+    inspection_source / inspected_by는 이 품목의 등급을 최종 확정한 주체를 기록한다
+    (AI_AUTO=파이프라인 자동 확정, HITL=관리자 수동 결재, MANUAL=현장 수기).
     """
     item = db.query(InventoryUsedItem).filter(InventoryUsedItem.lpn_barcode == lpn_barcode).first()
     book = db.query(Book).filter(Book.id == (item.book_id if item else book_id)).first() if (item or book_id) else None
@@ -142,17 +160,25 @@ def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_g
             lpn_barcode=lpn_barcode,
             condition_grade=final_grade,
             ubci_score=ubci_score,
-            item_status="IN_STOCK",
+            item_status=final_status,
             source_job_id=source_job_id,
             certificate_url=generated_cert_url,
-            created_at=datetime.utcnow()
+            inspection_source=inspection_source,
+            inspected_by=inspected_by,
+            inspected_at=now_kst(),
+            created_at=now_kst()
         )
         db.add(item)
         db.commit()
         db.refresh(item)
         return item
 
-    # 기존 항목 업데이트 시에도 source_job_id 및 certificate_url 동기화
+    # 기존 항목 업데이트 시에도 source_job_id / certificate_url / 검수 주체를 동기화한다.
+    # HITL 오버라이드는 AI가 먼저 만들어둔 row를 덮어쓰므로, 여기서 갱신하지 않으면
+    # 관리자가 최종 결재한 건도 계속 AI_AUTO로 남는다.
+    item.inspection_source = inspection_source
+    item.inspected_by = inspected_by
+    item.inspected_at = now_kst()
     if source_job_id:
         item.source_job_id = source_job_id
     if certificate_url:
@@ -163,12 +189,13 @@ def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_g
 
     book = db.query(Book).filter(Book.id == item.book_id).first()
 
-    # 1. HITL 승인 대기 상태 ➔ 보관 랙 위치 할당 보류 (None)
-    if final_status == "HITL_REQUIRED":
-        item.location_id = None
+    # 1. HITL 승인 대기 상태 ➔ 임시적재 구역(Zone Z) 강제 할당
+    if final_status in ["HITL_REQUIRED", "HITL_PENDING"]:
+        location = get_or_create_location(db, zone="Z", rack="1", shelf="1")
+        item.location_id = location.id
         item.condition_grade = "PENDING"
-        item.item_status = "PENDING_INSPECTION"
-        item.updated_at = datetime.utcnow()
+        item.item_status = "HITL_PENDING"
+        item.updated_at = now_kst()
         db.add(item)
         db.commit()
         db.refresh(item)
@@ -180,7 +207,7 @@ def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_g
         item.location_id = location.id
         item.condition_grade = "REJECT"
         item.item_status = "REJECTED"
-        item.updated_at = datetime.utcnow()
+        item.updated_at = now_kst()
         db.add(item)
         db.commit()
         db.refresh(item)
@@ -198,8 +225,8 @@ def assign_rack_location_after_inspection(db: Session, lpn_barcode: str, final_g
     
     item.location_id = location.id
     item.condition_grade = final_grade
-    item.item_status = "IN_STOCK"
-    item.updated_at = datetime.utcnow()
+    item.item_status = final_status
+    item.updated_at = now_kst()
 
     db.add(item)
     db.commit()

@@ -1,29 +1,42 @@
-from fastapi import APIRouter, Depends, status, Request, Response, HTTPException
+from fastapi import APIRouter, Depends, status, Request, HTTPException
 from sqlmodel import Session, select
-from datetime import timedelta
 
 from app.db.session import get_db
 from app.core.config import settings
 from app.domains.users.schemas import (
-    UserCreate, UserResponse, LoginRequest, OnboardingRequest, UserUpdate,
+    UserCreate, UserResponse,
     EmployeeListResponse, BulkCreateEmployeeRequest, BulkCreateEmployeeResponse,
     UpdateEmployeeStatusRequest, UpdateEmployeeStatusResponse,
     UpdateEmployeeRoleRequest, UpdateEmployeeRoleResponse
 )
 from app.domains.users.service import user_service
-from app.core.exceptions import InvalidCredentialsException, InactiveAccountException
 from app.core.limiter import limiter
-from app.core.security import get_current_user, RoleChecker
+from app.core.security import RoleChecker
 from app.models.wms import User
 
+# 로그인/로그아웃/내 정보 조회·수정/비밀번호 변경은 app/domains/auth/router.py
+# (/api/v1/auth/*)로 이관되었다. 이 라우터는 관리자용 사원 리소스 관리(CRUD)만 다룬다.
+
 router = APIRouter()
+
+
+def _reject_in_prod() -> None:
+    # init-master/reset-all-passwords는 인증 가드가 없는 개발/시연 전용 엔드포인트다.
+    # (init-master는 최초 부팅 시 관리자 계정이 아직 없는 chicken-and-egg 상황을 풀기 위한 것이고,
+    # reset-all-passwords는 데모 중 잠긴 계정을 즉시 복구하기 위한 것 - 둘 다 인증을 요구하면
+    # 존재 목적 자체가 성립하지 않는다) 대신 운영 환경에서는 호출 자체를 차단한다.
+    if settings.APP_ENV == "prod":
+        raise HTTPException(status_code=403, detail="This endpoint is disabled in production.")
+
 
 @router.post("/init-master", status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 def init_master(request: Request, session: Session = Depends(get_db)):
     """
-    (초기 셋업 전용) DB에 유저가 존재하지 않을 때 최초의 MASTER 계정(WM2607001 / 장문경)을 발급합니다.
+    (초기 셋업 전용, 운영 환경에서는 비활성화) DB에 유저가 존재하지 않을 때
+    최초의 MASTER 계정(WM2608001 / 장문경)을 발급합니다.
     """
+    _reject_in_prod()
     existing_user = session.exec(select(User)).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Database is already initialized with users.")
@@ -32,7 +45,6 @@ def init_master(request: Request, session: Session = Depends(get_db)):
     user, temp_password = user_service.register_user(session=session, user_in=user_in)
     
     # 개발/시연 편의를 위한 1234 해시 자동 세팅
-    user.email = "jmkyong2000@naver.com"
     user.password_hash = user_service.get_password_hash("1234")
     user.must_change_password = False
     session.add(user)
@@ -43,10 +55,32 @@ def init_master(request: Request, session: Session = Depends(get_db)):
         "message": "Initial Master account created successfully.",
         "employee_id": user.employee_id,
         "name": user.name,
-        "email": user.email,
         "role": user.role,
         "password": "1234",
-        "note": "Initial Master account initialized with employee_id 'WM2607001' and password '1234'."
+        "note": f"Initial Master account initialized with employee_id '{user.employee_id}' and password '1234'."
+    }
+
+@router.post("/reset-all-passwords")
+def reset_all_passwords(session: Session = Depends(get_db)):
+    """
+    개발/시연 편의 (운영 환경에서는 비활성화): DB 내 모든 계정 (WM2608001, WM2608002 등)의
+    비밀번호를 '1234'로 100% 일괄 재설정합니다.
+    """
+    _reject_in_prod()
+    users = session.exec(select(User)).all()
+    new_hash = user_service.get_password_hash("1234")
+    updated_ids = []
+    for u in users:
+        u.password_hash = new_hash
+        u.must_change_password = False
+        session.add(u)
+        updated_ids.append(u.employee_id)
+    session.commit()
+    return {
+        "status": "success",
+        "message": f"Successfully reset passwords for {len(updated_ids)} accounts to '1234'.",
+        "updated_employee_ids": updated_ids,
+        "standard_password": "1234"
     }
 
 @router.post("/issue", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -60,93 +94,6 @@ def issue_account(request: Request, user_in: UserCreate, session: Session = Depe
     user, temp_password = user_service.register_user(session=session, user_in=user_in)
     # 실제 운영에서는 메일 발송이나 Admin에게만 리턴하는 구조 추가 가능
     return user
-
-@router.post("/login")
-@limiter.limit("5/minute")
-def login(request: Request, response: Response, login_req: LoginRequest, session: Session = Depends(get_db)):
-    """
-    JWT Access Token 발급 및 HttpOnly 쿠키 설정
-    """
-    user = user_service.authenticate_user(session=session, employee_id=login_req.employee_id, password=login_req.password)
-    if not user:
-        raise InvalidCredentialsException()
-    
-    # Status Enum 문자열 변환 및 비교
-    user_status_str = str(user.status.value) if hasattr(user.status, 'value') else str(user.status)
-    if user_status_str != "ACTIVE":
-        raise InactiveAccountException()
-        
-    role_str = str(user.role.value) if hasattr(user.role, 'value') else str(user.role)
-
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = user_service.create_access_token(
-        data={"sub": user.employee_id, "role": role_str}, expires_delta=access_token_expires
-    )
-    
-    response.set_cookie(
-        key="token",
-        value=access_token,
-        httponly=True,
-        secure=False,
-        samesite="lax",
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    )
-    
-    response.set_cookie(
-        key="role",
-        value=role_str,
-        httponly=False,
-        secure=False,
-        samesite="lax",
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    )
-    
-    return {
-        "access_token": access_token, 
-        "token_type": "bearer", 
-        "message": "Login successful",
-        "must_change_password": user.must_change_password
-    }
-
-@router.post("/onboarding", response_model=UserResponse)
-def onboarding(
-    onboarding_req: OnboardingRequest, 
-    session: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    최초 로그인 시 비밀번호 변경 강제 처리
-    """
-    user = user_service.onboarding_user(session=session, user=current_user, onboarding_in=onboarding_req)
-    return user
-
-@router.get("/me", response_model=UserResponse)
-def get_me(current_user: User = Depends(get_current_user)):
-    """
-    내 정보 조회
-    """
-    return current_user
-
-@router.put("/me", response_model=UserResponse)
-def update_me(
-    update_req: UserUpdate,
-    session: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    내 정보 수정 (마이페이지)
-    """
-    user = user_service.update_user_profile(session=session, user=current_user, update_in=update_req)
-    return user
-
-@router.post("/logout")
-def logout(response: Response):
-    """
-    로그아웃: 발급된 쿠키를 강제 만료(삭제) 처리합니다.
-    """
-    response.delete_cookie(key="token")
-    response.delete_cookie(key="role")
-    return {"message": "Logout successful"}
 
 # --- Admin / Employee Management Endpoints ---
 
@@ -202,8 +149,7 @@ def update_employee_status(
     session: Session = Depends(get_db),
     current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
 ):
-    from app.domains.users.repository import user_repository
-    target_user = user_repository.get_user_by_employee_id(session, employee_id)
+    target_user = user_service.get_user_by_employee_id(session, employee_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
         
@@ -220,8 +166,7 @@ def update_employee_role(
     session: Session = Depends(get_db),
     current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
 ):
-    from app.domains.users.repository import user_repository
-    target_user = user_repository.get_user_by_employee_id(session, employee_id)
+    target_user = user_service.get_user_by_employee_id(session, employee_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
         
@@ -238,8 +183,7 @@ def delete_employee(
     session: Session = Depends(get_db),
     current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
 ):
-    from app.domains.users.repository import user_repository
-    target_user = user_repository.get_user_by_employee_id(session, employee_id)
+    target_user = user_service.get_user_by_employee_id(session, employee_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
         

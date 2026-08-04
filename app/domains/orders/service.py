@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 # 카테고리별 매입 방어율 (Category Base Rate)
 CATEGORY_BASE_RATE = {
@@ -107,4 +107,110 @@ def calculate_price_elasticity_revenue_optimization(
         "final_price": final_price,
         "trend_badge_text": trend_badge_text,
         "optimization_model": "XGBoost 2-Step Price Elasticity & Expected Revenue Maximization"
+    }
+
+
+# 신품 도서정가제(출판문화산업진흥법) 법정 최대 할인율: 10% 정율
+NEW_BOOK_FIXED_DISCOUNT = 0.10
+DEFAULT_USED_UBCI = 85.0  # UBCI 미기록 중고 재고의 보수적 기본값 (GOOD 등급 하한)
+
+
+def calculate_line_price(
+    is_new: bool,
+    list_price: float,
+    ubci_score: Optional[float] = None,
+    days_in_inventory: int = 1,
+    category: str = "Novel",
+) -> Dict[str, Any]:
+    """
+    단일 라인(도서 1종) 권당 B2B 도매가 계산 - 신품/중고 분기.
+    - 신품: 도서정가제 준수 10% 정율 할인 (탄력성 모델 미적용, 법정 고정)
+    - 중고: 기존 2-Step 가격 탄력성 기대수익 극대화 모델
+    ubci_score가 None(신품 또는 미기록)이어도 안전하게 동작한다.
+    """
+    if is_new:
+        unit_price = round(list_price * (1.0 - NEW_BOOK_FIXED_DISCOUNT), -1)
+        return {
+            "is_new": True,
+            "unit_price": unit_price,
+            "discount_rate": NEW_BOOK_FIXED_DISCOUNT,
+            "pricing_basis": "신품 도서정가제 10% 정율 할인 (법정가 90%)",
+        }
+
+    safe_ubci = float(ubci_score) if ubci_score is not None else DEFAULT_USED_UBCI
+    opt = calculate_price_elasticity_revenue_optimization(
+        list_price=list_price,
+        ubci_score=safe_ubci,
+        days_in_inventory=max(1, int(days_in_inventory or 1)),
+        category=category or "Novel",
+    )
+    return {
+        "is_new": False,
+        "unit_price": opt["final_price"],
+        "discount_rate": opt["optimal_discount_rate"],
+        "pricing_basis": f"UBCI {int(safe_ubci)}점 중고 탄력성 최적 할인 {opt['discount_percent']}",
+        "elasticity_detail": opt,
+    }
+
+
+def calculate_order_pricing(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    주문/시뮬레이션 묶음 가격 계산 - 라인별(신품/중고 분기) x 수량 합산.
+    items: [{is_new, list_price, ubci_score, days_in_inventory, category, quantity, title?, isbn?}]
+    """
+    lines = []
+    total_list = 0.0
+    total_final = 0.0
+    new_qty = 0
+    used_qty = 0
+
+    for item in items:
+        qty = max(1, int(item.get("quantity") or 1))
+        list_price = float(item.get("list_price") or 15000)
+        is_new = bool(item.get("is_new"))
+        line = calculate_line_price(
+            is_new=is_new,
+            list_price=list_price,
+            ubci_score=item.get("ubci_score"),
+            days_in_inventory=item.get("days_in_inventory") or 1,
+            category=item.get("category") or "Novel",
+        )
+        line_total = line["unit_price"] * qty
+        lines.append({
+            "title": item.get("title"),
+            "isbn": item.get("isbn"),
+            "is_new": is_new,
+            "quantity": qty,
+            "list_price": list_price,
+            "unit_price": line["unit_price"],
+            "line_total": line_total,
+            "discount_rate": line["discount_rate"],
+            "pricing_basis": line["pricing_basis"],
+        })
+        total_list += list_price * qty
+        total_final += line_total
+        if is_new:
+            new_qty += qty
+        else:
+            used_qty += qty
+
+    effective_discount = (1.0 - (total_final / total_list)) if total_list > 0 else 0.0
+    if new_qty > 0 and used_qty == 0:
+        label = "신품 도서정가제 준수 (10% 정율 할인 / 90% 법정가)"
+    elif new_qty == 0 and used_qty > 0:
+        label = "UBCI 정량 등급 기반 중고 동적 할인"
+    else:
+        label = f"신품 10% + 중고 동적 복합 믹스 할인 (신품 {new_qty}권 + 중고 {used_qty}권)"
+
+    return {
+        "lines": lines,
+        "total_quantity": new_qty + used_qty,
+        "new_quantity": new_qty,
+        "used_quantity": used_qty,
+        "total_list_price": round(total_list, -1),
+        "final_price": round(total_final, -1),
+        "effective_discount_rate": round(effective_discount, 3),
+        "discount_percent": f"{round(effective_discount * 100)}%",
+        "pricing_label": label,
+        "optimization_model": "Two-Track Pricing (신품 법정 정율 / 중고 2-Step Price Elasticity)",
     }

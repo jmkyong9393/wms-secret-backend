@@ -3,6 +3,7 @@ FastAPI 애플리케이션의 진입점(Entrypoint) 파일입니다.
 앱 초기화, 데이터베이스 테이블 생성 트리거, 그리고 도메인별 API 라우터를 마운트하는 역할을 합니다.
 """
 from fastapi import FastAPI
+from app.domains.auth import router as auth
 from app.domains.dashboard import router as dashboard
 from app.domains.inbound import router as inbound
 from app.domains.inventory import router as inventory
@@ -13,6 +14,8 @@ from app.domains.users import router as users
 from app.domains.uploads import router as uploads
 from app.domains.admin.router import router as admin
 from app.domains.research.router import router as research
+from app.domains.notifications import router as notifications
+from app.domains.fds import router as fds
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -27,7 +30,7 @@ from app.core.middleware import LoggingMiddleware
 app = FastAPI(
     title="Nexus",
     description="다중 에이전트 기반 B2B 물류 자동화 플랫폼 Nexus Backend",
-    version="1.9.0.1"
+    version="2.10.0.0"
 )
 
 # ==========================================
@@ -89,7 +92,7 @@ async def custom_http_exception_handler(request: Request, exc: HTTPException):
             "code": exc.status_code,
             "message": exc.detail,
             "path": request.url.path,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": now_kst().isoformat() + "Z"
         },
     )
 
@@ -104,13 +107,13 @@ async def global_exception_handler(request: Request, exc: Exception):
             "message": "Internal Server Error",
             "detail": str(exc),
             "path": request.url.path,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": now_kst().isoformat() + "Z"
         },
     )
 @app.on_event("startup")
 def on_startup():
     """
-    서버 시작 시 DB에 사용자가 0명일 경우, 최초 MASTER 계정(WM2607001 장문경)을 자동으로 시딩합니다.
+    서버 시작 시 DB에 사용자가 0명일 경우, 최초 MASTER 계정(WM2608001 장문경)을 자동으로 시딩합니다.
     """
     from app.db.session import engine
     from sqlmodel import Session, select
@@ -123,11 +126,13 @@ def on_startup():
         with Session(engine) as session:
             users_list = session.exec(select(User)).all()
             if len(users_list) == 0:
-                print("[Startup] DB가 비어있습니다. 최초 MASTER 계정 (WM2607001 장문경)을 자동 시딩합니다...")
+                from datetime import datetime
+                yymm = datetime.now().strftime("%y%m")
+                dynamic_master_id = f"WM{yymm}001"
+                print(f"[Startup] DB가 비어있습니다. 최초 MASTER 계정 ({dynamic_master_id} 장문경)을 자동 시딩합니다...")
                 master_user = User(
-                    employee_id="WM2607001",
+                    employee_id=dynamic_master_id,
                     name="장문경",
-                    email="jmkyong2000@naver.com",
                     password_hash=pwd_context.hash("1234"),
                     role=UserRoleEnum.MASTER,
                     status=UserStatusEnum.ACTIVE,
@@ -135,7 +140,7 @@ def on_startup():
                 )
                 session.add(master_user)
                 session.commit()
-                print("[Startup] 최초 MASTER 계정 (WM2607001 / 비밀번호: 1234) 생성 완료!")
+                print(f"[Startup] 최초 MASTER 계정 ({dynamic_master_id} / 비밀번호: 1234) 생성 완료!")
     except Exception as e:
         print("[Startup] 최초 MASTER 계정 자동 시딩 중 에러:", e)
 
@@ -149,13 +154,17 @@ app.include_router(po.router, prefix=settings.API_V1_STR)
 app.include_router(inbound.router, prefix=settings.API_V1_STR)
 app.include_router(returns.router, prefix=settings.API_V1_STR)
 app.include_router(orders.router, prefix=settings.API_V1_STR)
+app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Auth"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
 app.include_router(uploads.router, prefix=settings.API_V1_STR)
 app.include_router(admin, prefix=settings.API_V1_STR)
 app.include_router(research, prefix=settings.API_V1_STR)
+app.include_router(notifications.router, prefix=settings.API_V1_STR)
+app.include_router(fds.router, prefix=settings.API_V1_STR)
 
 import os
 from fastapi.staticfiles import StaticFiles
+from app.models.wms import now_kst
 base_dir = os.path.dirname(os.path.abspath(__file__))
 experiment_dir = os.path.join(base_dir, "experiment_data")
 os.makedirs(experiment_dir, exist_ok=True)
@@ -166,7 +175,7 @@ def health_check():
     """
     로드밸런서(K8s Ingress 등) 또는 KEDA 스케일링을 위한 서버 헬스 체크 엔드포인트입니다.
     """
-    return {"status": "ok", "version": "1.9.0.1"}
+    return {"status": "ok", "version": "2.10.0.0"}
 
 @app.get("/db-check")
 def db_check(session: Session = Depends(get_db)):

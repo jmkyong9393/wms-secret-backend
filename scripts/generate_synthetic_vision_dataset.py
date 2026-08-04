@@ -23,7 +23,7 @@ from PIL import Image, ImageEnhance, ImageDraw, ImageFilter
 # 1. Configuration & Storage Interface (S3 Ready)
 # --------------------------------------------------------------------------------------
 STORAGE_MODE = os.getenv("STORAGE_MODE", "LOCAL")  # "LOCAL" or "S3"
-AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "nexus-wms-vision-assets")
+AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "wms-secret-vision-assets")
 LOCAL_OUTPUT_DIR = os.getenv("LOCAL_OUTPUT_DIR", "./synthetic_vision_data")
 
 # Aladin & Naver API Keys (Future Credentials Binding)

@@ -5,7 +5,7 @@ from typing import List
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.domains.users.repository import user_repository
+from app.domains.users.service import user_service
 from app.core.exceptions import UnauthorizedException, ForbiddenException
 from app.models.wms import User, UserRoleEnum, UserStatusEnum
 
@@ -28,7 +28,7 @@ def get_current_user(token: str = Depends(get_token_from_cookie), session: Sessi
     except jwt.PyJWTError:
         raise UnauthorizedException("Could not validate credentials")
     
-    user = user_repository.get_user_by_employee_id(session, employee_id=employee_id)
+    user = user_service.get_user_by_employee_id(session, employee_id)
     if user is None:
         raise UnauthorizedException("User not found")
     

@@ -13,6 +13,18 @@ def now_kst() -> datetime:
     """한국 표준시(KST, UTC+9) 현재 시각 반환 헬퍼 (DB 적재용)"""
     return datetime.now(KST).replace(tzinfo=None)
 
+def ubci_grade_from_score(score) -> str:
+    """UBCI_Specification_v2.0.0.0.md 공식 등급 경계값 (S>=95=MINT, A>=85=GOOD, B>=65=NORMAL, else REJECT)"""
+    if score is None:
+        return "NORMAL"
+    if score >= 95:
+        return "MINT"
+    if score >= 85:
+        return "GOOD"
+    if score >= 65:
+        return "NORMAL"
+    return "REJECT"
+
 # --- Enums (상태 및 타입 정의) ---
 
 class ConditionGradeEnum(str, Enum):
@@ -69,6 +81,19 @@ class ItemStatusEnum(str, Enum):
     IN_STOCK = "IN_STOCK"
     ALLOCATED = "ALLOCATED"
     SHIPPED = "SHIPPED"
+
+class PickingInstructionStatusEnum(str, Enum):
+    PENDING = "PENDING"          # 지시서 발행됨 (worker 수락 대기)
+    ACCEPTED = "ACCEPTED"        # worker 수락 완료, 피킹 시작 전
+    IN_PROGRESS = "IN_PROGRESS"  # 1건 이상 피킹됨
+    PICKED = "PICKED"            # 전 품목 피킹 완료 (admin 패킹 확정 대기)
+    PACKED = "PACKED"            # 패킹 확정 + 송장 발급 + 재고 차감 (worker 포장 대기)
+    SHIPPED = "SHIPPED"          # worker 포장 완료 = 최종 출고
+    CANCELLED = "CANCELLED"
+
+class PickingItemStatusEnum(str, Enum):
+    PENDING = "PENDING"
+    PICKED = "PICKED"
 
 class BoardTicketStatusEnum(str, Enum):
     TODO = "TODO"
@@ -181,6 +206,17 @@ class InventoryUsedItem(SQLModel, table=True):
     certificate_url: Optional[str] = Field(default=None, max_length=255)
     item_status: str = Field(default="IN_STOCK", max_length=20) # ItemStatusEnum
     source_job_id: Optional[UUID] = Field(default=None, foreign_key="return_jobs.id", ondelete="SET NULL")
+
+    # 이 품목의 등급을 최종 확정한 주체.
+    # [수정 이력] 이전에는 검수자 정보를 담을 컬럼 자체가 없어서, 재고 상세/보증서 API가
+    # "WM2608001" / "HITL - WM2608001 (장문경)" 문자열을 하드코딩해 내려주고 있었다.
+    # 누가 판정했는지가 실제로는 어디에도 기록되지 않던 상태.
+    #   inspection_source: AI_AUTO(파이프라인 자동 확정) | HITL(관리자 수동 결재) | MANUAL(현장 수기)
+    #   inspected_by     : 사번 또는 판정 주체 식별자 (AI_AUTO면 사용 모델/파이프라인 명)
+    inspection_source: str = Field(default="AI_AUTO", max_length=20)
+    inspected_by: Optional[str] = Field(default=None, max_length=100)
+    inspected_at: Optional[datetime] = Field(default=None)
+
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
@@ -203,6 +239,66 @@ class OrderItem(SQLModel, table=True):
     book_id: UUID = Field(foreign_key="books.id", ondelete="RESTRICT")
     quantity: int = Field(default=1)
     unit_price: float = Field(default=0.0)
+    # 주문 시점 재고 유형 선호: "NEW" | "USED" | None(중고 우선 자동 할당)
+    condition_pref: Optional[str] = Field(default=None, max_length=10)
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
+
+class PickingInstruction(SQLModel, table=True):
+    """
+    AI 피킹 지시서 헤더.
+    할당(어느 재고를 뺄지)·피킹 순서(pick_seq)는 결정론적 규칙 엔진(FIFO + Zone 동선)이 확정하고,
+    LLM은 route_summary / worker_note 내러티브 생성에만 관여한다 (순환 논리 방지 아키텍처).
+    """
+    __tablename__ = "picking_instructions"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    order_id: UUID = Field(foreign_key="orders.id", ondelete="CASCADE", index=True)
+    instruction_no: str = Field(max_length=50, unique=True, index=True)  # PICK-YYMMDD-####
+    status: str = Field(default="PENDING", max_length=20)  # PickingInstructionStatusEnum
+    total_items: int = Field(default=0)      # 총 피킹 대상 권수 (수량 합)
+    picked_items: int = Field(default=0)     # 피킹 완료 권수
+    route_summary: Optional[str] = Field(default=None, sa_column=Column(Text))  # LLM 동선 요약
+    worker_note: Optional[str] = Field(default=None, sa_column=Column(Text))    # LLM 작업자 지시문
+    ai_source: str = Field(default="RULE_FIFO_ZONE+LLM_NARRATIVE", max_length=50)
+    accepted_by: Optional[str] = Field(default=None, max_length=50)   # 지시서 수락 작업자 사번
+    accepted_at: Optional[datetime] = Field(default=None)
+    box_id: Optional[str] = Field(default=None, max_length=20)       # 패킹 확정 박스 (BOOK-S1 등)
+    cushion_name: Optional[str] = Field(default=None, max_length=100)  # 확정 완충재 (worker 포장 가이드용)
+    cj_waybill_no: Optional[str] = Field(default=None, max_length=50)  # 발급 송장 번호
+    packed_at: Optional[datetime] = Field(default=None)               # 송장 발급(패킹 확정) 시각
+    shipped_at: Optional[datetime] = Field(default=None)              # worker 포장 완료(최종 출고) 시각
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
+
+class PickingInstructionItem(SQLModel, table=True):
+    """
+    피킹 지시서 라인 아이템.
+    - 신품(NEW): book 단위 + quantity N권, 스캔 매칭 키 = ISBN
+    - 중고(USED): LPN 개별 단위 (quantity 항상 1), 스캔 매칭 키 = lpn_barcode
+    zone/rack/shelf는 지시서 발행 시점 위치를 비정규화 저장 (지시서는 발행 시점 스냅샷).
+    """
+    __tablename__ = "picking_instruction_items"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    instruction_id: UUID = Field(foreign_key="picking_instructions.id", ondelete="CASCADE", index=True)
+    order_item_id: Optional[UUID] = Field(default=None, foreign_key="order_items.id", ondelete="SET NULL")
+    book_id: UUID = Field(foreign_key="books.id", ondelete="RESTRICT")
+    used_item_id: Optional[UUID] = Field(default=None, foreign_key="inventory_used_items.id", ondelete="SET NULL")
+    stock_type: str = Field(max_length=10)  # "NEW" | "USED"
+    lpn_barcode: Optional[str] = Field(default=None, max_length=255)  # USED 전용
+    isbn: str = Field(max_length=13)        # 스캐너 매칭용 비정규화
+    title: str = Field(max_length=255)      # 지시서 출력용 비정규화
+    quantity: int = Field(default=1)
+    picked_quantity: int = Field(default=0)
+    zone: str = Field(default="A", max_length=50)
+    rack: str = Field(default="01", max_length=50)
+    shelf: str = Field(default="01", max_length=50)
+    pick_seq: int = Field(default=1)        # 동선 정렬 피킹 순서
+    unit_price: float = Field(default=0.0)  # 주문 시점 확정 권당 도매가
+    status: str = Field(default="PENDING", max_length=20)  # PickingItemStatusEnum
+    picked_at: Optional[datetime] = Field(default=None)
+    picked_by: Optional[str] = Field(default=None, max_length=50)
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
@@ -262,17 +358,32 @@ class BoardPost(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=now_kst)
 
 class FdsReport(SQLModel, table=True):
+    """
+    FDS(Fraud Detection System) 적발 이력.
+
+    [수정 이력 2026-08-04] 이 테이블은 init.sql에 정의만 있고 어떤 코드도 INSERT하지 않던
+    죽은 테이블이었다(0건). 룰 엔진(app/domains/fds/service.py) 신설과 함께 실적재를 시작하며,
+    fraud_score 등 수치는 결정론적 룰 엔진이 산출하고 fraud_reason/recommended_action 서술만
+    FDS Analyst Agent(gpt-4o-mini)가 생성한다.
+    """
     __tablename__ = "fds_reports"
-    
+
     id: UUID = Field(default_factory=uuid4, primary_key=True)
+    # 적발 대상 표시명 (고객사명 또는 관리자 사번 - target_type이 구분)
     customer_name: str = Field(max_length=255)
     fraud_score: int
     fraud_reason: Optional[str] = Field(default=None, max_length=255)
+    # 발동한 탐지 룰: R1_BLIND_APPROVAL / R2_GRADE_OVERRIDE / R3_NIGHT_BULK / R4_RETURN_ABUSE / SIMULATED
+    rule_code: Optional[str] = Field(default=None, max_length=30)
+    # 적발 대상 유형: CUSTOMER(고객사) / ADMIN(내부 관리자)
+    target_type: Optional[str] = Field(default=None, max_length=20)
+    # Analyst Agent가 생성한 권고 조치 (예: "해당 관리자 결재 이력 표본 재검토 권고")
+    recommended_action: Optional[str] = Field(default=None, sa_column=Column(Text))
     detected_at: datetime = Field(default_factory=now_kst)
 
 class WeeklyInsight(SQLModel, table=True):
     __tablename__ = "weekly_insights"
-    
+
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     report_week: str = Field(unique=True, index=True, max_length=20)
     saved_labor_cost_krw: int = Field(default=0)
@@ -280,6 +391,9 @@ class WeeklyInsight(SQLModel, table=True):
     location_hotspots: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
     logistics_hotspots: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
     predicted_returns: int = Field(default=0)
+    # Insight Analyst Agent(gpt-4o-mini)가 집계 수치를 바탕으로 생성한 주간 경영 서사
+    # (수치 자체는 전부 결정론적 SQL 집계 - LLM은 해석 문장만 생성)
+    ai_narrative: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=now_kst)
 
 class AdminAuditLog(SQLModel, table=True):
@@ -299,4 +413,4 @@ class AdminAuditLog(SQLModel, table=True):
     defect_coordinates: Optional[List[Dict[str, Any]]] = Field(default=None, sa_column=Column(JSONB))
     review_duration_ms: Optional[int] = Field(default=None)
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_kst)

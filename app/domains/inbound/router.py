@@ -3,18 +3,15 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
-import asyncio
+from uuid import UUID
 import json
 import uuid
 import datetime
 from app.db.session import get_db
-from app.models.wms import InboundJob, Book
-from app.domains.inbound.service import generate_signed_cookie
+from app.models.wms import now_kst, InboundJob, Book, ReturnJob, JobStatusEnum, ubci_grade_from_score
+from app.domains.inbound.service import generate_signed_cookie, lookup_book_by_isbn
 import base64
 import os
-import tempfile
-
-job_store = {}
 
 
 class UploadCookieRequest(BaseModel):
@@ -24,6 +21,9 @@ class EvaluateRequest(BaseModel):
     lpn: str
     images: List[str]
     book_metadata: Optional[Dict[str, Any]] = None
+    # 입고 촬영을 수행한 작업자 사번. 재고 상세/보증서의 "입고 처리 담당자" 표기가
+    # 하드코딩 상수가 아니라 실제 담당자를 가리키도록 하기 위해 받는다 (미전달 시 AI 자동 판정으로 표기).
+    worker_id: Optional[str] = None
 
 # Inbound 도메인 라우터: 협력사(B2B) 또는 일반 사용자의 입고 요청 및 처리 이력을 담당합니다.
 router = APIRouter(prefix="/inbound", tags=["Inbound"])
@@ -48,6 +48,21 @@ async def get_inbound_history(db: Session = Depends(get_db)) -> List[Dict[str, A
         })
     return result
 
+@router.get("/book-lookup", summary="ISBN 바코드 스캔 시 알라딘 API 도서 정보/택배 규격 조회")
+async def get_book_lookup(isbn: str) -> Dict[str, Any]:
+    """
+    프론트 입고 화면(ISBN 바코드 스캔)이 호출하는 도서 메타데이터 조회 API.
+    제목/저자/출판사/표지/가격/설명뿐 아니라 택배 송장 산정용 가로/세로/두께/무게도 함께 반환한다.
+    """
+    if not isbn:
+        raise HTTPException(status_code=400, detail="ISBN이 필요합니다.")
+
+    result = await lookup_book_by_isbn(isbn)
+    if not result:
+        raise HTTPException(status_code=404, detail="알라딘 API에서 도서 정보를 찾을 수 없습니다.")
+    return result
+
+
 @router.post("/upload-cookie")
 async def get_upload_cookie(request: UploadCookieRequest) -> Dict[str, Any]:
     """
@@ -62,22 +77,22 @@ async def get_upload_cookie(request: UploadCookieRequest) -> Dict[str, Any]:
 @router.post("/evaluate")
 async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_db)):
     """
-    [UX 렌더링 최적화] AI 판독 작업 생성 API
-    모바일 렌즈에서 촬영된 이미지들을 AI 에이전트 파이프라인으로 넘기기 위해 Job을 큐에 적재합니다.
-    (현재는 실제 워커(Celery) 대신 SSE 테스트를 위한 모의 job_id를 반환합니다.)
+    AI 판독 작업 생성 API. 모바일 렌즈에서 촬영된 이미지를 ReturnJob DB row로 적재하고
+    Celery 태스크(app.worker.tasks.process_inspection - Redlock+DLQ 백엔드)로 위임합니다.
     """
     if len(request.images) < 2:
         raise HTTPException(status_code=400, detail="At least 2 images (front, back) are required.")
-    
+
     # Save book to DB if it doesn't exist
+    book = None
+    parsed_category = "GENERAL"
     if request.book_metadata:
         isbn = request.book_metadata.get('isbn')
         if isbn:
             statement = select(Book).where(Book.isbn == isbn)
             book = db.exec(statement).first()
-            
+
             category_name = request.book_metadata.get('categoryName', '')
-            parsed_category = "GENERAL"
             if category_name:
                 parts = category_name.split('>')
                 if len(parts) > 1:
@@ -86,7 +101,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
                     parsed_category = parts[0].strip()
 
             if not book:
-                book = Book(
+                book_kwargs = dict(
                     barcode=isbn, # Usually we use isbn as barcode for new books
                     isbn=isbn,
                     title=request.book_metadata.get('title', 'Unknown Title'),
@@ -98,304 +113,219 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
                     cover_image_url=request.book_metadata.get('imageUrl'),
                     category_type=parsed_category
                 )
+                # 택배 송장 산정용 알라딘 실측 규격(GET /inbound/book-lookup에서 이미 조회되어
+                # 프론트가 book_metadata에 실어 보낸 값) - 없으면 Book 모델 기본값(신국판 표준)을 그대로 둔다.
+                for field in ("width_mm", "depth_mm", "thickness_mm", "weight_g", "page_count"):
+                    value = request.book_metadata.get(field)
+                    if value is not None:
+                        book_kwargs[field] = value
+                if any(request.book_metadata.get(f) is not None for f in ("width_mm", "depth_mm", "thickness_mm", "weight_g")):
+                    book_kwargs["calc_source"] = "ALADIN_REAL_SPEC"
+
+                book = Book(**book_kwargs)
                 db.add(book)
                 db.commit()
                 db.refresh(book)
 
-    # 향후 Celery Task ID로 대체될 고유 작업 식별자
     job_id = f"job-{uuid.uuid4().hex[:8]}"
 
-    # Save base64 images to persistent folder (mapped via docker volume to ./app/experiment_data)
+    # [수정 이력] 예전에는 base64 이미지를 로컬 디스크에만 저장하고 컨테이너 절대경로
+    # (/app/app/experiment_data/job-xxx/raw_0.jpg)를 그대로 image_urls에 넣었다. 프론트는 이
+    # 문자열을 <img src>에 그대로 꽂으므로 http://localhost:3000/app/app/... 으로 해석되어
+    # 100% 404였다 - 상세페이지에서 검수 이미지가 한 장도 안 뜨던 직접적 원인.
+    # app/core/s3_service.upload_base64_to_s3()는 정의만 되어 있고 호출부가 단 한 곳도 없는
+    # dead code였다. 이제 실제로 S3에 올리고 브라우저가 열 수 있는 CloudFront URL을 적재한다.
+    #
+    # 로컬 사본도 계속 남긴다: Vision Agent의 WBF YOLO 추론은 로컬 파일 경로를 요구하는데,
+    # 원격 URL만 있으면 매 검수마다 CloudFront에서 재다운로드해야 해 불필요한 지연이 생긴다.
+    # 따라서 image_urls = 브라우저용 공개 URL, agent_logs.local_image_paths = 워커 추론용 경로로
+    # 역할을 분리한다.
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     experiment_dir = os.path.join(base_dir, "experiment_data", job_id)
     os.makedirs(experiment_dir, exist_ok=True)
-    
-    image_paths = []
+
+    from app.core.s3_service import upload_bytes_to_s3
+
+    s3_prefix = f"inbound/{datetime.datetime.now().strftime('%Y%m%d')}/{job_id}"
+
+    local_image_paths: List[str] = []
+    public_image_urls: List[str] = []
     for idx, b64_img in enumerate(request.images):
         if b64_img.startswith("data:image"):
             b64_img = b64_img.split(",")[1]
-            
+
+        try:
+            raw_bytes = base64.b64decode(b64_img)
+        except Exception as e:
+            print(f"[Inbound] 이미지 base64 디코딩 실패 (idx={idx}): {e}")
+            continue
+
         img_path = os.path.join(experiment_dir, f"raw_{idx}.jpg")
         try:
             with open(img_path, "wb") as f:
-                f.write(base64.b64decode(b64_img))
-            image_paths.append(img_path)
+                f.write(raw_bytes)
+            local_image_paths.append(img_path)
         except Exception as e:
-            print(f"Error saving image: {e}")
-            
-    job_store[job_id] = {
-        "lpn": request.lpn,
-        "image_paths": image_paths,
-        "category": parsed_category,
-        "book_metadata": request.book_metadata
-    }
+            print(f"[Inbound] 로컬 이미지 저장 실패 (idx={idx}): {e}")
 
-    return {"job_id": job_id, "lpn": request.lpn, "message": "Evaluation job queued successfully"}
+        # S3 업로드 실패 시에도 입고 자체는 막지 않는다. 공개 URL을 못 얻으면 백엔드
+        # StaticFiles 마운트(/experiment_data)로 폴백해 최소한 사내망에서는 보이게 한다.
+        cdn_url = upload_bytes_to_s3(raw_bytes, f"{s3_prefix}/raw_{idx}.jpg")
+        public_image_urls.append(cdn_url or f"/experiment_data/{job_id}/raw_{idx}.jpg")
 
-async def real_ai_worker(job_id: str):
-    job_data = job_store.get(job_id, {})
-    image_paths = job_data.get("image_paths", [])
-    book_category = job_data.get("category", "GENERAL")
-    lpn_code = job_data.get("lpn")
-    book_meta = job_data.get("book_metadata") or {}
-    
-    if not image_paths:
-        yield f"data: {json.dumps({'job_id': job_id, 'progress': 100, 'message': '에러: 이미지 없음', 'grade': None, 'ubci_score': None})}\n\n"
-        return
+    # 입고 촬영을 수행한 담당자. 하드코딩된 "WM2608001" 대신 요청자의 사번을 그대로 보존해
+    # 이후 재고 상세/보증서 화면이 실제 담당자를 표시할 수 있게 한다.
+    inbound_worker_id = (request.worker_id or "").strip() or None
 
-    yield f"data: {json.dumps({'job_id': job_id, 'progress': 10, 'message': 'AI 검수 초기화 중...', 'grade': None})}\n\n"
+    # ReturnJob DB row 생성 - lpn/book_category/book_metadata는 agent_logs(JSONB)에 보존
+    new_job = ReturnJob(
+        book_id=book.id if book else None,
+        image_urls=public_image_urls,
+        status=JobStatusEnum.PENDING.value,
+        agent_logs={
+            "lpn_barcode": request.lpn,
+            "book_category": parsed_category,
+            "book_metadata": request.book_metadata,
+            "local_image_paths": local_image_paths,
+            "inbound_worker_id": inbound_worker_id,
+        },
+    )
+    db.add(new_job)
+    db.commit()
+    db.refresh(new_job)
 
+    from app.worker.tasks import process_inspection
     try:
-        from app.ai.graph import build_wms_graph
-        app = build_wms_graph()
-        
-        initial_state = {
-            "job_id": job_id,
-            "image_paths": image_paths,
-            "book_category": book_category,
-            "messages": [],
-            "retry_count": 0,
-            "needs_hitl": False
-        }
-        
-        def run_graph_sync():
-            updates = []
-            for out in app.stream(initial_state, stream_mode="updates"):
-                updates.append(out)
-            return updates
-            
-        updates = await asyncio.to_thread(run_graph_sync)
-        
-        grade = "NORMAL"
-        ubci_score = 75
-        defect_coordinates = []
-        defect_description = "정상"
-        for out in updates:
-            if "vision_agent" in out:
-                yield f"data: {json.dumps({'job_id': job_id, 'progress': 40, 'message': 'Vision VLM 분석 완료'})}\n\n"
-                if "defect_coordinates" in out["vision_agent"]:
-                    defect_coordinates = out["vision_agent"]["defect_coordinates"]
-                if "defect_description" in out["vision_agent"]:
-                    defect_description = out["vision_agent"]["defect_description"]
-                await asyncio.sleep(0.5)
-            if "policy_agent" in out:
-                yield f"data: {json.dumps({'job_id': job_id, 'progress': 70, 'message': '사내 규정(Policy) 매칭 완료'})}\n\n"
-                grade = out["policy_agent"].get("ubci_grade") or out["policy_agent"].get("grade") or grade
-                ubci_score = out["policy_agent"].get("ubci_score", ubci_score)
-                if "matched_rule" in out["policy_agent"]:
-                    defect_description = out["policy_agent"]["matched_rule"]
-                await asyncio.sleep(0.5)
-            if "critic_agent" in out:
-                yield f"data: {json.dumps({'job_id': job_id, 'progress': 90, 'message': '교차 검증 완료'})}\n\n"
-                await asyncio.sleep(0.5)
-            if "hitl_node" in out:
-                yield f"data: {json.dumps({'job_id': job_id, 'progress': 95, 'message': '수동 검수 필요'})}\n\n"
-                grade = "HITL_REQUIRED"
-                await asyncio.sleep(0.5)
-                
-        # [실제 DB 저장 연동] AI 검수 최종 판정 결과를 InventoryUsedItem 및 ReturnJob DB 테이블에 동기화
-        if lpn_code:
-            try:
-                from app.db.session import engine
-                from app.domains.inventory.service import assign_rack_location_after_inspection
-                from app.models.wms import ReturnJob, JobStatusEnum
-                isbn = book_meta.get("isbn")
-                
-                with Session(engine) as session:
-                    book_obj = None
-                    if isbn:
-                        book_obj = session.exec(select(Book).where(Book.isbn == isbn)).first()
-                    
-                    # 1. ReturnJob DB 생성 (관리자 HITL 대시보드 표출용)
-                    return_job_db = ReturnJob(
-                        book_id=book_obj.id if book_obj else None,
-                        image_urls=image_paths,
-                        status=JobStatusEnum.HITL_REQUIRED.value if grade == "HITL_REQUIRED" else JobStatusEnum.COMPLETED.value,
-                        ubci_score=ubci_score,
-                        final_grade=grade,
-                        agent_logs={
-                            "defect_coordinates": defect_coordinates,
-                            "defect_description": defect_description,
-                            "lpn_barcode": lpn_code
-                        }
-                    )
-                    session.add(return_job_db)
-
-                    # 2. InventoryUsedItem DB 생성/갱신
-                    item = session.exec(select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode == lpn_code)).first()
-                    if not item:
-                        item = InventoryUsedItem(
-                            book_id=book_obj.id if book_obj else None,
-                            lpn_barcode=lpn_code,
-                            ubci_score=ubci_score,
-                            condition_grade=grade if grade != "HITL_REQUIRED" else None,
-                            item_status="IN_STOCK" if (grade != "REJECT" and grade != "HITL_REQUIRED") else ("HITL_PENDING" if grade == "HITL_REQUIRED" else "REJECTED")
-                        )
-                        session.add(item)
-                    else:
-                        item.ubci_score = ubci_score
-                        item.condition_grade = grade if grade != "HITL_REQUIRED" else item.condition_grade
-                        item.item_status = "IN_STOCK" if (grade != "REJECT" and grade != "HITL_REQUIRED") else ("HITL_PENDING" if grade == "HITL_REQUIRED" else "REJECTED")
-                        if book_obj and not item.book_id:
-                            item.book_id = book_obj.id
-                        session.add(item)
-                    session.commit()
-                    session.refresh(item)
-                    
-                    # 창고 랙 위치 (Zone A-E) 배치
-                    if grade != "HITL_REQUIRED":
-                        assign_rack_location_after_inspection(session, lpn_code, grade)
-            except Exception as db_err:
-                print(f"DB InventoryUsedItem Save Error: {db_err}")
-
-        # Save result to experiment_data
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        experiment_dir = os.path.join(base_dir, "experiment_data", job_id)
-        if os.path.exists(experiment_dir):
-            with open(os.path.join(experiment_dir, "result.json"), "w", encoding="utf-8") as f:
-                json.dump({
-                    'job_id': job_id, 
-                    'grade': grade, 
-                    'ubci_score': ubci_score,
-                    'timestamp': datetime.datetime.now().isoformat(),
-                    'defect_coordinates': defect_coordinates,
-                    'defect_description': defect_description
-                }, f, ensure_ascii=False, indent=2)
-                
-            # Save raw AI trace log for prompt debugging
-            def sanitize_for_json(obj):
-                if hasattr(obj, 'content'):
-                    return {"type": obj.__class__.__name__, "content": obj.content}
-                return str(obj)
-                
-            with open(os.path.join(experiment_dir, "ai_trace_log.json"), "w", encoding="utf-8") as f:
-                json.dump(updates, f, ensure_ascii=False, indent=2, default=sanitize_for_json)
-                
-        yield f"data: {json.dumps({'job_id': job_id, 'progress': 100, 'message': '완료', 'grade': grade, 'ubci_score': ubci_score, 'defect_description': defect_description})}\n\n"
-        
+        process_inspection.delay(str(new_job.id))
     except Exception as e:
-        print(f"AI Error: {e}")
-        yield f"data: {json.dumps({'job_id': job_id, 'progress': 100, 'message': f'에러: {str(e)}', 'grade': 'ERROR', 'ubci_score': 0})}\n\n"
+        print(f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}")
+        import threading
+        threading.Thread(target=process_inspection, args=(str(new_job.id),), daemon=True).start()
+
+    return {"job_id": str(new_job.id), "lpn": request.lpn, "message": "Evaluation job queued successfully"}
+
 
 @router.get("/stream/{job_id}")
 async def stream_evaluation_progress(job_id: str):
     """
-    [UX 렌더링 최적화] AI 작업 상태 실시간 푸시(SSE) API
-    StreamingResponse를 사용하여, 지정된 job_id의 진행률 데이터를 연결이 끊기지 않은 채로
-    클라이언트에게 실시간(Event-driven) 푸시합니다.
+    [SSE] AI 작업 상태 실시간 푸시 API. Celery 워커가 Redis Pub/Sub 채널(return_job:{job_id})에
+    발행하는 진행 이벤트를 구독해, 프론트엔드가 기대하는 필드 형태(job_id/progress/message/
+    grade/ubci_score/defect_description)로 변환하여 그대로 중계합니다.
     """
-    return StreamingResponse(real_ai_worker(job_id), media_type="text/event-stream")
+    async def event_generator():
+        import redis.asyncio as aioredis
+        from app.core.redis_pubsub import get_return_job_channel, REDIS_URL
+
+        r = aioredis.Redis.from_url(REDIS_URL, decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe(get_return_job_channel(job_id))
+
+        try:
+            yield f"data: {json.dumps({'job_id': job_id, 'progress': 0, 'message': 'AI 검수 초기화 중...', 'grade': None})}\n\n"
+
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    raw = json.loads(message["data"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+
+                payload = {
+                    "job_id": job_id,
+                    "progress": raw.get("progress", 0),
+                    "message": raw.get("message") or raw.get("status") or "처리 중...",
+                    "grade": raw.get("grade"),
+                    "ubci_score": raw.get("ubci_score"),
+                    "defect_description": raw.get("defect_description"),
+                }
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+                if raw.get("progress") == 100:
+                    break
+        finally:
+            await pubsub.unsubscribe()
+            await r.close()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @router.get("/result/{job_id}")
-async def get_evaluation_result(job_id: str):
+async def get_evaluation_result(job_id: str, db: Session = Depends(get_db)):
     """
-    AI 분석이 완료된 후, 프론트엔드 모달에서 상세 내역과 사진 BBox 좌표를 조회하기 위한 API
+    AI 분석이 완료된 후, 프론트엔드 모달에서 상세 내역과 사진 BBox 좌표를 조회하기 위한 API.
+    (로컬 result.json 파일 대신 ReturnJob DB row에서 조회)
     """
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    experiment_dir = os.path.join(base_dir, "experiment_data", job_id)
-    
-    if not os.path.exists(experiment_dir):
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Job data not found")
-        
-    result_data = {}
-    result_path = os.path.join(experiment_dir, "result.json")
-    if os.path.exists(result_path):
-        with open(result_path, "r", encoding="utf-8") as f:
-            result_data = json.load(f)
-            
-    images = []
-    for filename in os.listdir(experiment_dir):
-        if filename.endswith(".png") or filename.endswith(".jpg") or filename.endswith(".jpeg"):
-            images.append(f"http://localhost:8000/experiment_data/{job_id}/{filename}")
-            
+
+    job = db.get(ReturnJob, job_uuid)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job data not found")
+
+    agent_logs = job.agent_logs or {}
+    defects = agent_logs.get("defects") or []
+    defect_types = sorted({d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")})
+
+    # [수정 이력] job.status가 아직 PENDING/PROCESSING(진행 중)인데도 ubci_grade_from_score(None)이
+    # "NORMAL"을 반환해, 폴링하는 클라이언트가 "정상 등급으로 완료됨"과 "아직 처리 중"을 구분할
+    # 수 없던 버그를 수정 - 완료 상태(APPROVED/REJECTED/HITL_REQUIRED/FAILED)가 아니면 grade를
+    # null로 반환하고 별도 status 필드로 진행 여부를 명시한다.
+    still_processing = job.status in (JobStatusEnum.PENDING.value, JobStatusEnum.PROCESSING.value)
+    if still_processing:
+        grade = None
+    elif job.status == JobStatusEnum.HITL_REQUIRED.value:
+        grade = "HITL_REQUIRED"
+    else:
+        grade = ubci_grade_from_score(job.ubci_score)
+
     return {
         "job_id": job_id,
-        "images": images,
-        "result": result_data
+        "status": job.status,
+        "images": job.image_urls or [],
+        "result": {
+            "job_id": job_id,
+            "grade": grade,
+            "ubci_score": job.ubci_score,
+            "defect_description": ", ".join(defect_types) if defect_types else ("정상" if not still_processing else None),
+            "defect_coordinates": [d.get("bbox") for d in defects if isinstance(d, dict) and d.get("bbox")],
+            "timestamp": (job.updated_at or job.created_at).isoformat(),
+        }
     }
 
+
 @router.post("/retry/{job_id}")
-async def retry_evaluation(job_id: str):
+async def retry_evaluation(job_id: str, db: Session = Depends(get_db)):
     """
     기존에 저장된 이미지를 기반으로 AI 검수를 다시 실행합니다.
+    Celery 태스크로 재큐잉(비동기)하며, 재검수 완료 여부는 SSE(/inbound/stream/{job_id})로 확인합니다.
     """
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    experiment_dir = os.path.join(base_dir, "experiment_data", job_id)
-    
-    import glob
-    image_paths = sorted(glob.glob(os.path.join(experiment_dir, "raw_*.jpg")))
-    
-    if not image_paths:
-        raise HTTPException(status_code=404, detail="Images not found for retry")
-        
     try:
-        from app.ai.graph import build_wms_graph
-        app = build_wms_graph()
-        
-        initial_state = {
-            "job_id": job_id,
-            "image_paths": image_paths,
-            "messages": [],
-            "retry_count": 0,
-            "needs_hitl": False
-        }
-        
-        def run_graph_sync():
-            updates = []
-            for out in app.stream(initial_state, stream_mode="updates"):
-                updates.append(out)
-            return updates
-            
-        updates = await asyncio.to_thread(run_graph_sync)
-        
-        grade = "MINT"
-        ubci_score = 100
-        defect_description = "정상"
-        defect_coordinates = []
-        for out in updates:
-            if "vision_agent" in out and "defect_coordinates" in out["vision_agent"]:
-                defect_coordinates = out["vision_agent"]["defect_coordinates"]
-                if "defect_description" in out["vision_agent"]:
-                    defect_description = out["vision_agent"]["defect_description"]
-            if "policy_agent" in out:
-                grade = out["policy_agent"].get("ubci_grade", "MINT")
-                ubci_score = out["policy_agent"].get("ubci_score", 100)
-                if "matched_rule" in out["policy_agent"]:
-                    defect_description = out["policy_agent"]["matched_rule"]
-            if "hitl_node" in out:
-                grade = "HITL_REQUIRED"
-                
-        # Save result
-        with open(os.path.join(experiment_dir, "result.json"), "w", encoding="utf-8") as f:
-            json.dump({
-                'job_id': job_id, 
-                'grade': grade, 
-                'ubci_score': ubci_score,
-                'defect_description': defect_description,
-                'timestamp': datetime.datetime.now().isoformat(),
-                'defect_coordinates': defect_coordinates
-            }, f, ensure_ascii=False, indent=2)
-            
-        # Save raw AI trace log for prompt debugging
-        def sanitize_for_json(obj):
-            if hasattr(obj, 'content'):
-                return {"type": obj.__class__.__name__, "content": obj.content}
-            return str(obj)
-            
-        with open(os.path.join(experiment_dir, "ai_trace_log.json"), "w", encoding="utf-8") as f:
-            json.dump(updates, f, ensure_ascii=False, indent=2, default=sanitize_for_json)
-            
-        return {
-            "job_id": job_id, 
-            "grade": grade, 
-            "ubci_score": ubci_score,
-            "defect_description": defect_description,
-            "defect_coordinates": defect_coordinates, 
-            "message": "Retry completed"
-        }
+        job_uuid = UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Images not found for retry")
+
+    job = db.get(ReturnJob, job_uuid)
+    if not job or not job.image_urls:
+        raise HTTPException(status_code=404, detail="Images not found for retry")
+
+    job.status = JobStatusEnum.PENDING.value
+    job.retry_count = (job.retry_count or 0) + 1
+    job.updated_at = now_kst()
+    db.add(job)
+    db.commit()
+
+    from app.worker.tasks import process_inspection
+    try:
+        process_inspection.delay(str(job.id))
     except Exception as e:
-        print(f"Retry AI Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}")
+        import threading
+        threading.Thread(target=process_inspection, args=(str(job.id),), daemon=True).start()
+
+    return {"status": "queued", "job_id": job_id, "message": "재검수 작업이 큐에 등록되었습니다."}
 
 
 
@@ -415,5 +345,5 @@ def confirm_putaway_placement(
         "status": "SUCCESS",
         "message": f"LPN {lpn_barcode}가 성공적으로 {location_id} 랙에 적치되었습니다.",
         "location_id": location_id,
-        "updated_at": datetime.datetime.utcnow().isoformat()
+        "updated_at": now_kst().isoformat()
     }
