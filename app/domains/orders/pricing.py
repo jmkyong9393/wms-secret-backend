@@ -1,8 +1,6 @@
 """
 중고 도서 가격 산정 엔진 (Dynamic Pricing)
 
-[명세] PM_정답지_백업/08_Dynamic_Pricing_합성_데이터_생성_명세서.md
-
 용어 구분 (혼동 주의):
   - B2B 매입가 : 우리가 판매자/협력사에게 지급하는 금액. calculate_b2b_price()
   - 중고 판매가 : 우리가 최종 고객에게 파는 금액. calculate_used_retail_price()
