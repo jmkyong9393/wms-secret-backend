@@ -300,13 +300,25 @@ def _generate_insight_narrative(stats: Dict[str, Any]) -> str:
         from langchain_core.messages import HumanMessage
         import json as _json
 
+        # [수정 이력] 수치를 raw 정수로 주면 LLM이 단위를 오해해 부풀리는 사고가 실제로
+        # 발생했다 (절감액 8,800원 -> "8,800,000원"으로 서술). 금액/수량을 단위까지 붙인
+        # 완성 문자열로 넘겨 인용만 하게 하고, 재구성 여지를 차단한다.
+        formatted = dict(stats)
+        formatted["saved_labor_cost_krw"] = f"{stats['saved_labor_cost_krw']:,}원"
+        formatted["week_inspections"] = f"{stats['week_inspections']}건"
+        formatted["predicted_returns_next_week"] = f"{stats['predicted_returns_next_week']}건"
+        formatted["week_inbound"] = f"{stats['week_inbound']}건"
+        formatted["week_orders"] = f"{stats['week_orders']}건"
+
         llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
         prompt = f"""당신은 B2B 도서 물류센터의 경영 분석 AI입니다. 아래 주간 집계 수치(이미 확정된
-사실 - 숫자를 바꾸거나 새로 만들지 말 것)를 바탕으로, 경영진 대시보드에 띄울 3~4문장의
-한국어 주간 인사이트 요약을 작성하세요. 핵심 수치 인용 + 주목할 패턴 1가지 + 다음 주 관전
-포인트 1가지 구성으로, 담백한 보고체로 작성합니다.
+사실)를 바탕으로, 경영진 대시보드에 띄울 3~4문장의 한국어 주간 인사이트 요약을 작성하세요.
+핵심 수치 인용 + 주목할 패턴 1가지 + 다음 주 관전 포인트 1가지 구성, 담백한 보고체.
 
-주간 집계(JSON): {_json.dumps(stats, ensure_ascii=False)}"""
+[절대 규칙] 아래 JSON의 수치 문자열(예: "8,800원", "12건")을 **한 글자도 바꾸지 말고 그대로
+인용**하세요. 단위를 바꾸거나(원->만원), 자릿수를 늘리거나, 새로운 숫자를 만들면 안 됩니다.
+
+주간 집계(JSON): {_json.dumps(formatted, ensure_ascii=False)}"""
         result = llm.invoke([HumanMessage(content=prompt)])
         text = (result.content or "").strip()
         return text if text else fallback

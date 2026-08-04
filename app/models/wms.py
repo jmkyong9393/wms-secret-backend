@@ -323,6 +323,63 @@ class ReturnJob(SQLModel, table=True):
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
+class OrderProposalStatusEnum(str, Enum):
+    PENDING = "PENDING"      # AI 제안 생성됨 - 관리자 결재 대기 (칸반 1열)
+    APPROVED = "APPROVED"    # 관리자 승인 - AUTO_PO Order 생성 + 신품 Fast-Track 입고 완료 (칸반 2열)
+    DISMISSED = "DISMISSED"  # 관리자 기각 (칸반 3열)
+
+class OrderProposalTriggerEnum(str, Enum):
+    INSPECTION_REJECT = "INSPECTION_REJECT"  # 입고 검수 반려(매입 불가) 이벤트 트리거
+    SAFETY_STOCK = "SAFETY_STOCK"            # 저재고 스캔 트리거
+    MANUAL = "MANUAL"                        # 관리자 수동 생성
+
+class OrderProposal(SQLModel, table=True):
+    """
+    AI 자동 발주 제안(Restock Proposal) - SCM 칸반보드의 카드 1장.
+
+    [설계 원칙 - 판정과 집행의 분리]
+    Restock Agent(LLM)는 이 테이블에 PENDING 제안을 "적재"할 수만 있고, 실제 발주(Order
+    AUTO_PO 생성)와 신품 재고 편입은 관리자가 칸반에서 승인(APPROVED)하는 시점에만 집행된다.
+    LLM이 금전적 확정을 직접 내리지 못하게 하는 HITL 게이트 - 검수 파이프라인의
+    auto_refund_eligible 플래그 집행 구조와 동일한 문법이다.
+
+    수집 시점 수치(current_stock/sales_velocity_30d 등)는 제안 근거의 감사 추적을 위해
+    비정규화 스냅샷으로 보존한다 (재고가 변해도 "제안 당시 근거"는 남아야 한다).
+    """
+    __tablename__ = "order_proposals"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    book_id: UUID = Field(foreign_key="books.id", ondelete="RESTRICT", index=True)
+    isbn: str = Field(max_length=13)          # 조회 편의용 비정규화
+    title: str = Field(max_length=255)        # 칸반 카드 출력용 비정규화
+    source_job_id: Optional[UUID] = Field(default=None, foreign_key="return_jobs.id", ondelete="SET NULL")
+    trigger_type: str = Field(default="INSPECTION_REJECT", max_length=30)  # OrderProposalTriggerEnum
+    reject_reason_code: Optional[str] = Field(default=None, max_length=50)  # DMG_EXT_WET 등
+
+    # --- Collector 수집 스냅샷 (결정론적) ---
+    current_stock: int = Field(default=0)         # 가용 재고 = 신품 virtual_stock + 중고 IN_STOCK 합산
+    sales_velocity_30d: int = Field(default=0)    # 최근 30일 출고량 (InventoryLog OUTBOUND 집계)
+    rejected_quantity: int = Field(default=0)     # 이번 반려로 소실된 매입 예정 수량
+    baseline_quantity: int = Field(default=0)     # 결정론적 안전재고 산식 기준 수량 (Validator 클램프 앵커)
+
+    # --- Restock Agent 제안 (LLM, Validator 클램프 통과 값) ---
+    proposed_quantity: int = Field(default=0)
+    urgency: str = Field(default="MEDIUM", max_length=10)  # CRITICAL/HIGH/MEDIUM/LOW
+    reasoning: str = Field(default="", sa_column=Column(Text))
+    ai_source: str = Field(default="LLM_GPT4O_MINI", max_length=30)  # LLM_GPT4O_MINI | FALLBACK_RULE
+
+    unit_cost: float = Field(default=0.0)       # 도매가 (base_price * 0.6)
+    estimated_cost: float = Field(default=0.0)  # unit_cost * proposed_quantity
+
+    # --- 관리자 결재 (집행 기록) ---
+    status: str = Field(default="PENDING", max_length=20, index=True)  # OrderProposalStatusEnum
+    decided_by: Optional[str] = Field(default=None, max_length=100)    # 결재자 사번 (이름)
+    decided_at: Optional[datetime] = Field(default=None)
+    order_id: Optional[UUID] = Field(default=None, foreign_key="orders.id", ondelete="SET NULL")  # 승인 시 생성된 AUTO_PO
+
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
+
 class InventoryLog(SQLModel, table=True):
     __tablename__ = "inventory_logs"
     
