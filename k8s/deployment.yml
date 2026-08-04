@@ -1,14 +1,19 @@
+# FastAPI(uvicorn) API 서버 Deployment
+# 이름(wms-api)은 fastapi-hpa.yaml의 scaleTargetRef와 일치해야 한다.
+# 이미지 빌드/푸시는 ecr-push.yml 워크플로우가 담당하고,
+# 실제 태그 교체는 deploy-prod.yml의 kubectl set image가 수행한다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: wms-backend
+  name: wms-api
+  namespace: wms
   labels:
-    app: wms-backend
+    app: wms-api
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: wms-backend
+      app: wms-api
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -17,16 +22,29 @@ spec:
   template:
     metadata:
       labels:
-        app: wms-backend
+        app: wms-api
     spec:
       containers:
-      - name: wms-backend-container
-        image: REPLACE_WITH_ECR_URI:latest
+      - name: api
+        # ECR 레포 이름은 ecr-push.yml 워크플로우와 동일 (secret-backend-repo).
+        # <AWS_ACCOUNT_ID>만 실제 계정 ID로 치환 (restock-scan-cronjob.yaml과 동일 규칙)
+        image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-2.amazonaws.com/secret-backend-repo:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 8000
+        # wms-backend-secret 생성 방법은 restock-scan-cronjob.yaml 주석 참조
         env:
-        - name: SPRING_PROFILES_ACTIVE
-          value: "prod"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: wms-backend-secret
+              key: DATABASE_URL
+        - name: REDIS_URL
+          value: "redis://redis-master.wms.svc.cluster.local:6379/0"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: wms-backend-secret
+              key: OPENAI_API_KEY
         resources:
           requests:
             cpu: "500m"
@@ -34,15 +52,20 @@ spec:
           limits:
             cpu: "1000m"
             memory: "2Gi"
+        # WBF 3-YOLO 모델 로딩으로 기동이 느릴 수 있어 startupProbe로 최대 150초 대기
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          periodSeconds: 5
+          failureThreshold: 30
         livenessProbe:
           httpGet:
-            path: /actuator/health/liveness
-            port: 8080
-          initialDelaySeconds: 30
+            path: /health
+            port: 8000
           periodSeconds: 15
         readinessProbe:
           httpGet:
-            path: /actuator/health/readiness
-            port: 8080
-          initialDelaySeconds: 15
+            path: /health
+            port: 8000
           periodSeconds: 10

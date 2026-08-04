@@ -1,79 +1,55 @@
-name: Backend Prod CI/CD to EKS
+# EKS 프로덕션 배포 전용 워크플로우 (수동 트리거)
+# 이미지 빌드/푸시는 ecr-push.yml이 main 푸시마다 수행하므로,
+# 여기서는 검증된 이미지 태그를 골라 클러스터에 반영하는 역할만 한다.
+# main 푸시 자동 배포를 걸지 않는 이유: 클러스터가 상시 운영 상태가 아니며,
+# 이중 빌드(ecr-push.yml과 중복)를 피하기 위함.
+name: Backend Prod Deploy to EKS
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'build.gradle'
-      - 'Dockerfile'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "배포할 ECR 이미지 태그 (ecr-push.yml이 푸시한 commit SHA 또는 latest)"
+        required: true
+        default: "latest"
+
+permissions:
+  id-token: write
+  contents: read
 
 env:
   AWS_REGION: ap-northeast-2
-  ECR_REPOSITORY: wms-secret-backend
-  EKS_CLUSTER_NAME: wms-prod-cluster
-  KUBE_NAMESPACE: wms-prod
+  ECR_REPOSITORY: secret-backend-repo
+  EKS_CLUSTER_NAME: nexus-prod-cluster
+  KUBE_NAMESPACE: wms
 
 jobs:
-  test-and-build:
+  deploy:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v3
-      with:
-        java-version: '17'
-        distribution: 'corretto'
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Run Tests (JUnit)
-      run: ./gradlew test
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-    - name: Build with Gradle
-      run: ./gradlew build -x test
+      - name: Deploy to EKS (Rolling Update)
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+        run: |
+          kubectl apply -f k8s/deployment.yml
+          kubectl apply -f k8s/service.yml
 
-    - name: Configure AWS Credentials using OIDC
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-wms-role
-        aws-region: ${{ env.AWS_REGION }}
+          kubectl set image deployment/wms-api api=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.KUBE_NAMESPACE }}
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-
-    - name: Build, tag, and push Docker image to ECR
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-    - name: Update Kubeconfig
-      run: |
-        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-
-    - name: Deploy to EKS (Rolling Update)
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        kubectl apply -f k8s/deployment.yml -n ${{ env.KUBE_NAMESPACE }}
-        kubectl apply -f k8s/service.yml -n ${{ env.KUBE_NAMESPACE }}
-        
-        kubectl set image deployment/wms-backend wms-backend-container=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -n ${{ env.KUBE_NAMESPACE }}
-        
-        kubectl rollout status deployment/wms-backend -n ${{ env.KUBE_NAMESPACE }}
+          kubectl rollout status deployment/wms-api -n ${{ env.KUBE_NAMESPACE }} --timeout=300s
