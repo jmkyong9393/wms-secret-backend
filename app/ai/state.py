@@ -56,6 +56,10 @@ class WMSInspectionState(TypedDict):
 
     # 2. Policy Agent (UBCI 대조)
     ubci_score: Optional[int]         # 훼손도 기반 차감 점수 (100점 만점)
+    # 각 감점 항목의 근거 조항 (RAG 검색 결과). 점수 산정에는 일절 관여하지 않고,
+    # 이미 확정된 감점의 출처를 규정집에서 찾아 붙인 grounding 정보다.
+    # [{defect_type, chunk_id, doc_title, clause_ref, authority_level, excerpt, similarity}]
+    deduction_basis: Optional[list]
 
     # 3. Critic Agent (교차 검증 및 환각 방어)
     reason_code: Optional[ReasonCode] # 검증 결과 코드 (OK면 통과)

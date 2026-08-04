@@ -119,6 +119,9 @@ class LangGraphInspectionWrapper:
                 # "PostgreSQL DB Verified" 뱃지를 붙이고 있었다. 이제 각 Agent가 실제로 산출한
                 # 서술만 저장하며, 실행되지 않은 노드의 키는 아예 채우지 않는다(None).
                 "detector_text": final_state.get("detector_text"),
+                # 감점 근거 조항 (RAG grounding). 보증서/상세화면이 "이 감점의 근거는
+                # 어느 조항인가"를 출처와 함께 제시할 수 있게 한다.
+                "deduction_basis": final_state.get("deduction_basis") or [],
                 "vision_text": final_state.get("vision_text"),
                 "policy_text": final_state.get("policy_text"),
                 "critic_text": final_state.get("critic_text"),
