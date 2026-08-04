@@ -492,7 +492,9 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         print(f"[Policy Agent] 근거 조항 인용 실패 - 점수는 그대로 유지하고 인용만 생략합니다: {e}")
 
     if deduction_basis:
-        refs = ", ".join(f"{b['doc_title']} {b['clause_ref']}" for b in deduction_basis)
+        # 여러 결함이 같은 조항을 근거로 삼는 경우가 흔하므로 조항 단위로 중복을 제거한다
+        # (순서는 유지 - dict가 삽입 순서를 보존).
+        refs = ", ".join(dict.fromkeys(f"{b['doc_title']} {b['clause_ref']}" for b in deduction_basis))
         policy_text += f" | 근거 조항: {refs}"
 
     return {
