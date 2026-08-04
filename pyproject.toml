@@ -33,6 +33,7 @@ dependencies = [
     "pottery>=3.0.1",
     "ultralytics>=8.4.115",
     "numpy>=2.4.6",
+    "chromadb-client>=1.0.0",
 ]
 
 [build-system]
