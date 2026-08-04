@@ -48,7 +48,11 @@ def publish_outbound_notification(event_type: str, category: str, title: str, de
             "timestamp": now_kst().isoformat(),
             **(extra or {}),
         }
-        client = sync_redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        # 발행은 부가 기능 - Redis 지연/장애가 주문 파이프라인을 블로킹하지 않도록 짧은 타임아웃 강제
+        client = sync_redis.Redis.from_url(
+            REDIS_URL, decode_responses=True,
+            socket_timeout=2, socket_connect_timeout=2,
+        )
         try:
             client.publish("notifications:global", json.dumps(event, ensure_ascii=False))
         finally:
