@@ -5,6 +5,13 @@ from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.core.constants import BOX_CATALOG
+from app.domains.inventory.bin_packing import (
+    estimate_book_thickness_mm,
+    estimate_book_weight_g,
+)
+from app.domains.inventory.packing3d import PackItem, PackResult, recommend_and_pack
+
 logger = logging.getLogger(__name__)
 
 # ==========================================
@@ -17,13 +24,15 @@ class BookItem(BaseModel):
     length_mm: float = 225.0  # 신국판 규격 (225mm)
     width_mm: float = 152.0   # 신국판 규격 (152mm)
     pages: int = 300
+    is_color: bool = False
     is_hardcover: bool = False
     calculated_thickness_mm: float = 0.0
 
     def calc_thickness(self) -> float:
-        paper_caliper = 0.06  # 80g/m² 내지 기준 1p당 0.06mm
-        cover_thick = 4.0 if self.is_hardcover else 1.5
-        self.calculated_thickness_mm = round((self.pages * paper_caliper) + cover_thick, 1)
+        # SSOT 수식 (constants.py / Bms_Platform_4대알고리즘.md §2와 동일)
+        self.calculated_thickness_mm = estimate_book_thickness_mm(
+            pages=self.pages, is_color=self.is_color, is_hardcover=self.is_hardcover
+        )
         return self.calculated_thickness_mm
 
     @property
@@ -34,6 +43,16 @@ class BookItem(BaseModel):
     def volume(self) -> float:
         return self.length_mm * self.width_mm * self.calc_thickness()
 
+    @property
+    def estimated_weight_g(self) -> float:
+        return estimate_book_weight_g(
+            pages=self.pages,
+            width_mm=self.width_mm,
+            length_mm=self.length_mm,
+            is_color=self.is_color,
+            is_hardcover=self.is_hardcover,
+        )
+
 
 class BoxSpec(BaseModel):
     id: str
@@ -43,7 +62,8 @@ class BoxSpec(BaseModel):
     length: float
     width: float
     height: float
-    
+    max_weight_kg: float = 35.0
+
     @property
     def max_vol(self) -> float:
         return self.length * self.width * self.height
@@ -56,6 +76,7 @@ class CushionSpec(BaseModel):
     type: str
     mode: str = "top"  # 'top' | 'side' | 'both' (3D 뷰어 바인딩)
     desc: str
+    protection_score: int = 80  # 파손 방지 보호 점수 (프론트 카탈로그와 동일 스케일)
 
 
 class PackagingRationale(BaseModel):
@@ -72,55 +93,57 @@ class DimensionCalculatorAgent:
     """SubAgent 1: 3D Footprint(90도 회전 검증) 및 박스/완충재 선택 에이전트"""
     
     def __init__(self):
+        # SSOT: constants.BOX_CATALOG(16종) — 프론트 카탈로그와 1:1 동일
         self.boxes = [
-            # [📖 도서물류 전용 슬림 박스]
-            BoxSpec(id="BOOK-S1", category="BOOK_SLIM", name="도서슬림 소형 1호", specs="250x150x50mm", length=250, width=150, height=50),
-            BoxSpec(id="BOOK-S2", category="BOOK_SLIM", name="도서슬림 소형 2호", specs="250x150x60mm", length=250, width=150, height=60),
-            BoxSpec(id="BOOK-M1", category="BOOK_SLIM", name="도서슬림 중형 1호", specs="300x200x70mm", length=300, width=200, height=70),
-            BoxSpec(id="BOOK-M2", category="BOOK_SLIM", name="도서슬림 중형 2호", specs="300x200x90mm", length=300, width=200, height=90),
-            # [📦 일반 택배 표준 박스]
-            BoxSpec(id="STD-01", category="STANDARD", name="우체국 1호 (표준)", specs="220x190x90mm", length=220, width=190, height=90),
-            BoxSpec(id="STD-02", category="STANDARD", name="우체국 2호 (표준)", specs="270x180x150mm", length=270, width=180, height=150),
-            BoxSpec(id="STD-03", category="STANDARD", name="우체국 3호 (중형)", specs="340x250x210mm", length=340, width=250, height=210),
-            BoxSpec(id="STD-04", category="STANDARD", name="우체국 4호 (대형)", specs="410x310x280mm", length=410, width=310, height=280),
+            BoxSpec(
+                id=b["id"],
+                category=b["category"],
+                name=b["name"],
+                specs=f'{b["length"]}x{b["width"]}x{b["height"]}mm',
+                length=b["length"],
+                width=b["width"],
+                height=b["height"],
+                max_weight_kg=b["max_weight_kg"],
+            )
+            for b in BOX_CATALOG
         ]
 
         self.cushions = [
-            CushionSpec(id="Cushion-01", name="에어필로우 완충 패드", thick_mm=9.0, type="AIR_PILLOW", mode="top", desc="상부 유격 충격 흡수 기본 패드"),
-            CushionSpec(id="Cushion-02", name="친환경 벌집 종이", thick_mm=12.0, type="HONEYCOMB", mode="both", desc="양장본/희귀 도서 프리미엄 종이 래핑"),
-            CushionSpec(id="Cushion-03", name="PE 폼 모서리 가드", thick_mm=15.0, type="FOAM_GUARD", mode="side", desc="중량 도서 스택 모서리 찌그러짐 방지"),
-            CushionSpec(id="Cushion-04", name="에어 튜브 범퍼", thick_mm=20.0, type="AIR_TUBE", mode="both", desc="고위험 낙하 충격 에어 범퍼"),
+            CushionSpec(id="Cushion-01", name="에어필로우 완충 패드", thick_mm=9.0, type="AIR_PILLOW", mode="top", desc="상부 유격 충격 흡수 기본 패드", protection_score=75),
+            CushionSpec(id="Cushion-02", name="친환경 벌집 종이", thick_mm=12.0, type="HONEYCOMB", mode="both", desc="양장본/희귀 도서 프리미엄 종이 래핑", protection_score=88),
+            CushionSpec(id="Cushion-03", name="PE 폼 모서리 가드", thick_mm=15.0, type="FOAM_GUARD", mode="side", desc="중량 도서 스택 모서리 찌그러짐 방지", protection_score=92),
+            CushionSpec(id="Cushion-04", name="에어 튜브 범퍼", thick_mm=20.0, type="AIR_TUBE", mode="both", desc="고위험 낙하 충격 에어 범퍼", protection_score=98),
         ]
-
-    def _fits_footprint(self, max_item_l: float, max_item_w: float, box: BoxSpec) -> bool:
-        """90도 회전을 고려하여 도서 바닥면이 박스 바닥면에 수용되는지 검증"""
-        direct_fit = (max_item_l <= box.length) and (max_item_w <= box.width)
-        rotated_fit = (max_item_l <= box.width) and (max_item_w <= box.length)
-        return direct_fit or rotated_fit
 
     def calculate(self, books: List[BookItem]) -> Dict[str, Any]:
         total_vol = sum(b.volume for b in books)
         total_thick = sum(b.calc_thickness() for b in books)
         has_hardcover = any(b.is_hardcover for b in books)
-        
-        # 가장 큰 가로/세로 길이 추출 (Footprint 검증용)
-        max_item_l = max((b.length_mm for b in books), default=225.0)
-        max_item_w = max((b.width_mm for b in books), default=152.0)
 
-        # 3D Footprint + 높이 + 체적 충족 최적 박스 탐색
-        selected_box = None
-        for box in self.boxes:
-            if (self._fits_footprint(max_item_l, max_item_w, box) and
-                box.height >= (total_thick + 8.0) and
-                box.max_vol >= total_vol):
-                selected_box = box
-                break
-        
-        if not selected_box:
-            selected_box = self.boxes[1] # BOOK-S2 Fallback
-
+        # 완충재 선(先)결정 -> 완충재 점유 공간을 차감한 내부 유효 공간에 패킹 (정석 + 도메인 제약)
         selected_cushion = self.cushions[1] if has_hardcover else self.cushions[0]
-        fill_efficiency = min(98.0, round((total_vol / selected_box.max_vol) * 100, 1))
+        side_margin = selected_cushion.thick_mm if selected_cushion.mode in ("side", "both") else 0.0
+        top_margin = selected_cushion.thick_mm if selected_cushion.mode in ("top", "both") else 0.0
+
+        items = [
+            PackItem(
+                id=f"{b.id}#{i + 1}",
+                name=b.name,
+                length=b.length_mm,
+                width=b.width_mm,
+                height=b.calculated_thickness_mm or b.calc_thickness(),
+                weight_g=b.estimated_weight_g,
+            )
+            for i, b in enumerate(books)
+        ]
+
+        # 정석 EP-BFD 실배치 검증 기반 최소 박스 탐색 (부피 나눗셈 휴리스틱 폐기)
+        pack = recommend_and_pack(items, side_margin_mm=side_margin, top_margin_mm=top_margin)
+        first: PackResult = pack["results"][0]
+        selected_box = next(bx for bx in self.boxes if bx.id == first.box["id"])
+
+        fill_efficiency = first.volume_fill_ratio  # 실배치 기반 실측치 (상한 캡 제거)
+        air_cushion_ratio = round(max(0.0, 100.0 - fill_efficiency), 1)
 
         return {
             "selected_box": selected_box,
@@ -129,28 +152,51 @@ class DimensionCalculatorAgent:
             "all_cushions": [c.model_dump() for c in self.cushions],
             "total_volume": total_vol,
             "total_thickness_mm": round(total_thick, 1),
+            "total_weight_g": round(sum(it.weight_g for it in items), 1),
             "fill_efficiency": fill_efficiency,
-            "air_cushion_ratio": 8.5
+            "air_cushion_ratio": air_cushion_ratio,
+            "packing_algorithm": "EP-BFD (Extreme Point Best-Fit-Decreasing)",
+            "split_shipment": pack["split"],
+            "box_count": pack["box_count"],
+            "stack_height_mm": round(first.stack_height, 1),
+            "placements": [p.to_dict() for p in first.placements],
         }
 
 
 class FragilitySafetyAgent:
     """SubAgent 2: 동적 적재 순서(Stacking Order) 생성 및 파손 방지 안전도 산출"""
 
-    def evaluate(self, books: List[BookItem], box: BoxSpec, cushion: CushionSpec) -> Dict[str, Any]:
-        total_stack_mm = sum(b.calculated_thickness_mm for b in books) + cushion.thick_mm
-        height_fill_ratio = min(100.0, (total_stack_mm / box.height) * 100.0)
+    def evaluate(
+        self,
+        books: List[BookItem],
+        box: BoxSpec,
+        cushion: CushionSpec,
+        stack_height_mm: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        # EP-BFD 실배치 스택 높이 우선 사용, 없으면 두께 합산 폴백
+        base_stack = stack_height_mm if stack_height_mm is not None else sum(
+            b.calculated_thickness_mm for b in books
+        )
+        top_cushion = cushion.thick_mm if cushion.mode in ("top", "both") else 0.0
+        total_stack_mm = base_stack + top_cushion
+
+        # 상한 캡 제거: 100% 초과 = 물리적 수용 불가 신호로 그대로 노출
+        height_fill_ratio = (total_stack_mm / box.height) * 100.0
+        is_overflow = total_stack_mm > box.height
         void_space_mm = max(0.0, box.height - total_stack_mm)
 
-        fill_score = (height_fill_ratio / 100.0) * 65.0
-        cushion_score = 20.0
+        fill_score = (min(height_fill_ratio, 100.0) / 100.0) * 65.0
+        cushion_score = cushion.protection_score * 0.2  # 완충재 보호 점수 실연동 (고정값 20 폐기)
         has_hardcover = any(b.is_hardcover for b in books)
         cover_protection = 15.0 if has_hardcover else 10.0
         void_penalty = (void_space_mm / box.height) * 45.0 if height_fill_ratio < 85.0 else 0.0
 
         safety_score = max(15.0, round(fill_score + cushion_score + cover_protection - void_penalty, 1))
 
-        if safety_score >= 88.0:
+        if is_overflow:
+            safety_score = min(safety_score, 40.0)
+            safety_level = f"OVERFLOW (수직 높이 초과 — 수용 불가) [{safety_score}점]"
+        elif safety_score >= 88.0:
             safety_level = f"SAFE (A+) [{safety_score}점]"
         elif safety_score >= 75.0:
             safety_level = f"SAFE (A) [{safety_score}점]"
@@ -264,6 +310,7 @@ class BinPackingAgent:
                     id=b.get("id", "B01"),
                     name=b.get("name", b.get("category", "도서")),
                     pages=b.get("pages", 300),
+                    is_color=b.get("is_color", False),
                     is_hardcover=b.get("is_hardcover", False)
                 ))
         else:
@@ -275,11 +322,12 @@ class BinPackingAgent:
         # Step 1: 3D Dimension Calculation
         dim_res = self.dim_agent.calculate(books)
 
-        # Step 2: Fragility & Safety Evaluation
+        # Step 2: Fragility & Safety Evaluation (EP-BFD 실배치 스택 높이 연동)
         frag_res = self.frag_agent.evaluate(
-            books, 
-            dim_res["selected_box"], 
-            dim_res["selected_cushion"]
+            books,
+            dim_res["selected_box"],
+            dim_res["selected_cushion"],
+            stack_height_mm=dim_res.get("stack_height_mm"),
         )
 
         # Step 3: LLM Structured Rationale Generation
@@ -288,7 +336,7 @@ class BinPackingAgent:
         selected_box: BoxSpec = dim_res["selected_box"]
         selected_cushion: CushionSpec = dim_res["selected_cushion"]
 
-        # API 호환성을 유지하기 위한 하위 호환 매핑
+        # API 호환성을 유지하기 위한 하위 호환 매핑 + EP-BFD 배치 좌표 신규 노출
         return {
             "recommended_box": selected_box.name,
             "recommended_cushion": selected_cushion.name,
@@ -296,6 +344,7 @@ class BinPackingAgent:
             "efficiency": dim_res["fill_efficiency"],
             "fill_efficiency": dim_res["fill_efficiency"],
             "total_thickness_mm": dim_res["total_thickness_mm"],
+            "total_weight_g": dim_res["total_weight_g"],
             "air_cushion_ratio": dim_res["air_cushion_ratio"],
             "safety_grade": frag_res["safety_level"],
             "safety_level": frag_res["safety_level"],
@@ -303,7 +352,12 @@ class BinPackingAgent:
             "ai_reasoning_log": rationale_text,
             "rationale": rationale_text,
             "all_boxes": dim_res["all_boxes"],
-            "all_cushions": dim_res["all_cushions"]
+            "all_cushions": dim_res["all_cushions"],
+            "packing_algorithm": dim_res["packing_algorithm"],
+            "split_shipment": dim_res["split_shipment"],
+            "box_count": dim_res["box_count"],
+            "stack_height_mm": dim_res["stack_height_mm"],
+            "placements": dim_res["placements"],
         }
 
 
