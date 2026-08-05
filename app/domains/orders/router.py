@@ -529,6 +529,13 @@ def pick_outbound_3d_pack(order_id: Optional[str] = None, books: Optional[List[D
         "air_cushion_ratio": ai_result["air_cushion_ratio"],
         "safety_grade": ai_result["safety_grade"],
         "ai_reasoning_log": ai_result["ai_reasoning_log"],
+        # EP-BFD 정석 알고리즘 신규 필드 (3D 뷰어 렌더 전용화 대비)
+        "packing_algorithm": ai_result["packing_algorithm"],
+        "placements": ai_result["placements"],
+        "stack_height_mm": ai_result["stack_height_mm"],
+        "total_weight_g": ai_result["total_weight_g"],
+        "split_shipment": ai_result["split_shipment"],
+        "box_count": ai_result["box_count"],
         "message": f"AI-Agent 3D Pack Optimizer 추천: {ai_result['recommended_box']}"
     }
 

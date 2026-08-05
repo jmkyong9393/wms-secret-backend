@@ -1,71 +1,107 @@
-import math
-from typing import List, Dict, Any
-from app.core.constants import BOX_STANDARDS, BoxStandardEnum
+from typing import List, Dict, Any, Optional
+from app.core.constants import (
+    BOOK_FORMATS,
+    CATEGORY_FALLBACK,
+    PAGE_THICKNESS_MM,
+    HARDCOVER_EXTRA_MM,
+    MIN_BOOK_THICKNESS_MM,
+    PAPER_GRAMMAGE_GSM,
+    COVER_WEIGHT_G,
+    CUSHION_MARGIN_RATIO,
+    BOX_CATALOG,
+)
 
-# 도서 판형 규격 상수 (mm 단위)
-BOOK_FORMATS = {
-    "신국판": {"width": 152, "length": 225},
-    "46판": {"width": 128, "length": 188},
-    "4x6배판": {"width": 188, "length": 257}
-}
 
-# AI Category-based Fallback (엣지 케이스 방어용)
-CATEGORY_FALLBACK = {
-    "IT": "4x6배판",
-    "Textbook": "4x6배판",
-    "Novel": "신국판",
-    "Essay": "신국판",
-    "Comic": "46판"
-}
-
-def calculate_book_volume(book_meta: Dict[str, Any]) -> float:
-    """
-    단일 도서의 체적(Volume, mm^3)을 정밀 계산합니다.
-    """
+def resolve_book_format(book_meta: Dict[str, Any]) -> Dict[str, float]:
+    """판형(가로x세로 mm)을 결정한다. 누락 시 카테고리 기반 스마트 폴백."""
     category = book_meta.get("category", "Novel")
     format_size = book_meta.get("format_size")
-    pages = book_meta.get("pages", 300) # 누락 시 기본값 300p
-    is_color = book_meta.get("is_color", False)
-    is_hardcover = book_meta.get("is_hardcover", False)
-    
-    # 1. 판형(면적) 결정 - 누락 시 카테고리 기반 스마트 폴백
     if not format_size or format_size not in BOOK_FORMATS:
         format_size = CATEGORY_FALLBACK.get(category, "신국판")
-        
-    base_area = BOOK_FORMATS[format_size]
-    
-    # 2. 두께 계산 (명세서 기반)
-    thickness_per_page = 0.08 if is_color else 0.05
-    cover_thickness = 6.0 if is_hardcover else 0.0
-    
-    total_thickness = (pages * thickness_per_page) + cover_thickness
-    
-    # 3. 최종 체적 (가로 * 세로 * 높이)
-    volume = base_area["width"] * base_area["length"] * total_thickness
-    return volume
+    return BOOK_FORMATS[format_size]
+
+
+def estimate_book_thickness_mm(pages: int, is_color: bool = False, is_hardcover: bool = False) -> float:
+    """
+    페이지 수 기반 두께 추정 (SSOT 수식):
+    t = pages x (컬러 0.08 | 흑백 0.05) + (양장 +6.0mm), 하한 3.0mm
+    """
+    per_page = PAGE_THICKNESS_MM["color"] if is_color else PAGE_THICKNESS_MM["mono"]
+    cover = HARDCOVER_EXTRA_MM if is_hardcover else 0.0
+    return round(max(MIN_BOOK_THICKNESS_MM, (pages * per_page) + cover), 1)
+
+
+def estimate_book_weight_g(
+    pages: int,
+    width_mm: float,
+    length_mm: float,
+    is_color: bool = False,
+    is_hardcover: bool = False,
+) -> float:
+    """
+    중량 추정 (SSOT 수식): 1장(leaf)=2페이지, 평량(g/m²) 기준
+    w = (pages/2) x (W_m x L_m) x 평량 + 커버 중량(양장 150g | 일반 50g)
+    """
+    area_m2 = (width_mm / 1000.0) * (length_mm / 1000.0)
+    grammage = PAPER_GRAMMAGE_GSM["color"] if is_color else PAPER_GRAMMAGE_GSM["mono"]
+    cover_g = COVER_WEIGHT_G["hard"] if is_hardcover else COVER_WEIGHT_G["soft"]
+    return round((pages / 2.0) * area_m2 * grammage + cover_g, 1)
+
+
+def calculate_book_volume(book_meta: Dict[str, Any]) -> float:
+    """단일 도서의 체적(Volume, mm^3)을 정밀 계산합니다."""
+    base_area = resolve_book_format(book_meta)
+    total_thickness = estimate_book_thickness_mm(
+        pages=book_meta.get("pages", 300),
+        is_color=book_meta.get("is_color", False),
+        is_hardcover=book_meta.get("is_hardcover", False),
+    )
+    return base_area["width"] * base_area["length"] * total_thickness
+
+
+def _fits_footprint(item_l: float, item_w: float, box: Dict[str, Any]) -> bool:
+    """90도 회전을 고려하여 도서 바닥면이 박스 바닥면에 수용되는지 검증"""
+    direct = (item_l <= box["length"]) and (item_w <= box["width"])
+    rotated = (item_l <= box["width"]) and (item_w <= box["length"])
+    return direct or rotated
+
 
 def recommend_optimal_box(books: List[Dict[str, Any]]) -> str:
     """
-    주문 내역(책 리스트)의 총 체적을 기반으로 완충재 마진(1.15배)을 포함하여 
-    가장 작은 최적의 우체국 박스 규격을 추천합니다.
+    주문 내역(책 리스트)에 대해 3중 제약(체적 x1.15 완충 마진, 2D Footprint 90도 회전,
+    최대 허용 중량)을 모두 만족하는 가장 작은 박스를 BOX_CATALOG(16종 SSOT)에서 추천합니다.
     """
     if not books:
         return "포장할 상품이 없습니다."
-        
-    total_book_volume = sum(calculate_book_volume(book) for book in books)
-    target_volume = total_book_volume * 1.15 # 완충재 마진 15% 추가
-    
-    # 가능한 박스 필터링 (부피 기반 추정 - 3D Bin Packing Fallback)
-    suitable_boxes = []
-    for box_name, dims in BOX_STANDARDS.items():
-        box_volume = dims["width"] * dims["length"] * dims["height"]
-        if box_volume >= target_volume:
-            suitable_boxes.append((box_name, box_volume))
-            
-    # 조건에 맞는 박스가 없으면 가장 큰 박스(6호) 반환, 있으면 가장 작은 박스 선택
-    if not suitable_boxes:
-        return BoxStandardEnum.BOX_6.value
-        
-    # 부피 기준 오름차순 정렬 후 첫 번째(가장 작은) 상자 리턴
-    suitable_boxes.sort(key=lambda x: x[1])
-    return suitable_boxes[0][0].value
+
+    total_volume = sum(calculate_book_volume(book) for book in books)
+    target_volume = total_volume * CUSHION_MARGIN_RATIO
+
+    total_weight_g = 0.0
+    max_item_l = 0.0
+    max_item_w = 0.0
+    for book in books:
+        fmt = resolve_book_format(book)
+        max_item_l = max(max_item_l, fmt["length"])
+        max_item_w = max(max_item_w, fmt["width"])
+        total_weight_g += estimate_book_weight_g(
+            pages=book.get("pages", 300),
+            width_mm=fmt["width"],
+            length_mm=fmt["length"],
+            is_color=book.get("is_color", False),
+            is_hardcover=book.get("is_hardcover", False),
+        )
+
+    # 부피 오름차순 전수 탐색 → 3중 제약 만족하는 최소 박스 선택
+    sorted_boxes = sorted(BOX_CATALOG, key=lambda b: b["length"] * b["width"] * b["height"])
+    for box in sorted_boxes:
+        box_volume = box["length"] * box["width"] * box["height"]
+        if (
+            _fits_footprint(max_item_l, max_item_w, box)
+            and box_volume >= target_volume
+            and total_weight_g <= box["max_weight_kg"] * 1000.0
+        ):
+            return box["name"]
+
+    # 단일 박스 수용 불가 → 최대 규격(마스터 카톤) 반환 (분할 출고 권장 대상)
+    return sorted_boxes[-1]["name"]
