@@ -34,6 +34,14 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
 
+    # Redis 브로커의 unacked 태스크 복원 대기 시간.
+    # 기본값 3600초라 워커가 죽으면 미완료 작업이 1시간 뒤에야 재전달된다
+    # (2026-08-05 카오스 테스트 실측으로 발견). 검수 태스크 최대 실행 시간
+    # (task_time_limit 360초)보다 길게 잡되 분 단위 복구가 되도록 480초로 설정.
+    # 주의: 실행 중 태스크가 이 시간을 넘기면 중복 전달될 수 있으나,
+    # Redlock 분산 락이 중복 처리를 차단한다.
+    broker_transport_options={"visibility_timeout": 480},
+
     # 장시간 실행 task 보호를 위한 실행 시간 제한
     task_soft_time_limit = 300, # 5분 넘으면 Celery가 부드럽게 중단 신호 줌
     task_time_limit = 360 # 6분이 넘으면 강제 종료
