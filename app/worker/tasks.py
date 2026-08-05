@@ -316,6 +316,42 @@ def enqueue_restock_proposal(return_job_id: str) -> None:
             logger.error(f"[Restock] 인프로세스 폴백마저 실패 - 제안 생성 건너뜀: {e2}")
 
 
+from celery.signals import worker_ready
+
+
+@worker_ready.connect
+def requeue_stale_pending_inspections(**_kwargs) -> None:
+    """
+    워커 기동 시 원장(return_jobs) 기반 미아 작업 복구 스위퍼.
+
+    2026-08-05 카오스 테스트에서 발견: Redis 전송 계층은 메시지 수신과 unacked 등록
+    사이가 비원자적이라, 하드킬 타이밍에 따라 브로커 메시지가 소실될 수 있다.
+    브로커는 잃어도 DB 원장에는 작업이 남으므로, 워커가 살아날 때마다
+    2분 이상 방치된 PENDING 작업을 재큐잉해 유실을 원천 봉쇄한다.
+    (중복 전달은 Redlock과 태스크 내 터미널 상태 검사가 차단한다.)
+    """
+    from datetime import timedelta
+    from app.db.session import engine
+    from sqlmodel import Session, select
+
+    try:
+        cutoff = now_kst() - timedelta(minutes=2)
+        with Session(engine) as session:
+            stale = session.exec(
+                select(ReturnJob).where(
+                    ReturnJob.status == "PENDING",
+                    ReturnJob.created_at < cutoff,
+                )
+            ).all()
+        for job in stale:
+            process_inspection.delay(str(job.id))
+            logger.warning(f"[Sweeper] 미아 PENDING 작업 재큐잉: return_job_id={job.id}")
+        if stale:
+            logger.warning(f"[Sweeper] 총 {len(stale)}건 재큐잉 완료")
+    except Exception as e:
+        logger.error(f"[Sweeper] 미아 작업 스캔 실패 (기동은 계속): {e}")
+
+
 @celery_app.task(
     name="app.worker.tasks.scan_safety_stock_proposals",
     max_retries=1,

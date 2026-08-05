@@ -264,13 +264,20 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
     db.commit()
     db.refresh(new_job)
 
+    # 태스크 발행: 브로커 순단 대비 3회 재시도. 그래도 실패하면 조용한 인프로세스
+    # 폴백(추적 불가·유실 위험) 대신 워커의 기동 시 스위퍼(requeue_stale_pending_jobs)가
+    # 원장 기반으로 재큐잉하도록 PENDING 상태 그대로 둔다 — "브로커는 잃어도 원장은 잃지 않는다".
     from app.worker.tasks import process_inspection
-    try:
-        process_inspection.delay(str(new_job.id))
-    except Exception as e:
-        print(f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}")
-        import threading
-        threading.Thread(target=process_inspection, args=(str(new_job.id),), daemon=True).start()
+    import time as _time
+    for attempt in range(3):
+        try:
+            process_inspection.delay(str(new_job.id))
+            break
+        except Exception as e:
+            if attempt == 2:
+                print(f"[Dispatch] 태스크 발행 3회 실패 - 스위퍼 복구 대상으로 남김: {e}")
+            else:
+                _time.sleep(0.5 * (attempt + 1))
 
     return {"job_id": str(new_job.id), "lpn": request.lpn, "message": "Evaluation job queued successfully"}
 
