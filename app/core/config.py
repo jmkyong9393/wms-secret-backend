@@ -65,6 +65,25 @@ class Settings(BaseSettings):
     COOKIE_SAMESITE: str = "lax"
     COOKIE_DOMAIN: Optional[str] = None
 
+    # --- Rate Limiting / 브루트포스 방어 ---
+    #
+    # [배경] API는 Next.js 프록시(rewrites) 뒤에 있어, 컨테이너가 관찰하는 peer IP가
+    # 항상 도커 게이트웨이(172.20.0.1) 하나로 수렴한다. 그 상태로 IP 기준 리밋을 걸면
+    # 접속자 전원이 단일 버킷을 공유해 서로를 잠근다(터널 시연에서 실측 확인).
+    # 아래 대역에서 들어온 요청에 한해 X-Forwarded-For의 원 클라이언트 IP를 채택한다.
+    # 신뢰 대역 밖에서 온 XFF는 위조 가능하므로 무시한다.
+    TRUSTED_PROXY_CIDRS: str = "127.0.0.0/8,::1/128,172.16.0.0/12,10.0.0.0/8"
+
+    # IP 기준 리밋은 봇의 대량 시도를 거르는 광역 그물 역할만 한다.
+    # 계정 단위 브루트포스 방어는 아래 실패 카운터가 담당한다.
+    LOGIN_IP_RATE_LIMIT: str = "30/minute"
+
+    # 사번 단위 로그인 실패 스로틀 (성공하면 즉시 리셋된다).
+    # 계정을 영구 잠그지 않는 이유: 남의 사번으로 일부러 실패시켜 잠그는 DoS를 막기 위해
+    # 짧은 TTL 스로틀로만 제한한다.
+    LOGIN_FAIL_MAX_ATTEMPTS: int = 10
+    LOGIN_FAIL_WINDOW_SECONDS: int = 300
+
     # Invitation Codes (회원가입 제한코드)
     WORKER_INVITATION_CODE: str = "WMS_WORKER_2026"
     MASTER_INVITATION_CODE: str = "WMS_MASTER_2026"

@@ -6,8 +6,21 @@ from app.db.session import get_db
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.security import get_current_user
-from app.core.exceptions import InvalidCredentialsException, InactiveAccountException
-from app.domains.auth.schemas import LoginRequest, LoginResponse, ChangePasswordRequest
+from app.core.exceptions import (
+    BadRequestException,
+    InvalidCredentialsException,
+    InactiveAccountException,
+    TooManyLoginAttemptsException,
+)
+from app.domains.auth import throttle
+from app.core import password_policy
+from app.domains.auth.schemas import (
+    LoginRequest,
+    LoginResponse,
+    ChangePasswordRequest,
+    PasswordPolicyResponse,
+    PrivacyConsentRequest,
+)
 from app.domains.users.schemas import UserResponse, UserUpdate
 from app.domains.users.service import user_service
 from app.models.wms import User
@@ -46,18 +59,35 @@ def _clear_auth_cookies(response: Response) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("5/minute")
+@limiter.limit(settings.LOGIN_IP_RATE_LIMIT)
 def login(request: Request, response: Response, login_req: LoginRequest, session: Session = Depends(get_db)):
     """
     사번+비밀번호 인증 후 JWT를 HttpOnly 쿠키로 발급한다.
+
+    브루트포스 방어는 2단이다:
+    - IP 기준(@limiter.limit): 봇의 대량 시도를 거르는 광역 그물. 프록시 뒤에서도 실제
+      클라이언트 IP로 버킷이 나뉜다(app/core/limiter.py 참고).
+    - 사번 기준(throttle): 실제 계정 보호. **실패했을 때만** 세고 성공하면 리셋하므로,
+      옆 사람의 오타가 내 로그인을 막지 않는다.
     """
+    # 인증을 시도하기 전에 스로틀 상태부터 확인한다 - 차단 중에는 DB 조회조차 하지 않는다.
+    blocked, _, retry_after = throttle.get_throttle_state(login_req.employee_id)
+    if blocked:
+        raise TooManyLoginAttemptsException(retry_after_seconds=retry_after)
+
     user = user_service.authenticate_user(session=session, employee_id=login_req.employee_id, password=login_req.password)
     if not user:
-        raise InvalidCredentialsException()
+        remaining = throttle.register_failure(login_req.employee_id)
+        raise InvalidCredentialsException(remaining_attempts=remaining)
 
     user_status_str = str(user.status.value) if hasattr(user.status, 'value') else str(user.status)
     if user_status_str != "ACTIVE":
+        # 자격증명 자체는 맞았으므로 실패 카운터를 올리지 않는다 (재시도해도 결과가 같은
+        # 상태이고, 관리자 조치가 필요한 사안이라 스로틀로 가릴 이유가 없다).
         raise InactiveAccountException()
+
+    # 로그인 성공 - 누적된 실패 기록을 즉시 지운다.
+    throttle.clear(login_req.employee_id)
 
     role_str = str(user.role.value) if hasattr(user.role, 'value') else str(user.role)
 
@@ -103,6 +133,40 @@ def update_me(
     """
     user = user_service.update_user_profile(session=session, user=current_user, update_in=update_req)
     return user
+
+
+@router.post("/privacy-consent", response_model=UserResponse, summary="개인정보 수집·이용 동의 기록")
+def submit_privacy_consent(
+    consent: PrivacyConsentRequest,
+    session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    개인정보 수집·이용 동의를 기록한다 (개인정보 보호법 제15조).
+
+    동의 여부가 아니라 **동의 시각**을 남긴다 - 처리자에게 입증책임이 있으므로
+    "언제 받았는가"가 남지 않으면 동의를 받았다는 사실 자체를 증명할 수 없다.
+    """
+    if not consent.agreed:
+        raise BadRequestException("서비스 이용을 위해서는 개인정보 수집·이용 동의가 필요합니다.")
+
+    user = user_service.record_privacy_consent(session=session, user=current_user)
+    return user
+
+
+@router.get("/password-policy", response_model=PasswordPolicyResponse, summary="비밀번호 작성 규칙 조회")
+def get_password_policy():
+    """
+    화면이 안내 문구와 사전검증 기준을 서버에서 받아가기 위한 공개 엔드포인트.
+    비밀번호를 정하기 전에 규칙을 알아야 하므로 인증을 요구하지 않는다(규칙 자체는 비밀이 아니다).
+    """
+    return PasswordPolicyResponse(
+        descriptions=password_policy.POLICY_DESCRIPTIONS,
+        min_length_two_classes=password_policy.MIN_LENGTH_TWO_CLASSES,
+        min_length_three_classes=password_policy.MIN_LENGTH_THREE_CLASSES,
+        max_length=password_policy.MAX_LENGTH,
+        max_sequential_run=password_policy.MAX_SEQUENTIAL_RUN,
+    )
 
 
 @router.patch("/password", response_model=UserResponse)

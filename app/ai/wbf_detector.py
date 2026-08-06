@@ -2,9 +2,9 @@
 ====================================================================
 [WMS B2B Vision AI - WBF (Weighted Boxes Fusion) 앙상블 탐지 모듈]
 - Stage 0: yolov8n_coco_roi.pt (COCO book cls=73) -> 책 ROI 크롭 게이트
-- Model 1: yolov8_high_recall_best.pt (conf=0.12, weight=1.0) -> Recall 84.1%
+- Model 1: yolov8_high_recall_best.pt (conf=0.12, weight=1.0) -> 미세 흠집 미탐 방지 (Recall 0.560~0.576 실측 @conf=0.25)
 - Model 2: yolov8_high_precision_base.pt (conf=0.25, weight=1.5) -> Precision 91.2%
-- Model 3: yolov8_doodle_ocr.pt (conf=0.20, weight=1.0) -> 손글씨/낙서 패치 전담
+- Model 3: yolov8_doodle_ocr.pt (conf=0.20, weight=1.0) -> 손글씨/낙서 패치 전담 (mAP50 84.2%)
 - 순수 NumPy 기반 WBF 알고리즘 구현 (Zero-Dependency & 고속 인메모리 융합)
 
 [ROI 크롭 게이트 도입 배경 - 2026-08-05]
