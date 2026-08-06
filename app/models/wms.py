@@ -120,6 +120,11 @@ class User(SQLModel, table=True):
     role: UserRoleEnum = Field(sa_column=Column(SQLEnum(UserRoleEnum), nullable=False))
     status: UserStatusEnum = Field(default=UserStatusEnum.ACTIVE, sa_column=Column(SQLEnum(UserStatusEnum), nullable=False, default=UserStatusEnum.ACTIVE))
     must_change_password: bool = Field(default=False)
+    # 개인정보 수집·이용 동의 시각 (개인정보 보호법 제15조).
+    # 동의 여부를 boolean이 아니라 시각으로 남기는 이유: "언제 동의를 받았는가"를 증빙하지
+    # 못하면 동의를 받았다는 사실 자체를 입증할 수 없기 때문이다(입증책임은 개인정보처리자에게 있다).
+    # NULL = 아직 동의하지 않음.
+    privacy_consent_at: Optional[datetime] = Field(default=None)
     last_login: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)

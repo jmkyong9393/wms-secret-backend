@@ -57,12 +57,36 @@ except ImportError:
 # ==========================================
 # SlowAPI (Rate Limiter) 전역 설정
 # ==========================================
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.core.limiter import limiter
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """
+    IP 리밋 초과 응답.
+
+    [수정 이력] slowapi 기본 핸들러(_rate_limit_exceeded_handler)는 {"error": "..."} 형태로
+    반환하는데, 이 프로젝트의 다른 모든 에러는 {"status","code","message",...} 규격이다.
+    프론트가 message/detail만 읽고 있어서 리밋 초과 응답의 문구를 찾지 못했고, 결국
+    "사번 또는 비밀번호가 올바르지 않습니다"라는 엉뚱한 폴백 문구가 표시됐다. 규격을
+    통일해 사유가 그대로 화면에 전달되게 한다.
+    """
+    return JSONResponse(
+        status_code=429,
+        content={
+            "status": "error",
+            "code": 429,
+            "error_code": "RATE_LIMITED",
+            "message": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+            "detail": str(exc.detail),
+            "path": request.url.path,
+            "timestamp": now_kst().isoformat() + "Z",
+        },
+        headers={"Retry-After": "60"},
+    )
 
 # ==========================================
 # 미들웨어(Middleware) 등록
@@ -86,15 +110,26 @@ from fastapi import HTTPException
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
     """지정된 커스텀 HTTPException이 터졌을 때 엔터프라이즈 JSON 규격으로 반환"""
+    content = {
+        "status": "error",
+        "code": exc.status_code,
+        # 화면 분기는 문구가 아니라 이 코드로 한다 (app/core/exceptions.py 참고).
+        "error_code": getattr(exc, "error_code", "UNKNOWN"),
+        "message": exc.detail,
+        "path": request.url.path,
+        "timestamp": now_kst().isoformat() + "Z"
+    }
+    # 로그인 실패 시 남은 시도 횟수처럼, 사용자가 자기 상태를 파악하는 데 필요한 값은
+    # 문구에 섞지 않고 별도 필드로 내려 화면이 원하는 형태로 조립할 수 있게 한다.
+    for extra in ("remaining_attempts", "retry_after_seconds", "violations"):
+        value = getattr(exc, extra, None)
+        if value is not None:
+            content[extra] = value
+
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "status": "error",
-            "code": exc.status_code,
-            "message": exc.detail,
-            "path": request.url.path,
-            "timestamp": now_kst().isoformat() + "Z"
-        },
+        content=content,
+        headers=getattr(exc, "headers", None),
     )
 
 @app.exception_handler(Exception)
