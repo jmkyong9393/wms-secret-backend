@@ -25,6 +25,32 @@ def ubci_grade_from_score(score) -> str:
         return "NORMAL"
     return "REJECT"
 
+# UBCI_Specification_v2.0.0.0.md 공식 등급 경계 구간 (ubci_grade_from_score와 동일 기준의 역방향 표)
+UBCI_GRADE_SCORE_BANDS = {
+    "MINT": (95, 100),
+    "GOOD": (85, 94),
+    "NORMAL": (65, 84),
+    "REJECT": (0, 64),
+}
+
+def clamp_ubci_score_to_grade(score, grade: str):
+    """
+    사람이 등급을 최종 확정(HITL 오버라이드)했을 때 점수를 확정 등급의 공식 경계 구간으로 사상한다.
+
+    [수정 이력 2026-08-06] HITL에서 MINT(100점) 건을 NORMAL로 하향 승인해도 AI가 산출한
+    ubci_score=100이 그대로 재고에 저장되어 "UBCI 100점 (NORMAL 등급)"이라는 모순 표기와
+    함께 동적 가격 산정의 상태 보정(점수 기반)까지 MINT 가격으로 계산되던 문제의 교정.
+    등급은 사람이 확정했으므로 점수가 등급을 따라간다 (역방향 금지) - 원 점수는 최소 변경
+    원칙으로 구간 안에 클램프하고, 점수 미산출(None) 건은 구간 상한을 부여한다.
+    """
+    band = UBCI_GRADE_SCORE_BANDS.get((grade or "").upper())
+    if band is None:
+        return score
+    lo, hi = band
+    if score is None:
+        return hi
+    return max(lo, min(hi, int(score)))
+
 # --- Enums (상태 및 타입 정의) ---
 
 class ConditionGradeEnum(str, Enum):
