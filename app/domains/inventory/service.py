@@ -154,11 +154,6 @@ def generate_lpn(
 
     date_str = now_kst().strftime("%y%m%d")
     prefix = f"LPN-{date_str}-{zone_code}"
-    last = db.query(InventoryUsedItem.lpn_barcode).filter(
-        InventoryUsedItem.lpn_barcode.like(f"{prefix}%")
-    ).order_by(InventoryUsedItem.lpn_barcode.desc()).first()
-    seq_num = (int(last[0][-3:]) + 1) if last else 1
-    lpn_code = f"{prefix}{seq_num:03d}"
 
     # 3. 선부착 대기 등록.
     # location_id는 NOT NULL 제약이 걸려 있어 None을 넣을 수 없다(종전 코드는 여기서 항상
@@ -166,20 +161,50 @@ def generate_lpn(
     # 검수 대기 버퍼 로케이션에 임시로 물려두고 검수 확정 시 실제 랙으로 옮긴다.
     buffer_loc = get_or_create_location(db, zone=zone_code, rack="0", shelf="0")
 
-    new_item = InventoryUsedItem(
-        book_id=book.id,
-        location_id=buffer_loc.id,  # 검수 대기 버퍼 (rack/shelf = 0/0)
-        lpn_barcode=lpn_code,
-        ubci_score=None, # 검수 전 미측정
-        condition_grade="PENDING", # 검수 전 미확정
-        item_status="PENDING_INSPECTION" # AI 검수 대기 상태
-    )
-    
-    db.add(new_item)
-    db.commit()
-    db.refresh(new_item)
-    
-    return new_item, book
+    # [2026-08-06 수정] 채번 경합 방어.
+    #
+    # `max(순번)+1`을 읽고 INSERT하는 사이에 다른 요청이 끼어들면 두 요청이 같은 번호를
+    # 계산한다. 현장에서 작업자 여러 명이 각자 단말로 동시에 라벨을 뽑으므로 실제로 발생한다.
+    # lpn_barcode에 UNIQUE 제약이 있어 두 번째 INSERT는 IntegrityError로 튕기는데, 종전에는
+    # 이를 잡지 않아 500이 그대로 나갔다. 충돌 시 다시 채번해 재시도한다.
+    #
+    # [중요] UNIQUE 제약이 최종 방어선이다. 절대 제거하지 말 것 - LPN은 실물에 붙는 라벨이라
+    # 중복되면 assign_rack_location_after_inspection()이 기존 row를 찾아 **덮어써서**
+    # 다른 도서의 재고 정보가 소실된다(예외가 아니라 조용한 데이터 손상).
+    from sqlalchemy.exc import IntegrityError
+
+    MAX_RETRY = 5
+    for attempt in range(MAX_RETRY):
+        last = db.query(InventoryUsedItem.lpn_barcode).filter(
+            InventoryUsedItem.lpn_barcode.like(f"{prefix}%")
+        ).order_by(InventoryUsedItem.lpn_barcode.desc()).first()
+        seq_num = (int(last[0][-3:]) + 1) if last else 1
+        lpn_code = f"{prefix}{seq_num:03d}"
+
+        new_item = InventoryUsedItem(
+            book_id=book.id,
+            location_id=buffer_loc.id,  # 검수 대기 버퍼 (rack/shelf = 0/0)
+            lpn_barcode=lpn_code,
+            ubci_score=None, # 검수 전 미측정
+            condition_grade="PENDING", # 검수 전 미확정
+            item_status="PENDING_INSPECTION" # AI 검수 대기 상태
+        )
+
+        try:
+            db.add(new_item)
+            db.commit()
+        except IntegrityError:
+            # 다른 요청이 같은 번호를 선점했다. 롤백 후 최신 max를 다시 읽어 재시도한다.
+            db.rollback()
+            if attempt == MAX_RETRY - 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"LPN 채번 경합이 {MAX_RETRY}회 연속 발생했습니다. 잠시 후 다시 시도하세요.",
+                )
+            continue
+
+        db.refresh(new_item)
+        return new_item, book
 
 def assign_rack_location_after_inspection(
     db: Session,

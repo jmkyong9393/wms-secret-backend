@@ -198,8 +198,47 @@ class CreateLpnRequest(BaseModel):
     zone: Optional[str] = None # Zone A, B, C, D, E
 
 @router.post("/lpn")
-def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
-    """새로운 LPN 바코드를 발급하고 지정된 창고 보관 랙(Zone A-E) 위치와 조인하여 DB에 저장합니다."""
+async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
+    """
+    새로운 LPN 바코드를 발급하고 검수 대기 버퍼 로케이션에 선부착 등록합니다.
+
+    [2026-08-06 수정] LPN 채번을 프론트에서 백엔드로 이관하면서, 이 엔드포인트가 **바코드
+    스캔 직후** 호출되게 되었다. 그 시점에는 아직 books 행이 없어(입고 확정 전) 종전
+    구현은 404 "Book not found"로 죽는다. LPN 발급은 선부착 설계상 검수보다 먼저여야
+    하므로, 도서가 없으면 알라딘 조회로 최소 메타데이터를 만들어 등록한다.
+    (`/inbound/fasttrack`이 이미 쓰는 것과 동일한 패턴)
+    """
+    from app.models.wms import Book
+    from app.domains.inbound.service import lookup_book_by_isbn
+
+    isbn = (req.isbn or "").strip()
+
+    if not req.book_id and isbn:
+        book = db.exec(select(Book).where(Book.isbn == isbn)).first()
+        if not book:
+            meta = await lookup_book_by_isbn(isbn) or {}
+            category_name = meta.get("categoryName", "")
+            parts = [p.strip() for p in category_name.split(">") if p.strip()]
+            parsed_category = parts[1] if len(parts) > 1 else (parts[0] if parts else "GENERAL")
+
+            book_kwargs: Dict[str, Any] = dict(
+                isbn=isbn,
+                title=meta.get("title") or "미확인 도서",
+                author=meta.get("author"),
+                publisher=meta.get("publisher"),
+                published_date=meta.get("pubDate"),
+                base_price=float(meta.get("price", 0.0) or 0.0),
+                description=meta.get("description"),
+                cover_image_url=meta.get("imageUrl"),
+                category_type=parsed_category,
+            )
+            for field in ("width_mm", "depth_mm", "thickness_mm", "weight_g", "page_count"):
+                if meta.get(field) is not None:
+                    book_kwargs[field] = meta[field]
+
+            db.add(Book(**book_kwargs))
+            db.commit()
+
     new_lpn, book = generate_lpn(db, book_id=req.book_id, isbn=req.isbn, zone=req.zone)
     return {
         "status": "success", 
