@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from uuid import UUID
@@ -25,6 +26,8 @@ class UserResponse(BaseModel):
     role: str
     status: str
     must_change_password: bool
+    # 개인정보 수집·이용 동의 시각 (NULL이면 미동의 - 온보딩에서 동의를 받는다)
+    privacy_consent_at: Optional[datetime] = None
 
 # --- Admin / Employee Management Schemas ---
 

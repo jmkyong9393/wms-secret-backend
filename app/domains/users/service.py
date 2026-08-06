@@ -13,7 +13,9 @@ from app.core.exceptions import (
     EmailAlreadyExistsException,
     InvalidInvitationCodeException,
     InvalidCredentialsException,
+    PasswordPolicyViolationException,
 )
+from app.core.password_policy import validate_password
 from app.models.wms import now_kst
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -149,10 +151,32 @@ class UserService:
             if not current_password or not self.verify_password(current_password, user.password_hash):
                 raise InvalidCredentialsException()
 
+        # [2026-08-06 신설] 비밀번호 작성 규칙 검증 (KISA 기술적·관리적 보호조치 기준).
+        # 검증 지점은 "비밀번호를 새로 정하는 순간" 한 곳뿐이다. 로그인 경로에는 걸지 않으므로
+        # 이미 발급되어 운영 중인 계정(시연 계정 포함)은 강제로 무효화되지 않는다.
+        violations = validate_password(new_password, employee_id=user.employee_id, name=user.name)
+        if violations:
+            raise PasswordPolicyViolationException(violations)
+
+        if current_password and current_password == new_password:
+            raise PasswordPolicyViolationException(["기존 비밀번호와 다른 비밀번호를 사용해야 합니다."])
+
         user.password_hash = self.get_password_hash(new_password)
         user.must_change_password = False
         user.updated_at = now_kst()
         return self._update_user_row(session, user)
+
+    def record_privacy_consent(self, session: Session, user: User) -> User:
+        """
+        개인정보 수집·이용 동의 시각을 기록한다.
+        이미 동의한 계정은 최초 동의 시각을 보존한다 - 재기록하면 "언제 처음 동의했는가"라는
+        증빙 가치가 사라진다.
+        """
+        if user.privacy_consent_at is None:
+            user.privacy_consent_at = now_kst()
+            user.updated_at = now_kst()
+            return self._update_user_row(session, user)
+        return user
 
     def authenticate_user(self, session: Session, employee_id: str, password: str) -> User | None:
         """

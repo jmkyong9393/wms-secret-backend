@@ -16,6 +16,8 @@ CREATE TABLE users (
     role VARCHAR(20) NOT NULL,
     status VARCHAR(20) DEFAULT 'ACTIVE',
     must_change_password BOOLEAN DEFAULT FALSE,
+    -- 개인정보 수집·이용 동의 시각 (개인정보 보호법 제15조). NULL = 미동의.
+    privacy_consent_at TIMESTAMP,
     last_login TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
