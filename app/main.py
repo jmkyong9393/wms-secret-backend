@@ -31,7 +31,7 @@ from app.core.middleware import LoggingMiddleware
 app = FastAPI(
     title="Nexus",
     description="다중 에이전트 기반 B2B 물류 자동화 플랫폼 Nexus Backend",
-    version="2.12.3.0"
+    version="2.12.4.0"
 )
 
 # ==========================================
@@ -212,7 +212,7 @@ def health_check():
     """
     로드밸런서(K8s Ingress 등) 또는 KEDA 스케일링을 위한 서버 헬스 체크 엔드포인트입니다.
     """
-    return {"status": "ok", "version": "2.12.3.0"}
+    return {"status": "ok", "version": "2.12.4.0"}
 
 @app.get("/db-check")
 def db_check(session: Session = Depends(get_db)):
