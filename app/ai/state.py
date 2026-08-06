@@ -8,6 +8,9 @@ ReasonCode = Literal[
     "UBCI_POLICY_VIOLATION", "BBOX_MISMATCH", "QUALITY_ERROR", "OK",
     "REJECT", "MAX_RETRIES_AMBIGUOUS_HITL", "BOUNDARY_AMBIGUOUS_HITL", "HUMAN_REQUIRED",
     "AWAITING_HUMAN_REVIEW",  # Supervisor가 HITL 이관을 지시해 관리자 결재를 대기 중인 상태
+    # [2026-08-06 프리즈 예외] 촬영 전 컷이 도서 미식별로 제외되어 판독된 컷이 0장인 상태.
+    # Critic이 아니라 Supervisor가 세우는 코드다 (판독 커버리지는 전 보고를 종합해야 알 수 있음).
+    "NO_VALID_IMAGE_HITL",
 ]
 
 # Supervisor가 Critic 보고를 수령한 뒤 내리는 최종 지휘 결정.

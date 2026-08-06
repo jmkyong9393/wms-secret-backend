@@ -2,7 +2,7 @@ import json
 import os
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -105,9 +105,33 @@ def _ensure_local_path(path_or_url: str) -> Optional[str]:
 # 0. Pydantic Output Schemas (구조화된 출력)
 # ==========================================
 
+class InnerPageRegion(BaseModel):
+    """속지(펼친 내지) 사진에서 낙서 탐지를 돌릴 영역.
+
+    [Track 2·3] doodle 모델은 AIHub 손글씨 **크롭 패치** 1만 장으로 학습돼 있어,
+    인쇄면 전체를 그대로 넣으면 활자를 손글씨로 오인한다(실측: 깨끗한 속지 1장에
+    오탐 12건, 전부 인쇄 본문). VLM이 지면 영역을 먼저 좁혀 주면 학습 도메인에
+    가까운 입력이 되고, 손이나 배경도 함께 제외된다.
+    """
+    # 좌표를 Dict가 아니라 평탄한 int 필드로 둔다. OpenAI structured output(strict)은
+    # Dict[str, int]를 필수 필드로 쓰면 "Extra required key" 오류로 요청 자체를 거부한다.
+    image_index: int = Field(description="이 영역이 속한 원본 이미지의 인덱스 (0부터)")
+    xmin: int = Field(description="지면 영역 좌측 x (0~1000 상대좌표)")
+    ymin: int = Field(description="지면 영역 상단 y (0~1000 상대좌표)")
+    xmax: int = Field(description="지면 영역 우측 x (0~1000 상대좌표)")
+    ymax: int = Field(description="지면 영역 하단 y (0~1000 상대좌표)")
+
+
 class DefectDetail(BaseModel):
     type: str = Field(description="결함의 종류 (예: DMG_INT_DOODLE, DMG_INT_STAIN, DMG_EXT_CRUSH, DMG_EXT_WET 등)")
     ratio: int = Field(description="전체 면적 대비 결함의 상대적 비율 (%)")
+    level: Optional[int] = Field(
+        default=None,
+        description="변색/황변(DMG_INT_DISCOLOR) 전용 강도 1~3. 황변은 지면 전체에 나타나 "
+                    "면적(ratio)이 항상 100%가 되므로 면적 대신 강도로 판정한다. "
+                    "1=종이 끝만 살짝 바램(자연 노화) / 2=전반적으로 뚜렷한 황변 / "
+                    "3=짙은 갈색·곰팡이성 얼룩 동반. 변색이 아닌 결함에는 넣지 않는다",
+    )
     preliminary_deduction: int = Field(description="4o-mini가 1차 계산한 예비 감점 수치", default=10)
     bbox: Optional[Dict[str, int]] = Field(
         default=None,
@@ -130,6 +154,11 @@ class VisionResult(BaseModel):
     invalid_image_indexes: List[int] = Field(
         default_factory=list,
         description="도서가 식별되지 않는 이미지의 인덱스 목록 (0=정면 촬영 순서 기준). 모든 컷에 도서가 보이면 빈 배열",
+    )
+    # [2026-08-06 Track 2·3] 속지 컷의 지면 영역. doodle 모델을 이 영역에만 돌린다.
+    inner_page_regions: List[InnerPageRegion] = Field(
+        default_factory=list,
+        description="펼친 속지(내지)가 찍힌 컷의 지면 영역 목록. 속지 컷이 없으면 빈 배열",
     )
 
 class PolicyResult(BaseModel):
@@ -194,6 +223,10 @@ except Exception:
     llm_vlm = None
     llm_mini = None
 
+# 촬영 규격상 Track 1(WBF 앙상블 담당)이 맡는 앞쪽 이미지 장수.
+# 인덱스 0=앞면, 1=뒷면, 2=책등. 3번 이후는 책배·속지로 VLM이 판독한다.
+TRACK1_IMAGE_COUNT = 3
+
 # ==========================================
 # 0. Detector Node (WBF 3-YOLO 앙상블 사전탐지 - LLM 미사용, 결정론적)
 # ==========================================
@@ -210,9 +243,25 @@ def detector_node(state: WMSInspectionState) -> WMSInspectionState:
     image_paths = state.get("image_paths") or []
     yolo_candidates = []
 
+    # --- Track 1 범위 한정 (2026-08-06) ---
+    # 촬영 규격상 인덱스 0·1·2는 앞면·뒷면·책등으로 고정된다. 이 세 각도는 학습셋
+    # (Roboflow 811장)에 같은 구도가 존재하므로 WBF 앙상블이 담당한다.
+    #   - 앞뒤 표지 약 50%, 책등 약 40%
+    #   - 반면 책배(종이 단면)는 80장 표본에 2~3장뿐이라 사실상 학습된 적이 없다.
+    #
+    # 인덱스를 규격으로 고정하면 이 세 장은 VLM 분류를 거칠 필요가 없어,
+    # "VLM이 표지를 책배로 오분류하는" 실패 경로가 원천 차단된다.
+    #
+    # 3번 이후(책배·속지)는 vision_agent가 GPT-4o로 직접 판독한다. 모델이 배운 적 없는
+    # 면에 바운딩 박스를 강요하지 않는다.
+    #
+    # 얇은 문고본·중철 제본은 책등 촬영을 스킵할 수 있으므로, 실제 장수가 3장 미만이면
+    # 있는 만큼만 처리한다.
+    track1_paths = image_paths[:TRACK1_IMAGE_COUNT]
+
     try:
         from app.ai.wbf_detector import wbf_detector
-        for idx, path in enumerate(image_paths):
+        for idx, path in enumerate(track1_paths):
             local_path = _ensure_local_path(path)
             if not local_path:
                 continue
@@ -223,8 +272,11 @@ def detector_node(state: WMSInspectionState) -> WMSInspectionState:
                     "confidence": d["confidence"],
                     "bbox": d["bbox"],
                 })
+        skipped = len(image_paths) - len(track1_paths)
         detector_text = (
-            f"WBF 3-YOLO 앙상블 사전탐지 완료 - {len(image_paths)}장에서 결함 후보 {len(yolo_candidates)}건 검출"
+            f"WBF 3-YOLO 앙상블 사전탐지 완료 - Track 1 {len(track1_paths)}장"
+            f"(앞면·뒷면·책등)에서 결함 후보 {len(yolo_candidates)}건 검출"
+            + (f" / 책배·속지 {skipped}장은 VLM 판독으로 회부" if skipped > 0 else "")
         )
     except Exception as e:
         detector_text = f"WBF 앙상블 사전탐지 실패({type(e).__name__}) - GPT-4o VLM 단독 판독으로 진행"
@@ -280,24 +332,89 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
 5. 정성적 관찰(special_notes):
    - UBCI 감점과 무관하지만 특기할 사항(도서관 장서 도장, 부록 CD/카드 누락, 저자 친필 서명 등)이
      보이면 top-level special_notes 필드에 한 줄로 기록하세요. 없으면 null로 두세요.
-6. 이미지 유효성(invalid_image_indexes):
-   - 전달된 이미지 중 도서가 식별되지 않는 컷(작업자 얼굴/신체만 찍힘, 빈 배경/책상, 심한 초점
-     이탈이나 모션 블러로 도서 판독이 불가능한 컷)의 인덱스를 invalid_image_indexes 배열에
-     기재하세요 (0번째=첫 번째 이미지).
-   - 도서가 일부라도 명확히 식별되는 컷은 유효한 이미지이며 절대 포함하지 마세요.
+6. 이미지 유효성(invalid_image_indexes) — invalid 판정은 **최후 수단**:
+   - invalid로 지정할 수 있는 컷은 딱 두 가지뿐입니다:
+     (a) 도서가 프레임에 **전혀 존재하지 않는** 컷 (작업자 얼굴/신체만 찍힘, 빈 배경/책상)
+     (b) 초점 이탈·모션 블러가 심해 도서 표면의 상태를 물리적으로 읽을 수 없는 컷
+   - 다음은 전부 **유효한 컷**입니다. invalid로 지정하지 말고 반드시 판독하세요:
+     · 도서를 손에 들고 비스듬히 기울여 찍은 컷 (현장 웹캠 촬영의 기본 형태입니다)
+     · 도서가 프레임 일부에만 걸쳐 있거나, 사람 얼굴·손·의자·배경과 함께 찍힌 컷
+     · 표지가 아닌 책배(종이 단면)·책등·펼친 속지가 찍힌 컷
+     · 표지 글자가 안 읽혀도 종이 상태(주름·오염·마모)는 판독 가능한 컷
    - 결함 판정(defects)은 유효한 컷에 대해서만 수행하고, 도서 미식별 컷에서는 결함을 보고하지
      마세요. 모든 컷에 도서가 보이면 빈 배열([])로 두세요.
+   - **전 컷 invalid 지정은 "검수 불가" 선언과 같으며**, 시스템이 그 건을 자동 확정하지 않고
+     관리자 수동 검수(HITL)로 이관합니다. 확신 없이 전 컷을 invalid로 만들지 말고,
+     조금이라도 판독 가능한 컷은 판독을 시도한 뒤 낮은 confidence로 보고하세요.
+
+7. [image_index 규칙 — 반드시 지킬 것]
+   image_index는 **첨부된 이미지의 순서**입니다. 각 이미지 바로 앞에 `[이미지 index=N]`
+   이라는 표시가 붙어 있으니 **그 숫자를 그대로 사용**하세요.
+   - 사진에 무엇이 찍혔는지로 번호를 추측하지 마세요. 첨부 순서가 유일한 기준입니다.
+   - 첨부된 이미지가 N장이면 사용 가능한 index는 0부터 N-1까지뿐입니다.
+     그 범위를 벗어난 숫자를 절대 쓰지 마세요.
+
+8. [촬영 순서 관례] 통상 0=앞면, 1=뒷면, 2=책등, 3번 이후=책배(종이 단면) 또는 속지입니다.
+   다만 얇은 책은 책등 촬영을 생략할 수 있어 이 관례가 항상 맞지는 않습니다.
+   **번호는 위 7번(첨부 순서)을 따르고, 각 사진의 실제 내용은 눈으로 보고 판단하세요.**
+   - 앞면·뒷면·책등은 별도 YOLO 앙상블이 이미 검사했습니다(아래 후보 목록 참조).
+   - 책배·속지는 그 모델이 학습한 적 없는 각도이므로 **당신이 직접 판독**해야 합니다.
+     종이 단면의 마모·오염·변색, 내지의 얼룩·물 젖음·찢어짐을 빠짐없이 보고하세요.
+
+9. [속지 지면 영역 — 결함 유무와 무관하게 반드시 채울 것]
+   **펼쳐진 책의 내지(본문 페이지)가 보이는 컷이 하나라도 있으면**, 그 컷마다
+   inner_page_regions 항목을 하나씩 만드세요. 이 배열은 결함 보고와 별개입니다.
+   결함이 없어도, 깨끗한 속지여도 **지면이 보이면 반드시 채웁니다.**
+   - 손가락, 책상, 배경을 제외하고 **종이 지면만** 감싸도록 좌표를 잡습니다.
+   - 한 컷에 양쪽 페이지가 보이면 전체를 하나의 영역으로 묶어도 됩니다.
+   - image_index는 위 7번 규칙(첨부 순서)을 그대로 따릅니다.
+   - 표지·책등만 찍힌 컷이거나 내지가 전혀 안 보이면 그 컷은 넣지 마세요.
+     모든 컷에 내지가 없으면 빈 배열([])입니다.
+
+10. [변색 강도] 황변/변색(DMG_INT_DISCOLOR)을 보고할 때는 level에 1~3을 넣으세요.
+   황변은 지면 전체에 나타나 면적으로는 심각도를 구분할 수 없기 때문입니다.
+   1=종이 끝만 살짝 바램(중고책의 자연스러운 노화) / 2=전반적으로 뚜렷 / 3=짙은 갈색·곰팡이성.
+   오래된 중고책이 누렇게 뜬 것은 정상 범위이므로 함부로 2~3을 주지 마세요.
+
+11. [물 젖음/습기 손상 — DMG_EXT_WET, 놓치기 쉬우니 특히 주의]
+   물에 젖었다 마른 책은 **찢김이나 얼룩 없이도** 아래 형태로 드러납니다. 하나라도 보이면
+   DMG_EXT_WET으로 보고하세요 (색이 아니라 **종이의 기하학적 변형**을 보는 것이 핵심):
+   - 책배(종이 단면)가 매끈한 직선이 아니라 **물결처럼 쭈글쭈글하게 부풀어** 있음
+   - 책을 덮었는데 지면이 평평하지 않고 **두께가 부위별로 다르게 부풀어(팽윤)** 있음
+   - 지면에 **물결 주름(cockling)·굴곡**이 잡혀 빛을 받는 면에 줄무늬 음영이 생김
+   - 종이 가장자리를 따라 **얼룩진 경계선(tide line)**이 남아 있음
+   - 표지가 물결지거나 뒤틀려 들뜸 / 코팅이 우글거림
+   판단 기준: 새 책의 종이 단면은 **자로 그은 듯 균일한 직선**입니다. 그 직선이 무너져
+   울퉁불퉁하면 물 손상을 의심하는 것이 정상입니다. 사용 중 자연스럽게 생기는 모서리
+   마모(DMG_EDGE_WEAR)와 구별하세요 — 마모는 모서리 국소, 물 손상은 지면 전체의 파형입니다.
+   - 확신이 서지 않으면 **보고하지 않고 넘기지 말고**, confidence를 0.4~0.6으로 낮춰
+     보고하세요. 판독 누락(놓침)이 낮은 확신도 보고보다 훨씬 큰 손실입니다.
+
+12. [판독 원칙 — 종합]
+   - 이 검수 결과는 **실제 매입 대금**을 결정합니다. "결함 0건"은 "결함을 못 찾았다"가 아니라
+     "정밀 판독 결과 무결점임을 보증한다"는 선언입니다. 확신이 없으면 0건으로 확정하지 말고
+     낮은 confidence로라도 보고하거나, 판독 불가 컷은 invalid로 명시하세요.
+   - 촬영 컷 전체가 물리적으로 판독 불가한 경우가 아니라면, **반드시 각 컷을 끝까지 살펴본 뒤**
+     결과를 내세요. 사진이 지저분하거나 각도가 나쁘다는 이유로 판독을 포기하지 마세요.
 """ + yolo_hint
 
+        # 각 이미지 바로 앞에 인덱스 라벨을 끼워 넣는다.
+        # [2026-08-06] 라벨 없이 이미지만 나열하면 VLM이 **첨부 순서가 아니라 사진 내용으로**
+        # 번호를 매긴다. 실측: 속지 1장만 넣었는데 프롬프트의 "3번 이후=속지" 관례를 보고
+        # image_index=3을 반환했고, 4장 입력에서는 존재하지 않는 index=4를 지목했다.
+        # 범위 밖 인덱스는 Critic이 환각으로 판정해 HITL로 보내므로, 프롬프트 탓에 매번
+        # HITL이 걸리는 상태가 된다. 라벨로 앵커를 박아 순서를 강제한다.
         content_list = [{"type": "text", "text": prompt_vlm}]
-        for path in image_paths:
+        for i, path in enumerate(image_paths):
             b64 = _load_image_as_base64(path)
             if b64:
+                content_list.append({"type": "text", "text": f"[이미지 index={i}]"})
                 content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
 
         special_notes = None
         vision_error = None
         invalid_image_indexes: list = []
+        inner_page_regions: list = []
         try:
             res_vlm: VisionResult = structured_vlm.invoke([HumanMessage(content=content_list)])
             is_mint = res_vlm.is_mint
@@ -308,6 +425,13 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
                 int(i) for i in (res_vlm.invalid_image_indexes or [])
                 if isinstance(i, (int, float)) and 0 <= int(i) < len(image_paths)
             })
+            # 속지 지면 영역도 같은 원칙으로 범위 검증한다. 도서 미식별 컷은 제외한다
+            # (판독 불가로 분류된 컷에 낙서 탐지를 돌릴 이유가 없다).
+            inner_page_regions = [
+                r.model_dump() for r in (res_vlm.inner_page_regions or [])
+                if 0 <= int(r.image_index) < len(image_paths)
+                and int(r.image_index) not in invalid_image_indexes
+            ]
         except Exception as e:
             # [수정 이력 - CRITICAL] 예전에는 여기서 `is_mint = len(defects) == 0` 이었다.
             # VLM 호출이 실패하면 defects가 빈 채로 남으므로 "결함 0건 = MINT(무결점)"으로
@@ -346,6 +470,7 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
         is_mint = len(defects) == 0
         special_notes = None
         invalid_image_indexes = []
+        inner_page_regions = []
 
     # --- Stage 3: GPT-4o-mini 매트릭스 수식 교차 검증 (BBox/type은 유지, preliminary_deduction만 재계산) ---
     mini_verified = False
@@ -384,6 +509,108 @@ preliminary_deduction 값만 재계산해서 반환하세요.
             else:
                 d["preliminary_deduction"] = max(5, ratio)
 
+    # --- Track 2·3: 속지 지면 크롭에 doodle 단독 추론 ---
+    # VLM이 지정한 지면 영역만 잘라 doodle 모델에 넣는다. 인쇄면 전체를 넣으면 활자를
+    # 손글씨로 오인하므로(실측: 깨끗한 속지 1장에 오탐 12건), 학습 도메인인 "손글씨 크롭
+    # 패치"에 가까운 입력을 만들어 준다. 크롭본과 탐지 결과는 로컬에 적재해 나중에 검증한다.
+    doodle_added = 0
+    for region in (inner_page_regions or []):
+        try:
+            idx = int(region.get("image_index", -1))
+            if not (0 <= idx < len(image_paths)):
+                continue
+            local_path = _ensure_local_path(image_paths[idx])
+            if not local_path:
+                continue
+
+            import cv2
+            from app.ai.wbf_detector import wbf_detector, detect_page_region
+
+            img = cv2.imread(local_path)
+            if img is None:
+                continue
+            ih, iw = img.shape[:2]
+            # 좌표는 YOLO-World(공간 판단)를 우선 쓰고, 실패 시 VLM 좌표로 폴백한다.
+            # VLM은 "이 사진이 속지인가"(의미 판단)까지만 신뢰한다 - 좌표 정확도는 낮다.
+            region_src = "yoloworld"
+            wr = detect_page_region(img)
+            if wr is not None:
+                x1 = max(0, min(iw - 1, int(wr[0] * iw)))
+                y1 = max(0, min(ih - 1, int(wr[1] * ih)))
+                x2 = max(x1 + 1, min(iw, int(wr[2] * iw)))
+                y2 = max(y1 + 1, min(ih, int(wr[3] * ih)))
+            else:
+                region_src = "vlm"
+                x1 = max(0, min(iw - 1, int(region.get("xmin", 0) / 1000 * iw)))
+                y1 = max(0, min(ih - 1, int(region.get("ymin", 0) / 1000 * ih)))
+                x2 = max(x1 + 1, min(iw, int(region.get("xmax", 1000) / 1000 * iw)))
+                y2 = max(y1 + 1, min(ih, int(region.get("ymax", 1000) / 1000 * ih)))
+            crop = img[y1:y2, x1:x2]
+            if crop.size == 0:
+                continue
+
+            hits = wbf_detector.detect_doodle_only(
+                crop,
+                debug_tag=f"idx{idx}_inner",
+                debug_meta={
+                    "source_image": os.path.basename(local_path),
+                    "image_index": idx,
+                    "region_source": region_src,  # yoloworld | vlm(폴백)
+                    "vlm_region": {k: region.get(k) for k in ("xmin", "ymin", "xmax", "ymax")},
+                    "crop_px": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                },
+            )
+            # 크롭 기준 0~1000 좌표를 원본 이미지 기준으로 역변환한다.
+            # 프론트는 S3 원본 위에 BBox를 그리므로 원본 좌표여야 한다.
+            cw, ch = (x2 - x1), (y2 - y1)
+            for hd in hits:
+                b = hd["bbox"]
+                defects.append({
+                    "type": YOLO_TO_UBCI_TYPE.get("doodle_scribble", "DMG_INT_DOODLE"),
+                    "ratio": max(1, int((b["xmax"] - b["xmin"]) * (b["ymax"] - b["ymin"]) / 10000)),
+                    "confidence": hd.get("confidence"),
+                    "image_index": idx,
+                    "bbox": {
+                        "xmin": int((x1 + b["xmin"] / 1000 * cw) / iw * 1000),
+                        "ymin": int((y1 + b["ymin"] / 1000 * ch) / ih * 1000),
+                        "xmax": int((x1 + b["xmax"] / 1000 * cw) / iw * 1000),
+                        "ymax": int((y1 + b["ymax"] / 1000 * ch) / ih * 1000),
+                    },
+                })
+                doodle_added += 1
+        except Exception as e:
+            # 부가 탐지이므로 실패가 판독 결과를 폐기시키지 않는다.
+            print(f"[Vision Agent] 속지 크롭 doodle 추론 실패({type(e).__name__}) - 건너뜀: {e}")
+
+    if doodle_added:
+        is_mint = False
+        print(f"[Vision Agent] 속지 크롭 doodle 낙서 {doodle_added}건 추가")
+
+    # --- 증거 대조 검증 (GPT-4o-mini) ---
+    # 확정된 결함 목록을 원본 이미지와 직접 대조한다. 오탐으로 지목된 항목은 제거하지 않고
+    # 표식만 남긴다 - 여기서 임의로 지우면 Critic/Supervisor가 볼 근거가 사라지고,
+    # 판정 책임이 이 함수로 넘어와 버린다. 제거 여부는 후속 노드의 판단 영역이다.
+    verify_verdict = verify_defects_with_images(
+        defects,
+        image_paths,
+        book_title=str(state.get("book_title") or state.get("title") or ""),
+        special_notes=special_notes,
+    )
+    verify_note = None
+    if verify_verdict is not None:
+        suspects = set(verify_verdict.suspect_indices or [])
+        for i, d in enumerate(defects):
+            if i in suspects:
+                d["evidence_suspect"] = True
+        if verify_verdict.decision == "REJECTED":
+            verify_note = (
+                f"증거 대조 검증 반려 - {verify_verdict.reason}"
+                + (f" (오탐 의심 인덱스: {sorted(suspects)})" if suspects else "")
+            )
+        else:
+            verify_note = f"증거 대조 검증 통과 - {verify_verdict.reason}"
+        print(f"[Vision Verify] {verify_note}")
+
     # Explainer 패널이 렌더할 실제 판독 서술. 프론트에서 문자열을 지어내지 않도록
     # 판독 근거(스캔 장수, 앙상블 후보 수, 결함 유형)를 여기서 확정해 State에 싣는다.
     scanned_cnt = len(image_paths)
@@ -402,6 +629,8 @@ preliminary_deduction 값만 재계산해서 반환하세요.
         vision_text += f" / 특이사항: {special_notes}"
     if invalid_image_indexes:
         vision_text += f" / 도서 미식별 컷 {len(invalid_image_indexes)}장 제외 (인덱스: {invalid_image_indexes})"
+    if verify_note:
+        vision_text += f" / {verify_note}"
 
     result = {
         "is_mint": is_mint,
@@ -414,6 +643,98 @@ preliminary_deduction 값만 재계산해서 반환하세요.
     if special_notes:
         result["special_notes"] = special_notes
     return result
+
+# ==========================================
+# 1-b. 증거 대조 검증 (Vision 종합 검증) - GPT-4o-mini
+# ==========================================
+#
+# 도입 배경 - 현행 Critic은 이미지를 보지 못한다:
+#   critic_agent의 Stage B 프롬프트에는 image_url 파트가 없다. 전달되는 것은 도서명,
+#   "이미지 장수(숫자)", 결함 목록 JSON, UBCI 점수뿐이다. 즉 "환각 방어" 담당이
+#   **실제 증거(픽셀)를 한 번도 보지 않고** "BBox가 면적 50% 이상이면 인쇄물 오탐 의심",
+#   "다른 이미지에 동일 좌표 중복" 같은 메타 규칙만으로 오탐을 추정해 왔다.
+#
+# vision_agent 안에는 이미 이미지가 컨텍스트에 올라와 있으므로, 여기서 한 번 더 심사하면
+# 재업로드 없이 실제 증거를 보고 판정할 수 있다.
+#
+# Critic Stage B는 **제거하지 않고 그대로 둔다 (이중 검증)**:
+#   - 본 함수      : 이미지를 본다. 판독이 증거와 맞는가 (증거 타당성)
+#   - Critic Stage B: 점수를 본다. 판독과 UBCI가 정합한가 · 경계선인가 (정합성 · 라우팅)
+#   두 검증은 보는 대상이 달라 실패 양상이 독립적이고, 서로의 약점을 덮는다.
+#   (본 함수는 판독 맥락 안에 있어 동조 편향 위험이 있고, Critic은 독립적이나 눈이 멀었다.)
+#
+# 프리즈 규정("각 단계는 별도 노드/함수로 유지, 단일 프롬프트로 병합 금지") 준수를 위해
+# vision 판독 프롬프트에 합치지 않고 **독립 함수 + 독립 프롬프트**로 분리한다.
+# 동조 편향을 줄이기 위해 앞선 판독의 추론 과정은 넘기지 않고,
+# **이미지와 확정된 결함 목록만** 새로 구성해 전달한다.
+#
+# 비용: 결함이 0건이면 호출하지 않는다(MINT 물량에서 추가 비용 0).
+# 실패 시 fail-open - 부가 검증이므로 LLM 장애가 판독 결과를 폐기시키지 않는다.
+
+def verify_defects_with_images(
+    defects: List[Dict[str, Any]],
+    image_paths: List[str],
+    book_title: str = "",
+    special_notes: Optional[str] = None,
+) -> Optional[CriticVerdict]:
+    """확정된 결함 목록을 **원본 이미지와 대조**해 타당성을 심사한다.
+
+    Returns:
+        CriticVerdict (decision / reason / suspect_indices) 또는 심사 불가 시 None.
+    """
+    if not llm_mini or not defects or not image_paths:
+        return None
+
+    try:
+        evidence = [
+            {
+                "index": i,
+                "type": d.get("type"),
+                "image_index": d.get("image_index"),
+                "bbox": d.get("bbox"),
+                "ratio": d.get("ratio"),
+                "confidence": d.get("confidence"),
+            }
+            for i, d in enumerate(defects)
+        ]
+        prompt = f"""당신은 중고도서 비전 검수 결과를 감리하는 Critic입니다.
+아래 **실제 검수 이미지**를 직접 보고, 보고된 결함 판독이 타당한지 엄격하게 심사하세요.
+
+[심사 대상]
+- 도서명: {book_title or "미상"}
+- 판독 특이사항: {special_notes or "없음"}
+- 보고된 결함 목록(JSON): {json.dumps(evidence, ensure_ascii=False)}
+
+[중요] bbox 좌표계는 각 이미지의 좌상단을 (0,0), 우하단을 (1000,1000)으로 하는
+정규화 좌표입니다. image_index는 아래 첨부된 이미지의 순서(0번째부터)를 가리킵니다.
+
+[REJECTED로 판단해야 하는 경우]
+1. 지목된 좌표에 **실제로는 결함이 보이지 않는** 경우 (환각).
+2. 인쇄된 본문·삽화·표를 결함(특히 낙서)으로 오인한 경우.
+   - 인쇄 활자는 규칙적인 행·열을 이루고 색이 균일합니다. 손글씨/낙서는 필압과
+     기울기가 불규칙합니다. 이 차이로 구분하세요.
+3. 손·책상·배경 등 **도서가 아닌 물체**에 결함을 표시한 경우.
+4. 같은 결함이 여러 건으로 중복 보고된 경우.
+5. 결함 유형과 실제 보이는 손상이 다른 경우 (예: 마모인데 찢어짐으로 보고).
+
+위 어디에도 해당하지 않으면 APPROVED로 판단하세요.
+오탐이 의심되는 항목이 있으면 suspect_indices에 해당 index를 넣으세요.
+"""
+        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for path in image_paths:
+            b64 = _load_image_as_base64(path)
+            if b64:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                })
+
+        structured = llm_mini.with_structured_output(CriticVerdict)
+        return structured.invoke([HumanMessage(content=content)])
+    except Exception as e:
+        print(f"[Vision Verify] 증거 대조 검증 실패({type(e).__name__}) - 판독 결과 유지: {e}")
+        return None
+
 
 # ==========================================
 # 2. Policy Agent (UBCI_Specification_v2.0.0.0.md 100% 공식 매트릭스 수식 엔진)
@@ -441,6 +762,7 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
 
     deduction_items = []
     total_deduction = 0
+    suspect_excluded = []  # 증거 대조 검증이 오탐으로 지목해 감점에서 제외한 항목
     is_fatal_reject = False
     fatal_reason = ""
     edge_wear_added = False
@@ -452,6 +774,18 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         page_cnt = d.get("page_count") or d.get("pages") or 1
         text_overlap = d.get("text_overlap", False) or "본문" in str(d.get("description", ""))
         label = DEFECT_TRANSLATION_MAP.get(dtype) or dtype or "상태 결함"
+
+        # 증거 대조 검증(verify_defects_with_images)이 오탐으로 지목한 결함은 감점하지 않는다.
+        # 목록에서는 지우지 않으므로 HITL 화면과 BBox 오버레이에는 그대로 보이고,
+        # 다만 매입가를 좌우하는 점수에는 반영하지 않는다 - 판독이 증거와 어긋난다고
+        # 판정된 항목으로 판매자에게 불이익을 주지 않기 위함이다.
+        #
+        # 전부 오탐으로 걸러져 감점이 0이 되면 score가 100이 되는데, 그 경우는
+        # critic_agent Stage A의 "결함 N건인데 감점 0점" 정합성 검사가 잡아 HITL로 이관한다.
+        # (프리즈 규정: "검수하지 못했다"와 "흠이 없다"를 같게 취급하지 않는다)
+        if d.get("evidence_suspect"):
+            suspect_excluded.append(label)
+            continue
 
         # 🚨 치명적 결함 즉시 반려 (UBCI Spec v2.0.0.0 Section 1 & Section 4)
         if "WET" in dtype or "WATER" in dtype or "WARPING" in dtype or "침수" in dtype or "휨" in dtype:
@@ -478,6 +812,33 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
                 total_deduction += final_ded
                 overlap_str = " (본문 텍스트 침범 x1.5 가중치)" if text_overlap else ""
                 deduction_items.append((label, final_ded, f"{label} (-{final_ded}점{overlap_str})"))
+        # --- 오염(STAIN) : 면적 기준 3단계 ---
+        # 국소적 결함이라 넓을수록 심각하므로 기존 매트릭스와 동일하게 ratio를 축으로 쓴다.
+        # doodle 분기와 같은 패턴으로 여기서 직접 append하고 아래 공용 1.5배 가중치를 타지
+        # 않는다 - 면적 구간에서 이미 심각도를 반영하므로 이중 가중이 된다(-20 x 1.5 = -30).
+        elif "STAIN" in dtype or "오염" in dtype or "얼룩" in dtype:
+            base_ded = 5 if ratio < 5 else (10 if ratio < 15 else 20)
+            total_deduction += base_ded
+            deduction_items.append((label, base_ded, f"{label} (-{base_ded}점, 면적 {ratio}%)"))
+
+        # --- 변색/황변(DISCOLOR) : 강도 기준 3단계 ---
+        # 황변은 페이지 전면에 나타나므로 ratio가 항상 ~100%가 되어 면적이 의미를 갖지 못한다.
+        # (면적으로 재면 세월 먹은 정상적인 헌책이 매번 최고 감점을 맞는다)
+        # VLM이 level 1~3으로 강도를 보고하며, 중고책의 자연 노화를 불량으로 폐기하지 않도록
+        # L1~L2는 등급에 영향을 주지 않는 수준으로 관대하게 설계했다.
+        # 이 타입도 text_overlap 가중치에서 제외한다 - 전면적 결함이라 가중치가 항상
+        # 발동해 차등 기능을 하지 못하고 모든 변색 감점을 1.5배로 부풀리기만 한다.
+        elif "DISCOLOR" in dtype or "변색" in dtype or "황변" in dtype:
+            level = d.get("level")
+            try:
+                level = int(level)
+            except (TypeError, ValueError):
+                level = 1  # 강도 미보고 시 가장 관대한 단계로 처리
+            level = min(3, max(1, level))
+            base_ded = {1: 2, 2: 5, 3: 10}[level]
+            total_deduction += base_ded
+            deduction_items.append((label, base_ded, f"{label} (-{base_ded}점, 강도 L{level})"))
+
         else:
             if "SCRATCH" in dtype or "긁힘" in dtype or "스크래치" in dtype:
                 base_ded = 2 if ratio < 5 else (5 if ratio < 15 else 10)
@@ -522,6 +883,13 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
             policy_text = f"UBCI v2.0.0.0 공식 매트릭스 적용 ➔ {deduction_str} = 총 {total_deduction}점 감점 (UBCI {score}점 / {grade_str} / 처분: {decision_str})"
         else:
             policy_text = f"UBCI v2.0.0.0 공식 매트릭스 적용 ➔ 결함 없음 (UBCI {score}점 / {grade_str} / 처분: {decision_str})"
+        # 감점에서 제외된 항목은 감사 추적을 위해 반드시 남긴다. 기록하지 않으면
+        # "Vision은 결함을 보고했는데 Policy가 조용히 무시한" 것처럼 보인다.
+        if suspect_excluded:
+            policy_text += (
+                f" / 증거 대조 검증에서 오탐으로 지목되어 감점 제외: "
+                f"{', '.join(suspect_excluded)} ({len(suspect_excluded)}건)"
+            )
 
     # --- RAG 근거 조항 인용 (Grounding) ---
     #

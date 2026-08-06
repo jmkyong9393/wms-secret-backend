@@ -3,7 +3,6 @@ from app.models.wms import InventoryUsedItem, Book, Location
 from uuid import uuid4
 from datetime import datetime
 from fastapi import HTTPException
-import random
 from app.models.wms import now_kst
 
 def recommend_optimal_warehouse_zone(grade: str = "MINT", category: str = "IT/컴퓨터", base_price: float = 20000.0, standard_size: str = None) -> tuple[str, str, str]:
@@ -108,12 +107,28 @@ def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int):
     return inv, location
 
 
-def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: str = "WM2608001") -> tuple[InventoryUsedItem, Book]:
+LPN_ZONES = ("A", "B", "C", "D", "E")
+LPN_LIVE_ZONE = "A"  # 라이브 검수 네임스페이스 (시드/데모는 B~E를 쓴다)
+
+
+def generate_lpn(
+    db: Session,
+    book_id: str = None,
+    isbn: str = None,
+    zone: str = None,
+    worker_id: str = "WM2608001",
+) -> tuple[InventoryUsedItem, Book]:
     """
     [1단계: 선부착 (Label First)]
-    도서 입고 시 LPN 바코드 라벨(LPN-YYMMDD-XXXX)을 먼저 발급하여 실물 도서에 부착합니다.
-    이 시점에서는 AI 검수 전이므로 보관 랙 위치(location_id)는 None(검수 대기 버퍼 존)이며, 
-    상태는 PENDING_INSPECTION으로 등록됩니다.
+    도서 입고 시 LPN 바코드 라벨(LPN-YYMMDD-{존}{순번3자리})을 먼저 발급해 실물에 부착합니다.
+    AI 검수 전이므로 등급은 PENDING, 상태는 PENDING_INSPECTION으로 등록됩니다.
+
+    [2026-08-06 수정] 유일한 호출부(POST /inventory/lpn)가 `zone=`을 넘기는데 시그니처에는
+    없어서 이 엔드포인트는 호출 즉시 TypeError로 죽고 있었다. 파라미터를 추가한다.
+
+    `zone`은 **입고 시점의 버퍼 존**이고, 검수 후 확정되는 보관 랙 존(locations.zone)과는
+    다를 수 있다. 랙 존은 등급에 따라 사후 산출되기 때문이다(recommend_optimal_warehouse_zone).
+    둘을 같게 맞추려 들면 검수 전에 등급을 알아야 하므로 선부착 설계 자체가 무너진다.
     """
     # 1. 도서 존재 여부 확인
     if book_id:
@@ -126,16 +141,34 @@ def generate_lpn(db: Session, book_id: str = None, isbn: str = None, worker_id: 
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
         
-    # 2. 고유 LPN 바코드 생성 로직 (조장님 표준 규격: LPN-260803-A003)
+    # 2. 고유 LPN 바코드 생성 (표준 규격: LPN-260803-A003)
+    #
+    # [2026-08-06 수정] 종전에는 존 문자와 순번을 모두 random으로 뽑고 중복 검사를 하지 않았다.
+    # 하루 999칸에 난수를 던지는 구조라 생일 문제로 충돌이 실제로 발생했다
+    # (2026-08-03 하루에만 서로 다른 도서 3쌍이 같은 LPN을 받음). LPN은 실물에 붙는
+    # 라벨이라 중복되면 출고 스캔이 다른 책을 집는다. 존별·날짜별 최대 순번 +1로 채번한다.
+    # 결번은 정상이다 - 발급 후 폐기된 라벨을 재사용하면 오히려 추적성이 깨진다.
+    zone_code = (zone or LPN_LIVE_ZONE).strip().upper()[-1:]
+    if zone_code not in LPN_ZONES:
+        raise HTTPException(status_code=400, detail=f"zone must be one of {LPN_ZONES}")
+
     date_str = now_kst().strftime("%y%m%d")
-    zone_code = random.choice(["A", "B", "C", "D"])
-    seq_num = random.randint(1, 999)
-    lpn_code = f"LPN-{date_str}-{zone_code}{seq_num:03d}"
-    
-    # 3. InventoryUsedItem 선부착 대기 등록 (location_id=None, item_status=PENDING_INSPECTION)
+    prefix = f"LPN-{date_str}-{zone_code}"
+    last = db.query(InventoryUsedItem.lpn_barcode).filter(
+        InventoryUsedItem.lpn_barcode.like(f"{prefix}%")
+    ).order_by(InventoryUsedItem.lpn_barcode.desc()).first()
+    seq_num = (int(last[0][-3:]) + 1) if last else 1
+    lpn_code = f"{prefix}{seq_num:03d}"
+
+    # 3. 선부착 대기 등록.
+    # location_id는 NOT NULL 제약이 걸려 있어 None을 넣을 수 없다(종전 코드는 여기서 항상
+    # IntegrityError로 죽었다). 검수 전에는 보관 랙이 정해지지 않으므로, 요청된 존의
+    # 검수 대기 버퍼 로케이션에 임시로 물려두고 검수 확정 시 실제 랙으로 옮긴다.
+    buffer_loc = get_or_create_location(db, zone=zone_code, rack="0", shelf="0")
+
     new_item = InventoryUsedItem(
         book_id=book.id,
-        location_id=None, # 선부착 단계: 미지정 (검수 대기 버퍼)
+        location_id=buffer_loc.id,  # 검수 대기 버퍼 (rack/shelf = 0/0)
         lpn_barcode=lpn_code,
         ubci_score=None, # 검수 전 미측정
         condition_grade="PENDING", # 검수 전 미확정
@@ -214,9 +247,13 @@ def assign_rack_location_after_inspection(
     # 기존 항목 업데이트 시에도 source_job_id / certificate_url / 검수 주체를 동기화한다.
     # HITL 오버라이드는 AI가 먼저 만들어둔 row를 덮어쓰므로, 여기서 갱신하지 않으면
     # 관리자가 최종 결재한 건도 계속 AI_AUTO로 남는다.
+    # [2026-08-06 수정] ubci_score도 함께 갱신한다 - 종전에는 신규 생성 경로만 점수를 기록해,
+    # 재검수로 점수가 바뀌어도 기존 row에는 옛 점수가 잔존했다 (예: 80점 row가 재검수 100점
+    # MINT 승인 후에도 "MINT / 80점"으로 표시되는 모순).
     item.inspection_source = inspection_source
     item.inspected_by = inspected_by
     item.inspected_at = now_kst()
+    item.ubci_score = ubci_score
     if source_job_id:
         item.source_job_id = source_job_id
     if certificate_url:

@@ -90,6 +90,19 @@ def resolve_inspector(item: Optional[Any], job: Optional[Any]) -> Dict[str, Any]
         "label": label,
     }
 
+# 끝 슬래시 유무를 모두 직접 받는다 (리다이렉트 금지).
+#
+# [수정 이력 2026-08-06] 이 엔드포인트는 `/inventory/` 하나만 등록되어 있어서, 슬래시 없이
+# 들어온 요청에 FastAPI가 307 리다이렉트를 응답했다. 문제는 그 Location이
+# **절대 URL(`http://localhost:8000/...`)** 이라는 점이다.
+#
+# 프론트는 `/api/*`를 Next rewrites로 프록시하는데 이 과정에서 끝 슬래시가 탈락한다.
+# 그 결과 외부(터널/다른 기기)에서 접속한 브라우저는 307을 따라 **접속자 본인 PC의
+# 8000 포트**로 향하게 되고(게다가 https 페이지에서 http라 mixed content 차단),
+# 요청이 조용히 실패해 **재고 목록이 0건으로 표시**됐다. DB에는 데이터가 멀쩡히 있었다.
+#
+# 프록시가 슬래시를 어떻게 다루든 무관하도록 두 경로를 모두 직접 서빙한다.
+@router.get("")
 @router.get("/")
 def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     """
@@ -131,10 +144,22 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
         })
 
     # 2. 중고/반품 검수 LPN 품목 (InventoryUsedItem 테이블) 조회
+    # [2026-08-06 수정] HITL 이관 건은 Zone Z(임시적재)에 실물 추적용 row만 있고 아직 사람이
+    # 등급을 확정하지 않은 상태인데, 필터 없이 전 row를 내보내 "HITL로 이관한다면서 재고
+    # 현황에 곧바로 편입되는" 모순이 보였다. 결재 대기(HITL_PENDING/HITL_REQUIRED) 건은
+    # 승인 대기(HITL) 대시보드가 전담하므로 재고 현황 목록에서는 제외한다.
+    # (item_status가 NULL인 레거시 row는 종전대로 노출 유지 - NOT IN의 NULL 삼단논리 주의)
+    from sqlalchemy import or_
     used_stmt = (
         select(InventoryUsedItem, Book, Location)
         .outerjoin(Book, InventoryUsedItem.book_id == Book.id)
         .outerjoin(Location, InventoryUsedItem.location_id == Location.id)
+        .where(
+            or_(
+                InventoryUsedItem.item_status.is_(None),
+                InventoryUsedItem.item_status.notin_(["HITL_PENDING", "HITL_REQUIRED"]),
+            )
+        )
     )
     used_results = db.exec(used_stmt).all()
     for item, book, loc in used_results:
@@ -393,7 +418,10 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
         "inspector": inspector,
         # 카테고리별 차등이 적용된 가격 산정 내역 (프론트는 렌더만 한다)
         "pricing": pricing,
-        "date": to_kst_str(item.created_at),
+        # [2026-08-06 수정] 상세/진단 타임라인의 기준 시각을 최초 입고(created_at)가 아니라
+        # 최종 검수 확정(inspected_at)으로 변경 - 재검수를 돌려도 화면 시각이 옛 입고 시각에
+        # 머물던 문제 교정 (inspected_at 미기록 레거시 row는 created_at 폴백).
+        "date": to_kst_str(item.inspected_at or item.created_at),
         # 컨테이너 절대경로가 아니라 브라우저가 실제로 열 수 있는 URL로 정규화해 내려준다.
         "image_urls": to_browser_image_urls(job.image_urls if job else []),
         "agent_logs": agent_logs,
