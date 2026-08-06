@@ -86,7 +86,7 @@ def main() -> None:
             "p95": round(secs[max(0, int(len(secs) * 0.95) - 1)], 2),
             "min": round(secs[0], 2),
             "max": round(secs[-1], 2),
-            "caveat": "created_at→updated_at 구간이라 큐 대기·HITL 대기 이전까지 포함. 시드 데이터 제외 필요 시 lpn NOT LIKE 'LPN-DEMO-%' 필터 재실행",
+            "caveat": "created_at→updated_at 구간이라 큐 대기·HITL 대기 이전까지 포함. 시드 데이터 제외 필요 시 lpn NOT LIKE 'LPN-260731-%' 필터 재실행",
         }
 
     # 3) 규모 지표

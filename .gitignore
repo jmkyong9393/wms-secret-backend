@@ -70,3 +70,8 @@ scratch_*.py
 app/experiment_data/
 # RAG 벡터 DB 빌드 산출물
 ai_knowledge_base/chroma_db/
+
+# Claude
+.claude
+# VLM 크롭 디버그 산출물 (WMS_SAVE_VLM_CROPS)
+app/ai/_vlm_crops/

@@ -3,8 +3,15 @@
 데모 영상 촬영용 원클릭 시딩 스크립트 (2026-08-04).
 
 실행:  .venv/Scripts/python.exe scripts/seed_demo_dataset.py
-반복 실행 안전(idempotent): '(데모)' / 'LPN-DEMO-' 마커가 붙은 이전 시드를 먼저 지우고 다시 심는다.
+반복 실행 안전(idempotent): '(데모)' / 'LPN-260731-' 마커가 붙은 이전 시드를 먼저 지우고 다시 심는다.
 실촬영 항목(입고 스캔, FDS 스캔, 주간 인사이트 생성 등)은 시드하지 않고 라이브로 남긴다.
+
+[2026-08-06 변경] LPN 형식을 운영과 동일한 `LPN-YYMMDD-{존}{순번3자리}`로 통일했다.
+종전 'LPN-DEMO-{일}{i}-{해시4}' 형식은 뒤 4자리가 순번이 아니어서 존·순번 파싱이 필요한
+화면과 채번 로직에서 예외를 탔다. 날짜를 과거 날짜 260731로 고정해 정상 운영 채번
+(오늘 날짜)과 절대 겹치지 않게 하고, 이 날짜가 종전 'DEMO' 문자열의 시드 마커 역할을
+그대로 이어받는다.
+Zone A는 조장 실촬영 전용으로 예약돼 있어 시드에서 제외한다(생성/실측 데이터 혼입 방지).
 
 시드 내용:
   1) 대시보드 배경 물량: 최근 7일 분산 중고 재고 + 완료 주문 (차트가 그림이 되도록)
@@ -14,8 +21,8 @@
   5) 이번 주 weekly_insights 캐시 삭제 (촬영 중 Insight Agent 라이브 생성 장면용)
 """
 import sys
-import uuid
 import random
+from collections import defaultdict
 from datetime import timedelta
 
 sys.path.insert(0, ".")
@@ -34,6 +41,19 @@ SAMPLE_IMAGES = [
 ]
 
 random.seed(20260804)  # 재실행 시 동일 데이터 (촬영 리허설 재현성)
+
+# 데모 시드 LPN 네임스페이스. 과거 날짜라 오늘 날짜로 채번하는 정상 운영과 겹치지 않는다.
+SEED_LPN_DATE = "260731"
+# Zone A는 조장 실촬영 전용이라 제외한다.
+SEED_LOCATIONS = [("B", "1", "1"), ("B", "2", "1"), ("C", "1", "1"), ("D", "1", "1")]
+
+_lpn_seq: dict[str, int] = defaultdict(int)
+
+
+def next_lpn(zone: str) -> str:
+    """`LPN-260731-B001` 형태로 존별 순번을 채번한다 (운영 채번과 동일 포맷)."""
+    _lpn_seq[zone] += 1
+    return f"LPN-{SEED_LPN_DATE}-{zone}{_lpn_seq[zone]:03d}"
 
 
 def get_or_create_location(s: Session, zone: str, rack: str, shelf: str) -> Location:
@@ -54,10 +74,10 @@ def main() -> None:
         # ---------- 0) 이전 데모 시드 정리 ----------
         s.exec(text("DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE customer_name LIKE '(데모)%')"))
         s.exec(text("DELETE FROM orders WHERE customer_name LIKE '(데모)%'"))
-        s.exec(text("DELETE FROM inventory_used_items WHERE lpn_barcode LIKE 'LPN-DEMO-%'"))
-        s.exec(text(
-            "DELETE FROM return_jobs WHERE agent_logs->>'lpn_barcode' LIKE 'LPN-DEMO-%'"
-        ))
+        s.exec(text("DELETE FROM inventory_used_items WHERE lpn_barcode LIKE :m"),
+               params={"m": f"LPN-{SEED_LPN_DATE}-%"})
+        s.exec(text("DELETE FROM return_jobs WHERE agent_logs->>'lpn_barcode' LIKE :m"),
+               params={"m": f"LPN-{SEED_LPN_DATE}-%"})
         iso = now.isocalendar()
         s.exec(text("DELETE FROM weekly_insights WHERE report_week = :w"),
                params={"w": f"{iso[0]}-W{iso[1]:02d}"})
@@ -69,21 +89,22 @@ def main() -> None:
         if len(books) < 4:
             print(f"!! 도서가 {len(books)}권뿐입니다. 먼저 Fast-Track으로 몇 권 입고해 주세요.")
             return
-        zones = [("A", "1", "2"), ("B", "1", "1"), ("B", "2", "1"), ("D", "1", "1")]
-        locs = [get_or_create_location(s, *z) for z in zones]
+        locs = [get_or_create_location(s, *z) for z in SEED_LOCATIONS]
 
         # ---------- 1) 7일 분산 중고 재고 + 완료 주문 ----------
         used_count, order_count = 0, 0
         for day in range(7):
             day_ts = now - timedelta(days=day, hours=random.randint(1, 8))
-            for i in range(random.randint(2, 4)):
+            for _ in range(random.randint(2, 4)):
                 b = random.choice(books)
                 score = random.choice([96, 92, 88, 85, 78, 72, 68])
                 grade = "MINT" if score >= 95 else "GOOD" if score >= 85 else "NORMAL"
+                # LPN의 존 문자는 실제 적재 로케이션과 일치해야 한다 (먼저 뽑고 파생)
+                loc = random.choice(locs)
                 s.add(InventoryUsedItem(
                     book_id=b.id,
-                    location_id=random.choice(locs).id,
-                    lpn_barcode=f"LPN-DEMO-{day}{i}-{uuid.uuid4().hex[:4].upper()}",
+                    location_id=loc.id,
+                    lpn_barcode=next_lpn(loc.zone),
                     ubci_score=score,
                     condition_grade=grade,
                     item_status="IN_STOCK",
@@ -115,7 +136,7 @@ def main() -> None:
                 ubci_score=score,
                 image_urls=SAMPLE_IMAGES[:2],
                 agent_logs={
-                    "lpn_barcode": f"LPN-DEMO-HIST-{i:02d}",
+                    "lpn_barcode": next_lpn(random.choice(locs).zone),
                     "suggested_grade": "GOOD" if approved else "REJECT",
                     "reason_code": "OK",
                     "supervisor_decision": "ISSUE_REPORT",
@@ -138,7 +159,7 @@ def main() -> None:
                 ubci_score=score,
                 image_urls=SAMPLE_IMAGES,
                 agent_logs={
-                    "lpn_barcode": f"LPN-DEMO-HITL-{idx:02d}",
+                    "lpn_barcode": next_lpn(random.choice(locs).zone),
                     "reason_code": "AWAITING_HUMAN_REVIEW",
                     "suggested_grade": "NORMAL",
                     "primary_reason_code": code,
@@ -164,7 +185,7 @@ def main() -> None:
         # 중고 order_item이 스캔 매칭할 IN_STOCK LPN 확보
         demo_used = s.exec(
             select(InventoryUsedItem)
-            .where(InventoryUsedItem.lpn_barcode.like("LPN-DEMO-%"),
+            .where(InventoryUsedItem.lpn_barcode.like(f"LPN-{SEED_LPN_DATE}-%"),
                    InventoryUsedItem.item_status == "IN_STOCK")
             .limit(2)
         ).all()
