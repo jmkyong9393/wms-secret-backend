@@ -79,13 +79,59 @@ def supervisor_node(state: WMSInspectionState) -> WMSInspectionState:
     reason = state.get("reason_code")                 # Critic Agent
     revision = state.get("revision_count", 0)         # Critic Agent
 
+    # 판독 커버리지: 전달된 촬영 컷 중 Vision이 실제로 판독한 컷이 몇 장인가.
+    image_count = len(state.get("image_paths") or [])
+    invalid_indexes = state.get("invalid_image_indexes") or []
+    valid_image_count = max(0, image_count - len(invalid_indexes))
+
     print(
         f"[Supervisor Manager] 3-Agent 보고 종합 수령 "
-        f"(Vision: 결함 {len(defects)}건/MINT={is_mint} | Policy: UBCI {ubci_score}점 | "
-        f"Critic: {reason}, 재검수 {revision}회)"
+        f"(Vision: 결함 {len(defects)}건/MINT={is_mint}/유효컷 {valid_image_count}of{image_count} | "
+        f"Policy: UBCI {ubci_score}점 | Critic: {reason}, 재검수 {revision}회)"
     )
 
     # --- 종합 판단 ---
+    # 0) [2026-08-06 프리즈 예외 승인] 판독 커버리지 게이트 - 최우선 검사.
+    #
+    #    사고 사례(LPN-260804-A009): Vision이 촬영 4컷 전부를 "도서 미식별"로 제외하자
+    #    (invalid_image_indexes=[0,1,2,3]) 결함이 0건이 되었고, Policy가 그 0건을 근거로
+    #    UBCI 100점 MINT를 산출해 자동 승인 + 보증서까지 발급됐다. 실물은 육안으로도
+    #    물젖음 주름이 보이는 도서였다.
+    #
+    #    기존 방어망(vision_failed)은 VLM **호출 실패**만 막는다. 이 건은 호출이 성공했고
+    #    구조화 응답도 정상이었으므로 전부 통과했다. 즉 "한 장도 못 읽었다"와
+    #    "다 읽었는데 흠이 없다"가 하위 노드에서는 똑같이 defects=[]로 표현되며,
+    #    그 둘을 구분할 수 있는 정보(image_paths ↔ invalid_image_indexes)는 오직 여기,
+    #    전 에이전트 보고를 종합하는 Supervisor에만 모인다.
+    #
+    #    프리즈 규정 "판독 실패 처리 원칙"(검수하지 못했다 ≠ 검수했더니 흠이 없다)의 집행부다.
+    #    LLM을 쓰지 않는 결정론적 규칙이므로 Supervisor의 기존 성격(규칙 기반 지휘 라우팅,
+    #    감사 추적 가능)도 그대로 유지된다.
+    if image_count > 0 and valid_image_count == 0:
+        decision = "ESCALATE_HUMAN"
+        rationale = (
+            f"판독 커버리지 미달 - 촬영 {image_count}장 전부가 도서 미식별 컷으로 제외되어 "
+            f"(invalid={invalid_indexes}) 실제로 판독된 컷이 0장이다. 결함 {len(defects)}건 / "
+            f"UBCI {ubci_score}점은 '무결점'이 아니라 '검수 불가'를 의미하므로 자동 확정을 "
+            f"차단하고 관리자 수동 검수로 이관 결정."
+        )
+        print(f"[Supervisor Manager] 지휘 결정: {decision} - {rationale}")
+        return {
+            "supervisor_decision": decision,
+            "supervisor_rationale": rationale,
+            # 판독 실패는 점수를 남기지 않는다 (프리즈 규정: ubci_score는 None으로 둔다).
+            # 관리자가 재촬영·재검수 후 확정하거나 HITL에서 직접 등급을 정한다.
+            "ubci_score": None,
+            # is_mint도 함께 내린다. 이걸 남겨두면 langgraph_wrapper가 final_grade를 "MINT"로
+            # 라벨링해 HITL 대시보드의 목표 등급 기본값이 MINT로 뜬다 - 판독 못 한 건을
+            # 관리자에게 MINT로 추천하는 셈이 된다.
+            "is_mint": False,
+            "auto_refund_eligible": False,
+            "reason_code": "NO_VALID_IMAGE_HITL",
+            "executed_agents": ["supervisor"],
+            "messages": [AIMessage(content=f"[Supervisor] {decision}: {rationale}")],
+        }
+
     # 1) HITL 이관: Critic이 애매성을 보고했거나(경계선 58~66점 / 최대 재시도 초과),
     #    재검수 루프가 한계에 도달한 경우. 자동 판정을 강행하지 않고 사람에게 넘긴다.
     if reason in ["MAX_RETRIES_AMBIGUOUS_HITL", "BOUNDARY_AMBIGUOUS_HITL", "HUMAN_REQUIRED"] or revision >= 2:

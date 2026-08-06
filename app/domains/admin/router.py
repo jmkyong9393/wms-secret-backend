@@ -29,6 +29,30 @@ class HitlOverrideRequest(BaseModel):
 class BulkOverridePayload(BaseModel):
     items: List[HitlOverrideRequest]
 
+
+def _hitl_special_notes(
+    agent_logs: Dict[str, Any],
+    item: "HitlOverrideRequest",
+    inspector: str,
+) -> str:
+    """HITL 결재 근거를 보증서 생성기에 넘길 특이사항 문장으로 조립한다.
+
+    자동 승인 건과 달리 HITL 건은 **사람이 최종 판단**했으므로, 그 사유와 코멘트가
+    보증서에 드러나야 한다. 기존 Vision 특이사항이 있으면 뒤에 덧붙인다.
+    """
+    parts = [f"관리자 수동 검수 확정 (검수자: {inspector})"]
+    if item.primaryReasonCode:
+        parts.append(f"판정 사유: {item.primaryReasonCode}")
+    if item.targetGrade:
+        parts.append(f"확정 등급: {item.targetGrade}")
+    comment = (item.reasonComment or "").strip()
+    if comment:
+        parts.append(f"검수자 의견: {comment}")
+    prior = (agent_logs.get("special_notes") or "").strip()
+    if prior:
+        parts.append(f"AI 판독 특이사항: {prior}")
+    return " / ".join(parts)
+
 class HitlTaskResponse(BaseModel):
     id: UUID
     book_id: UUID
@@ -117,8 +141,68 @@ def submit_hitl_override(
             job.status = JobStatusEnum.APPROVED
             # HITL 최종 결재 승인 시: 창고 보관 랙(Zone B-12-4 등) 위치 할당 및 재고(InventoryUsedItem) 편입
             from app.domains.inventory.service import assign_rack_location_after_inspection
+            from app.models.wms import clamp_ubci_score_to_grade
             target_grade = item.targetGrade or (job.agent_logs.get("suggested_grade") if job.agent_logs else "NORMAL")
+            # [2026-08-06 수정] 관리자가 등급을 하향/상향 확정하면 점수도 확정 등급의 공식
+            # 경계 구간으로 재산정한다. 종전에는 AI 산출 점수(예: 100)를 그대로 넘겨
+            # "UBCI 100점 (NORMAL 등급)" 모순 표기 + 동적 가격의 상태 보정이 MINT 기준으로
+            # 계산되는 문제가 있었다. 재산정은 보증서 생성보다 먼저 수행한다 (보증서 본문의
+            # 점수/등급 표기가 확정값을 따르도록).
+            job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, target_grade)
             lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or f"LPN-260728-A002"
+            # [2026-08-06 수정] HITL 승인 건의 보증서 본문을 생성한다.
+            #
+            # 종전에는 아래 cert_url 문자열만 만들어 재고에 저장했고, 그 URL이 가리키는
+            # 보증서 본문(job.agent_logs["certificate"])은 **생성된 적이 없었다.**
+            # 원인은 그래프 배선이다 - HITL로 이관되면 human_node에서 조기 종료되어
+            # report_agent를 타지 않는다(supervisor.py 주석 참조). 그 결과 HITL 승인 건은
+            # 상세/보증서 화면에서 링크는 있는데 내용이 없는 상태였다.
+            #
+            # 관리자가 입력한 사유 코드와 코멘트를 함께 넣어, 자동 승인 건과 달리
+            # **사람의 결재 근거가 보증서에 반영**되게 한다.
+            try:
+                agent_logs = job.agent_logs or {}
+                cert_state = {
+                    "ubci_score": job.ubci_score,
+                    "defects": agent_logs.get("defects") or [],
+                    "book_title": agent_logs.get("book_title") or "",
+                    "special_notes": _hitl_special_notes(agent_logs, item, hitl_inspector),
+                }
+                from app.ai.agents import build_certificate_document
+                cert_doc = build_certificate_document(cert_state)
+                cert_doc["cert_id"] = f"CERT-{datetime.now().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
+                cert_doc["issued_by"] = "HITL"
+                cert_doc["inspected_by"] = hitl_inspector
+                # [2026-08-06 수정] HITL 이관 건은 그래프가 human_node에서 조기 종료되어
+                # report_agent 노드를 타지 않으므로, 진단 기록(executed_agents)에 Report Agent가
+                # "미실행"으로 남는다. 그러나 보증서 생성(build_certificate_document)은 Report
+                # Agent와 동일한 작업이고 여기 HITL 결재 시점에 실제로 수행되었으므로, 실행
+                # 기록과 서술(report_text)을 함께 남겨 상세 화면 타임라인에 표시되게 한다.
+                # (그래프 재배선이 아니라 결재 시점 집행 기록 - 프리즈 규정의 판정/집행 분리 준수)
+                executed_agents = list(agent_logs.get("executed_agents") or [])
+                if "report_agent" not in executed_agents:
+                    executed_agents.append("report_agent")
+                # 결재 시점 타임스탬프를 별도 기록 - 진단 타임라인이 검수 시각 하나로 전 행을
+                # 찍지 않고, Report Agent 행만 실제 결재(보증서 생성) 시각을 표시할 수 있게 한다.
+                from app.models.wms import now_kst
+                report_generated_at = now_kst().strftime("%Y-%m-%d %H:%M:%S")
+                report_text = (
+                    f"HITL 결재 시점 보증서 생성 - {cert_doc['cert_id']} / 결재자 {hitl_inspector} / "
+                    f"최종 확정 UBCI {job.ubci_score}점 ({target_grade}) - 관리자 결재 근거가 보증서 특이사항에 반영됨"
+                )
+                job.agent_logs = {
+                    **agent_logs,
+                    "certificate": cert_doc,
+                    "executed_agents": executed_agents,
+                    "report_text": report_text,
+                    "report_generated_at": report_generated_at,
+                }
+                logger.info(f"HITL 보증서 생성 완료: {cert_doc['cert_id']} (job {job.id})")
+            except Exception as ex:
+                # 보증서 생성 실패가 결재 자체를 막지 않는다. 다만 조용히 넘어가면
+                # 다시 "링크만 있고 내용 없는" 상태가 되므로 반드시 로그를 남긴다.
+                logger.error(f"HITL 보증서 생성 실패 (job {job.id}): {ex}")
+
             try:
                 cert_code = str(job.id)[:6].upper()
                 cert_url = f"/certificate/CERT-20260728-{cert_code}"
@@ -127,7 +211,8 @@ def submit_hitl_override(
                     lpn_barcode=lpn,
                     final_grade=target_grade,
                     book_id=job.book_id,
-                    ubci_score=job.ubci_score or 85,
+                    # clamp_ubci_score_to_grade가 위에서 항상 확정 등급 구간의 정수를 보장한다
+                    ubci_score=job.ubci_score,
                     source_job_id=str(job.id),
                     certificate_url=cert_url,
                     inspection_source="HITL",
@@ -142,7 +227,11 @@ def submit_hitl_override(
             # 안 만들어져 실물 추적이 안 되고 있었다 - 자동 반려 경로(worker/tasks.py)와
             # 동일하게 Zone E 격리 랙 배정을 호출하도록 교정.
             from app.domains.inventory.service import assign_rack_location_after_inspection
+            from app.models.wms import clamp_ubci_score_to_grade
             lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or f"LPN-260728-A002"
+            # [2026-08-06 수정] 반려 확정도 승인 분기와 동일하게 점수를 확정 등급(REJECT) 구간으로
+            # 재산정한다 (검수 내역 목록의 점수-등급 모순 방지, 기존 or 40 임의 폴백 제거).
+            job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, "REJECT")
             try:
                 assign_rack_location_after_inspection(
                     session,
@@ -150,7 +239,7 @@ def submit_hitl_override(
                     final_grade="REJECT",
                     final_status="REJECTED",
                     book_id=job.book_id,
-                    ubci_score=job.ubci_score or 40,
+                    ubci_score=job.ubci_score,
                     source_job_id=str(job.id),
                     inspection_source="HITL",
                     inspected_by=hitl_inspector,

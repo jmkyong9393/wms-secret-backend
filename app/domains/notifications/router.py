@@ -102,6 +102,31 @@ def mark_all_notifications_read(
     return {"status": "success", "updated": len(rows)}
 
 
+@router.delete("", summary="알림 전체 삭제 (일괄 정리)")
+@router.delete("/", include_in_schema=False)
+def clear_all_notifications(
+    role: Optional[str] = Query(None, description="조회자 역할. 해당 역할 전용 알림 + 전체 공개 알림만 삭제"),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    [2026-08-06 신설] 알림 이력 일괄 삭제. "모두 읽음"은 배지만 끄고 목록은 계속 쌓이므로,
+    시연/운영 중 수백 건이 누적되면 정리할 수단이 없었다. 목록 조회(GET)와 동일한 role
+    필터를 적용해, 다른 역할 전용 알림까지 지우지 않는다.
+    """
+    stmt = select(Notification)
+    if role:
+        stmt = stmt.where(
+            (Notification.target_role == None) | (Notification.target_role == role)  # noqa: E711
+        )
+
+    rows = db.exec(stmt).all()
+    for n in rows:
+        db.delete(n)
+    db.commit()
+
+    return {"status": "success", "deleted": len(rows)}
+
+
 @router.get("/stream", summary="실시간 WMS 전역 알림 SSE 스트리밍")
 async def stream_notifications(request: Request):
     """
