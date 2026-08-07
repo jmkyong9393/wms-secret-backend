@@ -113,6 +113,14 @@ PAGE_REGION_MODEL = os.getenv("WMS_PAGE_REGION_MODEL", "yolov8x-worldv2.pt")
 PAGE_REGION_PROMPT = os.getenv("WMS_PAGE_REGION_PROMPT", "book")
 PAGE_REGION_CONF = float(os.getenv("WMS_PAGE_REGION_CONF", "0.10"))
 
+# WBF 융합 후 후보로 내보낼 최소 신뢰도.
+# [2026-08-06] 0.20 -> 0.40 상향. 모델별 conf(0.12/0.25/0.20)는 미탐 방지를 위해 낮게
+# 유지하되, 밖으로 나가는 후보만 이 선에서 끊는다. 0.20에서는 결함이 없는 배경·인쇄물에
+# 후보가 다수 찍혀(실측: 한 건에 15개) VLM 판독을 흐리고 HITL 검수자가 엉뚱한 좌표를
+# 확인하는 비용이 컸다. 실촬영에서 진짜 모서리 마모는 0.59로 잡혔다.
+# 환경변수로 되돌릴 수 있게 두어, 재현율이 필요한 실험에서는 낮춰 쓸 수 있다.
+CANDIDATE_MIN_CONF = float(os.getenv("WMS_YOLO_CANDIDATE_MIN_CONF", "0.40"))
+
 _page_region_model = None
 
 
@@ -554,6 +562,13 @@ class WBFBookDefectDetector:
             # 추론 영역(ROI 또는 풀프레임)의 대부분을 덮는 거대 박스는 결함이 아니라
             # 배경/도메인 오탐 신호이므로 폐기한다 (실물 결함이 책의 80%를 덮는 경우는 없다).
             if (box[2] - box[0]) * (box[3] - box[1]) > max_box_area_ratio:
+                continue
+
+            # 융합 후 신뢰도 하한. 모델별 conf는 낮게 두어 미탐을 막되(넓게 던지고),
+            # **밖으로 내보내는 후보**는 이 선에서 끊는다. 후보는 VLM 판독 힌트이자
+            # HITL 화면의 증거로 쓰이므로, 낮은 점수 잡음이 섞이면 판독을 흐리고
+            # 검수자가 엉뚱한 좌표를 확인하느라 시간을 쓴다.
+            if float(score) < CANDIDATE_MIN_CONF:
                 continue
 
             # ROI 크롭 좌표 -> 원본 이미지 정규화 좌표 역변환

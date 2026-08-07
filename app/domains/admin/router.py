@@ -25,6 +25,13 @@ class HitlOverrideRequest(BaseModel):
     reasonComment: Optional[str] = Field(None)
     defectCoordinates: Optional[List[Any]] = Field(default_factory=list)
     reviewDurationMs: Optional[int] = Field(0, description="관리자 체류 시간")
+    # --- BBox 채택/제외 (2026-08-07) ---
+    # 검수자가 화면에서 결함을 눌러 판정을 고친 결과. 인덱스는 agent_logs.defects /
+    # agent_logs.yolo_candidates 배열 기준이다.
+    excludedDefectIndexes: Optional[List[int]] = Field(
+        default_factory=list, description="오탐으로 판단해 감점에서 제외할 결함 인덱스")
+    adoptedCandidateIndexes: Optional[List[int]] = Field(
+        default_factory=list, description="AI가 놓쳤으나 실제 결함으로 채택할 YOLO 후보 인덱스")
 
 class BulkOverridePayload(BaseModel):
     items: List[HitlOverrideRequest]
@@ -135,7 +142,61 @@ def submit_hitl_override(
             continue # In a real app, maybe return error
             
         previous_state = job.status
-        
+
+        # --- 검수자의 BBox 채택/제외 반영 (2026-08-07) ---
+        # 판정을 지우지 않고 표식만 남긴다. 결함 목록에서 삭제하면 "관리자가 무엇을 보고
+        # 무엇을 뺐는지"가 사라져 감사 추적이 끊기고, 나중에 오탐/미탐 라벨로 재사용할 수도
+        # 없다. 감점 산정에서만 제외하고 화면에는 제외 표식과 함께 계속 보인다.
+        if item.excludedDefectIndexes or item.adoptedCandidateIndexes:
+            _logs = dict(job.agent_logs or {})
+            _defects = list(_logs.get("defects") or [])
+            _cands = list(_logs.get("yolo_candidates") or [])
+
+            for idx in (item.excludedDefectIndexes or []):
+                if 0 <= idx < len(_defects) and isinstance(_defects[idx], dict):
+                    _defects[idx] = {**_defects[idx], "hitl_excluded": True}
+
+            for idx in (item.adoptedCandidateIndexes or []):
+                if not (0 <= idx < len(_cands)) or not isinstance(_cands[idx], dict):
+                    continue
+                c = _cands[idx]
+                # 후보에는 감점 산정에 필요한 필드가 없다. ratio는 좌표에서 유도되므로
+                # (policy의 _effective_ratio) 여기서 지어내지 않고 비워 둔다.
+                _defects.append({
+                    "type": c.get("defect_type") or c.get("type") or "UNKNOWN",
+                    "ratio": 0,
+                    "confidence": c.get("confidence"),
+                    "bbox": c.get("bbox"),
+                    "image_index": c.get("image_index"),
+                    "hitl_adopted": True,
+                    "description": "관리자가 YOLO 후보에서 직접 채택",
+                })
+
+            _logs["defects"] = _defects
+            _logs["hitl_bbox_edit"] = {
+                "excluded": item.excludedDefectIndexes or [],
+                "adopted": item.adoptedCandidateIndexes or [],
+                "edited_by": hitl_inspector,
+            }
+            job.agent_logs = _logs
+
+            # 편집된 목록으로 점수를 다시 낸다. 관리자가 목표 등급을 명시했으면 그쪽이
+            # 우선이므로(아래 clamp) 여기서는 참고 점수만 갱신한다.
+            try:
+                from app.ai.agents import policy_agent
+                scored = [d for d in _defects if not d.get("hitl_excluded")]
+                recomputed = policy_agent({
+                    "defects": scored,
+                    "book_title": _logs.get("book_title") or "",
+                })
+                if recomputed.get("ubci_score") is not None:
+                    job.ubci_score = recomputed["ubci_score"]
+                    _logs["policy_text"] = recomputed.get("policy_text") or _logs.get("policy_text")
+                    _logs["hitl_bbox_edit"]["recomputed_score"] = recomputed["ubci_score"]
+                    job.agent_logs = _logs
+            except Exception as e:
+                logger.error(f"BBox 편집 후 점수 재산정 실패 (판정은 유지): {e}")
+
         # Determine new status based on decision
         if item.decision.startswith("APPROVE"):
             job.status = JobStatusEnum.APPROVED
@@ -370,6 +431,15 @@ def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
 
     if not job.image_urls:
         raise BadRequestException("No images found for this job.")
+
+    # [2026-08-06] 관리자 결재 대기 건을 재검수할 때는 "HITL 잠금"을 세운다.
+    # 재검수는 일반 입고와 같은 process_inspection을 태우므로, 같은 모델이 이번엔 APPROVE로
+    # 결론내면 사람 결재 없이 재고에 편입돼 버린다. HITL 이관은 "AI 판단으로 확정 불가"라는
+    # 판정이므로, 같은 판정자가 스스로 그것을 뒤집게 두면 이관이 무의미해진다.
+    # 판정(점수·결함)은 최신 재판독으로 갱신하되 집행만 막는다 (워커가 이 플래그를 읽는다).
+    was_hitl = str(job.status) == JobStatusEnum.HITL_REQUIRED.value
+    if was_hitl:
+        job.agent_logs = {**(job.agent_logs or {}), "hitl_locked": True}
 
     job.status = JobStatusEnum.PENDING.value
     job.retry_count = (job.retry_count or 0) + 1
