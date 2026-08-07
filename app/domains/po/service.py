@@ -29,7 +29,7 @@ class POService:
       "발주 승인 즉시 MINT 중고 LPN 생성"이던 기존 오류 경로는 제거되었다.
     """
 
-    SAFETY_STOCK_THRESHOLD = 15  # 저재고 스캔 기준 (신품+중고 합산 가용 재고)
+    SAFETY_STOCK_THRESHOLD = 5  # 저재고 스캔 기준 (신품+중고 합산 가용 재고)
     SCAN_LIMIT = 8               # 스캔 1회당 최대 제안 생성 수 (LLM 비용 상한)
 
     # ------------------------------------------------------------------
@@ -161,6 +161,32 @@ class POService:
             dismissed.append(str(proposal.id))
         db.commit()
         return {"status": "success", "dismissedCount": len(dismissed), "skipped": skipped}
+
+    def delete_proposals(self, db: Session, proposal_ids: List[str]) -> Dict[str, Any]:
+        """
+        결재가 끝난 제안 카드를 보드에서 삭제한다.
+
+        PENDING 카드는 삭제하지 않는다. 결재 대기 건을 지우면 승인도 기각도 아닌 채로
+        기록이 사라져, 왜 발주하지 않았는지 설명할 근거가 남지 않는다. 보드에서 치우려면
+        먼저 기각(DISMISSED) 처리해야 한다.
+        """
+        deleted, skipped = [], []
+        for pid in proposal_ids:
+            try:
+                parsed = UUID(pid)
+            except (ValueError, TypeError):
+                raise BadRequestException(f"Invalid proposal id format: {pid}")
+
+            proposal = db.get(OrderProposal, parsed)
+            if not proposal or proposal.status == "PENDING":
+                skipped.append(pid)
+                continue
+
+            db.delete(proposal)
+            deleted.append(pid)
+
+        db.commit()
+        return {"status": "success", "deletedCount": len(deleted), "skipped": skipped}
 
     def _get_pending(self, db: Session, proposal_id: str) -> Optional[OrderProposal]:
         try:

@@ -63,13 +63,29 @@ def dismiss_proposals(
     return po_service.dismiss_proposals(db, req.proposal_ids, decided_by=_inspector_label(current_admin))
 
 
+@router.post("/proposals/delete")
+def delete_proposals(
+    req: ProposalDecisionRequest,
+    db: Session = Depends(get_db),
+    current_admin=Depends(admin_only),
+):
+    """
+    결재 완료(APPROVED/DISMISSED) 카드를 보드에서 삭제한다. PENDING 카드는 거부한다.
+
+    DELETE가 아니라 POST인 것은 본문에 id 배열을 담아 여러 건을 한 번에 정리하기 위함이며,
+    approve/dismiss와 요청 형태를 맞춘다.
+    """
+    return po_service.delete_proposals(db, req.proposal_ids)
+
+
 @router.post("/proposals/scan")
 def scan_safety_stock(
     db: Session = Depends(get_db),
     current_admin=Depends(admin_only),
 ):
     """
-    저재고 수동 스캔 트리거. 가용 재고(신품+중고)가 안전선(15권) 미만인 도서에 대해
-    Restock 판정 그래프를 실행해 PENDING 제안 카드를 생성한다 (1회 최대 8건).
+    저재고 수동 스캔 트리거. 가용 재고(신품+중고)가 안전선(POService.SAFETY_STOCK_THRESHOLD)
+    미만인 도서에 대해 Restock 판정 그래프를 실행해 PENDING 제안 카드를 생성한다
+    (1회 최대 POService.SCAN_LIMIT건).
     """
     return po_service.scan_safety_stock(db)
