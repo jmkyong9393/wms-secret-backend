@@ -2,7 +2,7 @@
 """
 LPN 오연결 복구 — 검수이력이 '다른 도서'의 재고 LPN을 가리키는 건을 끊어낸다.
 
-실행:  docker exec wms-api python app/scripts/repair_lpn_collision.py
+실행:  docker exec wms-secret-api python app/scripts/repair_lpn_collision.py
 
 [원인]
 `generate_lpn()`이 존 문자와 순번을 모두 난수로 뽑고 중복 검사를 하지 않았다.

@@ -1,7 +1,7 @@
 """
 ====================================================================
 [Nexus 프로젝트 ver 2.6.0.5 AWS S3 다이렉트 업로드 명세 수록 스크립트]
-1. PM_정답지_백업 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.5 업데이트:
+1. 개인개발가이드 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.5 업데이트:
    - AWS S3 / CloudFront Pre-signed URL 다이렉트 업로드 (POST /api/v1/inbound/upload-presigned-url)
    - 모바일 카메라 촬영 이미지 엣지 단 Canvas 리사이징 ➔ S3 버킷 다이렉트 업로드 파이프라인
 2. WMS_docs 이원화 배포 자동 복사 동기화
@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 

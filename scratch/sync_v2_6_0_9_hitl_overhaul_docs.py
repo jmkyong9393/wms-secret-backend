@@ -1,7 +1,7 @@
 """
 ====================================================================
 [Nexus 프로젝트 ver 2.6.0.9 HITL 관제 센터 디자인 전면 리팩토링 수록]
-1. PM_정답지_백업 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.9 업데이트:
+1. 개인개발가이드 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.9 업데이트:
    - HITL 수동 검수 관제 센터 전면 디자인 개편 (/admin/inspections & /admin/hitl)
    - Bounding Box 결함 스캔 오버레이, 4대 AI 에이전트 교차 검증 투표 매트릭스
 2. WMS_docs 이원화 배포 자동 복사 동기화
@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 

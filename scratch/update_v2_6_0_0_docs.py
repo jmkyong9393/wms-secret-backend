@@ -1,7 +1,7 @@
 """
 ====================================================================
 [ver 2.6.0.0 마스터 문서 동기화 & 백업 스크립트]
-1. PM_정답지_백업 내 4대 마스터 문서 ver 2.6.0.0 업데이트:
+1. 개인개발가이드 내 4대 마스터 문서 ver 2.6.0.0 업데이트:
    - wms-ai-training/runs/ 경로 일원화 내역 반영
    - stage2_doodle_ocr_dataset (10,000장 손글씨 OCR 데이터셋) 명세 반영
    - yolov8_doodle_ocr.pt 독립 모델 연동 명세 반영
@@ -14,7 +14,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 archive_dir.mkdir(exist_ok=True)
@@ -82,7 +82,7 @@ def append_or_update(filepath, new_section, version_str="v2.6.0.0"):
     else:
         print(f"[Already Updated] {filepath.name} has {version_str}")
 
-# PM_정답지_백업 문서 업데이트
+# 개인개발가이드 문서 업데이트
 append_or_update(pm_dir / 'YOLO_Model_History_Internal.md', v26_yolo_section)
 append_or_update(pm_dir / 'YOLOv8_Recall_Optimization_Report.md', v26_yolo_section)
 append_or_update(pm_dir / 'YOLOv8_모델_학습결과_분석보고서.md', v26_yolo_section)

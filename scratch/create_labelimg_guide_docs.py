@@ -1,6 +1,6 @@
 import os
 
-pm_file = r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업\labelImg_Auto_Labeling_Guide.md'
+pm_file = r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드\labelImg_Auto_Labeling_Guide.md'
 wms_file = r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs\labelImg_Auto_Labeling_Guide.md'
 
 doc_content = """# labelImg 연동 YOLOv8 반자동 라벨링(Pre-Annotation) 파이프라인 가이드

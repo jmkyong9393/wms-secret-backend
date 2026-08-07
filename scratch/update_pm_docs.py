@@ -1,8 +1,8 @@
 """
 ====================================================================
-[Strict PM_정답지_백업 & WMS_docs 문서 동기화 및 백업 스크립트]
+[Strict 개인개발가이드 & WMS_docs 문서 동기화 및 백업 스크립트]
 1. 원본 문서 archive 백업 (2026-07-27 타임스탬프)
-2. PM_정답지_백업 내 3대 핵심 보고서 버전 2.4.0.0 최신화
+2. 개인개발가이드 내 3대 핵심 보고서 버전 2.4.0.0 최신화
    - YOLO_Model_History_Internal.md
    - YOLOv8_Recall_Optimization_Report.md
    - YOLOv8_모델_학습결과_분석보고서.md
@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 
 archive_dir = pm_dir / 'archive'

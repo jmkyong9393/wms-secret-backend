@@ -1,7 +1,7 @@
 """
 ====================================================================
 [Nexus 프로젝트 ver 2.6.0.8 세션 자동 로그아웃 명세 수록 스크립트]
-1. PM_정답지_백업 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.8 업데이트:
+1. 개인개발가이드 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.8 업데이트:
    - 탭/브라우저 종료 및 웹사이트 이탈 시 자동 로그아웃 파이프라인 (SessionAutoLogout.tsx)
    - sessionStorage 기반 Jotai userAtom 및 beforeunload/pagehide 이벤트 수신 쿠키/토큰 파기 로직
 2. WMS_docs 이원화 배포 자동 복사 동기화
@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 

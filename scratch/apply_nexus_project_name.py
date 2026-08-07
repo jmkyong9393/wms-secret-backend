@@ -2,7 +2,7 @@
 ====================================================================
 [프로젝트명 Nexus 공식적용 및 문서 업데이트 스크립트]
 - 프로젝트명을 "Nexus" (Project Nexus / Nexus WMS)로 전면 적용
-- PM_정답지_백업 및 WMS_docs 전체 문서 갱신
+- 개인개발가이드 및 WMS_docs 전체 문서 갱신
 ====================================================================
 """
 
@@ -10,7 +10,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 

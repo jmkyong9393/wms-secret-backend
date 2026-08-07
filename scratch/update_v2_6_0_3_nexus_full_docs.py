@@ -1,7 +1,7 @@
 """
 ====================================================================
 [Nexus 프로젝트 ver 2.6.0.3 마스터 문서 종합 동기화 & 백업 스크립트]
-1. PM_정답지_백업 내 4대 마스터 문서 ver 2.6.0.3 업데이트:
+1. 개인개발가이드 내 4대 마스터 문서 ver 2.6.0.3 업데이트:
    - Nexus 프로젝트 풀스택 아키텍처 (재고/출고 도메인, 3D Bin Packing, CJ대한통운 송장 자동 발급) 명세
    - 50x30mm 열전사 라벨 프린트 (LpnPrintLabel.tsx) & 동적 QR Web URL (/lpn/{lpn_id})
    - 역할 기반 이원화 뷰 (WORKER 물류 뷰 vs GUEST AI UBCI 품질 보증서) & Admin [🛡️ 고객용 보증서 미리보기] 기능 명세
@@ -14,7 +14,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 archive_dir.mkdir(exist_ok=True)
@@ -75,7 +75,7 @@ def update_doc_content_v2603(filepath, new_section, version_tag="v2.6.0.3"):
         f.write(content)
     print(f"[Updated Nexus Project] {filepath.name} with {version_tag}")
 
-# PM_정답지_백업 문서 갱신
+# 개인개발가이드 문서 갱신
 update_doc_content_v2603(pm_dir / 'YOLO_Model_History_Internal.md', v2603_nexus_section)
 update_doc_content_v2603(pm_dir / 'YOLOv8_Recall_Optimization_Report.md', v2603_nexus_section)
 update_doc_content_v2603(pm_dir / 'YOLOv8_모델_학습결과_분석보고서.md', v2603_nexus_section)

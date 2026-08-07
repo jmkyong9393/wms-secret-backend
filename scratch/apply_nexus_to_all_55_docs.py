@@ -1,7 +1,7 @@
 """
 ====================================================================
-[PM_정답지_백업 내 50여 개 전체 문서 Nexus 프로젝트명 일괄 적용 및 WMS_docs 동기화 스크립트]
-1. PM_정답지_백업 내 모든 .md 문서 원본을 archive 폴더에 2026-07-27_..._pre_nexus_all.md 로 백업
+[개인개발가이드 내 50여 개 전체 문서 Nexus 프로젝트명 일괄 적용 및 WMS_docs 동기화 스크립트]
+1. 개인개발가이드 내 모든 .md 문서 원본을 archive 폴더에 2026-07-27_..._pre_nexus_all.md 로 백업
 2. 모든 .md 문서에 "Nexus" (Nexus AI Smart WMS Platform) 프로젝트 공식 명칭 및 장문경 소유자 정보 반영
 3. WMS_docs (팀원 배포용) 이원화 자동 동기화 마감
 ====================================================================
@@ -11,14 +11,14 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 archive_dir.mkdir(exist_ok=True)
 
-# 1. PM_정답지_백업 내 모든 .md 파일 탐색
+# 1. 개인개발가이드 내 모든 .md 파일 탐색
 all_md_files = list(pm_dir.glob('*.md'))
-print(f"[FOUND] Total {len(all_md_files)} markdown files under PM_정답지_백업")
+print(f"[FOUND] Total {len(all_md_files)} markdown files under 개인개발가이드")
 
 nexus_header_badge = """
 > **프로젝트 공식 명칭**: Nexus (Nexus AI Smart WMS Platform)  

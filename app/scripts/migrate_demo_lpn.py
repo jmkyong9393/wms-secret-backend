@@ -2,7 +2,7 @@
 """
 비운영 LPN 형식 통일 — 운영 포맷을 벗어난 모든 LPN을 'LPN-260731-{존}{순번3자리}'로 재채번.
 
-실행:  docker exec wms-api python app/scripts/migrate_demo_lpn.py
+실행:  docker exec wms-secret-api python app/scripts/migrate_demo_lpn.py
 
 [배경]
 정규 형식은 `LPN-YYMMDD-{존}{순번3자리}`(예: LPN-260806-B001)인데, 시드·테스트 과정에서

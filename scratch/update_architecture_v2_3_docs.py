@@ -1,6 +1,6 @@
 import os
 
-pm_file = r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업\LangGraph_MultiAgent_Vision_Architecture_Internal.md'
+pm_file = r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드\LangGraph_MultiAgent_Vision_Architecture_Internal.md'
 wms_file = r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs\LangGraph_MultiAgent_Vision_Architecture.md'
 
 pm_content = """# LangGraph 기반 Supervisor Multi-Agent 도서 비전 검수 시스템 통합 설계 명세서

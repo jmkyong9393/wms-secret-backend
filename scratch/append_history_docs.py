@@ -1,6 +1,6 @@
 """
 ====================================================================
-[히스토리 누적 연쇄 보존 및 PM_정답지_백업 / WMS_docs 최신화 스크립트]
+[히스토리 누적 연쇄 보존 및 개인개발가이드 / WMS_docs 최신화 스크립트]
 - 이전 모든 버전(v1.0 ~ v2.3)의 상세 원문 내역을 100% 온전히 보존한 채,
   v2.4.0.0 개선 사항 및 향후 진행 수순을 연쇄 누적(Stacking) 방식으로 확장 기록합니다.
 ====================================================================
@@ -10,7 +10,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 arc_dir = pm_dir / 'archive'
 

@@ -1,7 +1,7 @@
 import os
 import shutil
 
-pm_dir = r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업'
+pm_dir = r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드'
 wms_dir = r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs'
 
 pm_archive = os.path.join(pm_dir, 'archive')
