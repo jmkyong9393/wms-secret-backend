@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends
-from typing import Dict, List, Any
-from datetime import timedelta
+from fastapi import APIRouter, Depends, Query
+from typing import Dict, List, Any, Optional
+from datetime import datetime, timedelta
+from sqlalchemy import or_
 from sqlmodel import Session, select, func
 from app.db.session import get_db
-from app.models.wms import ReturnJob, InventoryUsedItem, Order, Book, JobStatusEnum, ubci_grade_from_score
+from app.models.wms import (
+    ReturnJob, InventoryUsedItem, Inventory, Order, Book, JobStatusEnum, ubci_grade_from_score,
+)
 from app.core.security import RoleChecker, UserRoleEnum
 from app.models.wms import now_kst
 
@@ -75,14 +78,32 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     seven_days_ago = now_kst() - timedelta(days=7)
 
-    # 등급별 집계 (ubci_score -> UBCI_Specification_v2.0.0.0.md 공식 경계값 기준 버켓팅)
+    # 보유 중고 재고의 등급 분포 (UBCI_Specification_v2.0.0.0.md 공식 경계값 기준 버켓팅).
+    #
+    # 검수 이력(return_jobs)이 아니라 재고를 센다. 파이프라인을 태운 건만 세면 이관·시드
+    # 등 다른 경로로 들어온 재고가 빠져 "보유 재고의 품질 구성"을 나타내지 못한다.
+    # 신품 Fast-track은 무검수 입고라 UBCI 점수가 없으므로 이 분포에 포함되지 않는다.
+    #
+    # condition_grade 문자열이 아니라 ubci_score로 버켓팅한다. 레거시 행에 'A'/'B' 같은
+    # 비표준 등급 값이 남아 있어 문자열로 세면 등급 축이 깨진다.
     score_rows = session.exec(
-        select(ReturnJob.ubci_score).where(ReturnJob.ubci_score.is_not(None))
+        select(InventoryUsedItem.ubci_score).where(
+            InventoryUsedItem.ubci_score.is_not(None),
+            or_(
+                InventoryUsedItem.item_status.is_(None),
+                InventoryUsedItem.item_status.notin_(
+                    ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
+                ),
+            ),
+        )
     ).all()
     grade_counts = {"MINT": 0, "GOOD": 0, "NORMAL": 0, "REJECT": 0}
     for score in score_rows:
         grade_counts[ubci_grade_from_score(score)] += 1
 
+    # 신품 Fast-track은 무검수 입고라 UBCI 점수가 없고, 수량 단위도 다르다(권수 vs LPN 건수).
+    # 같은 파이에 넣으면 신품 물량이 등급 조각을 압도해 등급 구성을 읽을 수 없다.
+    # 신품/중고 비교는 카테고리별 누적 막대가 담당한다.
     ubci_grade_data = [
         {"name": "MINT (95~100점)", "value": grade_counts["MINT"], "color": "#10b981"},
         {"name": "GOOD (85~94점)", "value": grade_counts["GOOD"], "color": "#3b82f6"},
@@ -117,15 +138,46 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
             "outbound": outbound_count,
         })
 
-    # 카테고리별 도서 종수 실집계
-    category_rows = session.exec(
-        select(Book.category_type, func.count(Book.id)).group_by(Book.category_type)
+    # 카테고리별 실재고 보유 수량 집계 (중고 / 신품 분리).
+    #
+    # 도서 마스터(Book) 종수가 아니라 실제로 창고에 있는 수량을 센다. 재고가 0인
+    # 카테고리도 마스터에는 존재하므로, 종수를 세면 보유 현황이 부풀려진다.
+    #   - 중고: LPN 단위 1권 = 1행. 검수·결재 대기 건은 아직 적재 전이라 제외한다.
+    #   - 신품: Fast-track 입고분으로 수량(quantity) 합계.
+    used_rows = session.exec(
+        select(Book.category_type, func.count(InventoryUsedItem.id))
+        .join(Book, InventoryUsedItem.book_id == Book.id)
+        .where(
+            or_(
+                InventoryUsedItem.item_status.is_(None),
+                InventoryUsedItem.item_status.notin_(
+                    ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
+                ),
+            )
+        )
+        .group_by(Book.category_type)
     ).all()
-    palette = ["#10b981", "#6366f1", "#f59e0b", "#ec4899", "#8b5cf6", "#3b82f6", "#ef4444"]
-    category_data = [
-        {"name": category or "GENERAL", "count": count, "fill": palette[idx % len(palette)]}
-        for idx, (category, count) in enumerate(category_rows)
-    ]
+
+    new_rows = session.exec(
+        select(Book.category_type, func.coalesce(func.sum(Inventory.quantity), 0))
+        .join(Book, Inventory.book_id == Book.id)
+        .group_by(Book.category_type)
+    ).all()
+
+    totals: Dict[str, Dict[str, int]] = {}
+    for category, count in used_rows:
+        totals.setdefault(category or "GENERAL", {"used": 0, "new": 0})["used"] += int(count or 0)
+    for category, qty in new_rows:
+        totals.setdefault(category or "GENERAL", {"used": 0, "new": 0})["new"] += int(qty or 0)
+
+    category_data = sorted(
+        (
+            {"name": name, "used": v["used"], "new": v["new"], "count": v["used"] + v["new"]}
+            for name, v in totals.items()
+        ),
+        key=lambda r: r["count"],
+        reverse=True,
+    )
 
     return {
         "volume_data": volume_data,
@@ -134,45 +186,38 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     }
 
 @router.get("/logs")
-def get_dashboard_logs(session: Session = Depends(get_db)) -> List[Dict[str, Any]]:
+def get_dashboard_logs(
+    limit: int = Query(30, ge=1, le=100),
+    since: Optional[datetime] = Query(
+        None,
+        description="이 시각 이후 생성된 건만 반환. 화면의 로그 비우기가 기준 시각을 넘겨 쓴다.",
+    ),
+    session: Session = Depends(get_db),
+) -> List[Dict[str, Any]]:
     """
-    최근 발생한 재고 입/출고 및 AI 비전 검수 트랜잭션 실시간 DB 로그
+    최근 AI 비전 검수 트랜잭션 로그 (return_jobs 원장, 최신순).
+
+    `since`는 화면 표시를 자르기 위한 값일 뿐 원장을 지우지 않는다. 검수 이력은
+    매입가 산정 근거이자 감사 대상이므로 조회 API가 삭제 수단을 제공하지 않는다.
     """
-    recent_jobs = session.exec(select(ReturnJob).order_by(ReturnJob.created_at.desc()).limit(10)).all()
+    stmt = select(ReturnJob, Book).outerjoin(Book, ReturnJob.book_id == Book.id)
+    if since is not None:
+        stmt = stmt.where(ReturnJob.created_at > since)
+
+    rows = session.exec(stmt.order_by(ReturnJob.created_at.desc()).limit(limit)).all()
 
     logs = []
-    for job in recent_jobs:
-        # [수정 이력] final_grade 컬럼 없음 -> ubci_score 기반 등급 산출로 교정.
-        # JobStatusEnum.COMPLETED도 존재하지 않는 멤버였음 -> APPROVED로 교정.
-        grade = ubci_grade_from_score(job.ubci_score) if job.ubci_score is not None else "PENDING"
+    for job, book in rows:
+        grade = ubci_grade_from_score(job.ubci_score) if job.ubci_score is not None else None
         logs.append({
             "id": str(job.id),
             "transaction_type": "INBOUND_INSPECTION" if job.status == JobStatusEnum.APPROVED else "HITL_PENDING",
-            "book_title": f"도서 검수 #{str(job.id)[:8]}",
+            # 실제 도서명을 쓴다. 도서를 특정하지 못한 건은 지어내지 않고 null로 둔다.
+            "book_title": book.title if book else None,
             "condition_grade": grade,
             "quantity_change": 1,
-            "date": job.created_at.isoformat() if job.created_at else now_kst().isoformat()
+            "date": job.created_at.isoformat() if job.created_at else None,
         })
-
-    if not logs:
-        logs = [
-            {
-                "id": "uuid-1",
-                "transaction_type": "INBOUND",
-                "book_title": "총균쇠 (제레드 다이아몬드)",
-                "condition_grade": "MINT",
-                "quantity_change": 50,
-                "date": now_kst().isoformat()
-            },
-            {
-                "id": "uuid-2",
-                "transaction_type": "OUTBOUND",
-                "book_title": "사피엔스 (유발 하라리)",
-                "condition_grade": "MINT",
-                "quantity_change": -2,
-                "date": now_kst().isoformat()
-            }
-        ]
 
     return logs
 
@@ -340,7 +385,6 @@ def get_ai_quality_stats(session: Session = Depends(get_db)) -> Dict[str, int]:
     for score in score_rows:
         counts[ubci_grade_from_score(score)] += 1
 
-    if sum(counts.values()) == 0:
-        counts = {"MINT": 45, "GOOD": 30, "NORMAL": 20, "REJECT": 5}
-
+    # 집계 결과가 0건이면 0건 그대로 반환한다. 표본이 없을 때 임의 분포로 채우면
+    # 화면이 검수 실적을 지어내게 된다.
     return counts
