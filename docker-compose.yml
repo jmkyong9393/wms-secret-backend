@@ -1,7 +1,7 @@
 services:
   db:
     image: postgres:15-alpine
-    container_name: wms-postgres
+    container_name: wms-secret-postgres
     restart: always
     environment:
       POSTGRES_USER: admin
@@ -20,7 +20,7 @@ services:
 
   chroma-server:
     image: chromadb/chroma:1.5.9
-    container_name: wms-chroma
+    container_name: wms-secret-chroma
     restart: always
     ports:
       - "8001:8000"
@@ -47,7 +47,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: wms-redis
+    container_name: wms-secret-redis
     restart: always
     ports:
       - "6379:6379"
@@ -59,7 +59,7 @@ services:
 
   api:
     build: .
-    container_name: wms-api
+    container_name: wms-secret-api
     restart: always
     depends_on:
       db:
@@ -86,7 +86,7 @@ services:
 
   worker:
     build: .
-    container_name: wms-worker
+    container_name: wms-secret-worker
     restart: always
     depends_on:
       db:
@@ -112,7 +112,7 @@ services:
   # flower 컨테이너 추가
   flower:
     image: mher/flower
-    container_name: wms-flower
+    container_name: wms-secret-flower
     restart: always
     depends_on:
       redis:
