@@ -66,6 +66,11 @@ class WMSInspectionState(TypedDict):
     # 이미 확정된 감점의 출처를 규정집에서 찾아 붙인 grounding 정보다.
     # [{defect_type, chunk_id, doc_title, clause_ref, authority_level, excerpt, similarity}]
     deduction_basis: Optional[list]
+    # 증거 대조 검증이 보고된 결함을 **전건** 오탐으로 지목해 감점 근거가 하나도 남지 않은
+    # 상태. 이때 감점 0 → UBCI 100 → S급(MINT)이 되는데, 이는 "흠이 없다"가 아니라
+    # "판독하지 못했다"이므로 무결점 등급을 주면 안 된다. Report Agent가 "결함 없음" 문구를
+    # 쓰지 못하게 막고 Critic이 HITL로 이관하는 근거로 쓴다. (vision_failed와 같은 계열의 플래그)
+    score_unverified: Optional[bool]
 
     # 3. Critic Agent (교차 검증 및 환각 방어)
     reason_code: Optional[ReasonCode] # 검증 결과 코드 (OK면 통과)
