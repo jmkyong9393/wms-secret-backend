@@ -1,7 +1,7 @@
 """
 ====================================================================
 [ver 2.6.0.2 마스터 문서 종합 동기화 & 백업 스크립트]
-1. PM_정답지_백업 내 4대 마스터 문서 ver 2.6.0.2 정밀 업데이트:
+1. 개인개발가이드 내 4대 마스터 문서 ver 2.6.0.2 정밀 업데이트:
    - GPU VRAM 7.71G(96.4%) 실측 피크 스파이크 분석 및 batch=8 (VRAM 3.2G 100% OOM Safe) 확정 내역 반영
    - 동적 QR 코드 Dynamic Web URL (http://.../lpn/{lpn_id}) 및 이원화 뷰 (WORKER 물류 뷰 vs GUEST AI UBCI 품질 보증서) 설계 반영
    - [🛡️ 고객용 보증서 미리보기] Admin/Master 1초 미리보기 기능 명세 반영
@@ -14,7 +14,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 archive_dir.mkdir(exist_ok=True)
@@ -85,7 +85,7 @@ def update_doc_content(filepath, new_section, version_tag="v2.6.0.2"):
         f.write(content)
     print(f"[Updated] {filepath.name} with {version_tag}")
 
-# PM_정답지_백업 문서 갱신
+# 개인개발가이드 문서 갱신
 update_doc_content(pm_dir / 'YOLO_Model_History_Internal.md', v2602_yolo_section)
 update_doc_content(pm_dir / 'YOLOv8_Recall_Optimization_Report.md', v2602_yolo_section)
 update_doc_content(pm_dir / 'YOLOv8_모델_학습결과_분석보고서.md', v2602_yolo_section)

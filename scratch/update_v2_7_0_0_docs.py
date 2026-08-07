@@ -1,7 +1,7 @@
 """
 ====================================================================
 [ver 2.7.0.0 마스터 문서 동기화 & 백업 스크립트]
-1. PM_정답지_백업 내 4대 마스터 문서 ver 2.7.0.0 업데이트:
+1. 개인개발가이드 내 4대 마스터 문서 ver 2.7.0.0 업데이트:
    - GPU VRAM 피크 8.27G 분석 및 batch=16 OOM-Safe 스윗스팟 확정 내역 반영
    - fliplr=0.0 (거울 반전 100% 제거) / mixup=0.0 / mosaic=0.0 / rect=True / imgsz=640 최적화 명세 반영
 2. archive 폴더에 2026-07-27_..._ver2.6.0.0.md 백업 보존
@@ -13,7 +13,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 archive_dir.mkdir(exist_ok=True)
@@ -78,7 +78,7 @@ def append_or_update(filepath, new_section, version_str="v2.7.0.0"):
     else:
         print(f"[Already Updated] {filepath.name} has {version_str}")
 
-# PM_정답지_백업 문서 업데이트
+# 개인개발가이드 문서 업데이트
 append_or_update(pm_dir / 'YOLO_Model_History_Internal.md', v27_yolo_section)
 append_or_update(pm_dir / 'YOLOv8_Recall_Optimization_Report.md', v27_yolo_section)
 append_or_update(pm_dir / 'YOLOv8_모델_학습결과_분석보고서.md', v27_yolo_section)

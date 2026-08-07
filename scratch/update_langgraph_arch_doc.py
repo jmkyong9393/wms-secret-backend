@@ -4,7 +4,7 @@
 1. archive 백업 (2026-07-27 타임스탬프)
 2. ver 2.4.0.0 2-Stage 비전 아키텍처 및 결정론적 YOLOv8 수순 누적 반영
 3. Mermaid 아키텍처 다이어그램 동기화
-4. PM_정답지_백업 -> WMS_docs 이중 배포 동기화
+4. 개인개발가이드 -> WMS_docs 이중 배포 동기화
 ====================================================================
 """
 
@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 arc_dir = pm_dir / 'archive'
 

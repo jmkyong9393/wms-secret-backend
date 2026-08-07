@@ -2,7 +2,7 @@
 ====================================================================
 [버전 버전 표기 보정 스크립트]
 - ver 2.7.0.0 표기를 v2.6.0.0 (또는 v2.6.1.0 세부 수정)으로 통합 보정
-- PM_정답지_백업 및 WMS_docs 전체 동기화
+- 개인개발가이드 및 WMS_docs 전체 동기화
 ====================================================================
 """
 
@@ -10,7 +10,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 
 doc_files = [

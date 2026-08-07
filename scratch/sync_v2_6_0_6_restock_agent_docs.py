@@ -1,7 +1,7 @@
 """
 ====================================================================
 [Nexus 프로젝트 ver 2.6.0.6 AI Restock Agent 자동 발주 파이프라인 수록 스크립트]
-1. PM_정답지_백업 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.6 업데이트:
+1. 개인개발가이드 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.6 업데이트:
    - LLM Restock Agent (app/ai/agents/restock.py) 기반 AI 자동 발주 추천 파이프라인
    - 입고 반려(DMG_EXT_WET 등) 발생 시 판매량 및 재고 연동 대체 발주 수량 및 AI 사유 자동 생성 (POST /api/v1/orders/auto-po)
 2. WMS_docs 이원화 배포 자동 복사 동기화
@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 

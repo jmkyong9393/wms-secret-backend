@@ -2,7 +2,7 @@
 ====================================================================
 [마이크로 버전 2.6.0.2 정밀 변경 스크립트]
 - batch=8 OOM 완전 안전 보정 내역 기록 및 ver 2.6.0.2 업데이트
-- PM_정답지_백업 및 WMS_docs 전체 동기화
+- 개인개발가이드 및 WMS_docs 전체 동기화
 ====================================================================
 """
 
@@ -10,7 +10,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 
 doc_files = [

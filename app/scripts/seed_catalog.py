@@ -3,9 +3,9 @@
 카탈로그 시드 — 알라딘 베스트셀러 실조회 기반 신품/중고 대량 적재.
 
 실행 (컨테이너):
-    docker exec wms-api python app/scripts/seed_catalog.py
-    docker exec wms-api python app/scripts/seed_catalog.py --new 1000 --used 200
-    docker exec wms-api python app/scripts/seed_catalog.py --used 50 --new 0   # 중고만 추가
+    docker exec wms-secret-api python app/scripts/seed_catalog.py
+    docker exec wms-secret-api python app/scripts/seed_catalog.py --new 1000 --used 200
+    docker exec wms-secret-api python app/scripts/seed_catalog.py --used 50 --new 0   # 중고만 추가
 
 [왜 만들었나]
 종전 시드는 하드코딩 50권(scripts/seed/seed_50_books_script.py)이라 대시보드 차트가

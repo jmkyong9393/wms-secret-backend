@@ -1,6 +1,6 @@
 """
 ====================================================================
-[PM_정답지_백업 주요 핵심 기획서/개발문서 실시간 개발내역 종합 업데이트 스크립트]
+[개인개발가이드 주요 핵심 기획서/개발문서 실시간 개발내역 종합 업데이트 스크립트]
 - 최근 개발 마감된 Nexus 프로젝트 최신 개발 내역 100% 반영:
   1. 재고/출고 도메인 풀스택 구축 (FastAPI REST API + Next.js 대시보드)
   2. 3D Bin Packing 박스 최적화 & CJ대한통운 송장 자동 발급 파이프라인
@@ -16,7 +16,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 

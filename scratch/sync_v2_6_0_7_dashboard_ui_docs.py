@@ -1,7 +1,7 @@
 """
 ====================================================================
 [Nexus 프로젝트 ver 2.6.0.7 최고 관리자 대시보드 & HITL 검수 UI 고도화 명세 수록 스크립트]
-1. PM_정답지_백업 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.7 업데이트:
+1. 개인개발가이드 내 4주차 개발 기록 및 마스터 산출물 ver 2.6.0.7 업데이트:
    - 최고 관리자 전용 대시보드 (/admin/dashboard): Recharts 3대 차트 (일별 입출고 추이, 카테고리별 재고 막대, UBCI 품질 도넛) + 4대 미니 도넛 KPI 위젯
    - 사이드바 네비게이션 고도화 (Sidebar.tsx): [승인 대기 32] 뱃지, [🛒 발주 관리], [🛡️ 품질 리포트] 메뉴 수록
    - HITL 수동 검수 서브 패널 (/admin/inspections): 원본 결함 사진, 에이전트 대화 요약, [✓ 승인], [✕ 반려], [🔄 재검토] 3색 버튼
@@ -13,7 +13,7 @@ import os
 import shutil
 from pathlib import Path
 
-pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\PM_정답지_백업')
+pm_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\개인개발가이드')
 wms_dir = Path(r'E:\취업\KT AIVLE School\빅프로젝트\WMS_docs')
 archive_dir = pm_dir / 'archive'
 
