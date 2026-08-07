@@ -144,12 +144,14 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
         })
 
     # 2. 중고/반품 검수 LPN 품목 (InventoryUsedItem 테이블) 조회
-    # [2026-08-06 수정] HITL 이관 건은 Zone Z(임시적재)에 실물 추적용 row만 있고 아직 사람이
-    # 등급을 확정하지 않은 상태인데, 필터 없이 전 row를 내보내 "HITL로 이관한다면서 재고
-    # 현황에 곧바로 편입되는" 모순이 보였다. 결재 대기(HITL_PENDING/HITL_REQUIRED) 건은
-    # 승인 대기(HITL) 대시보드가 전담하므로 재고 현황 목록에서는 제외한다.
-    # (item_status가 NULL인 레거시 row는 종전대로 노출 유지 - NOT IN의 NULL 삼단논리 주의)
+    #
+    # 검수가 끝나 랙에 적재된 품목만 재고 현황에 넣는다. 아래 상태는 실물 추적용 row는
+    # 있지만 아직 등급이 확정되지 않았으므로 제외한다.
+    #   - PENDING_INSPECTION : LPN 라벨만 선부착된 상태 (버퍼 로케이션, 등급 PENDING)
+    #   - HITL_PENDING / HITL_REQUIRED : 사람 결재 대기. HITL 대시보드가 전담한다.
+    # item_status가 NULL인 레거시 row는 노출을 유지한다 (NOT IN의 NULL 삼단논리 주의).
     from sqlalchemy import or_
+    NOT_YET_STOCKED = ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
     used_stmt = (
         select(InventoryUsedItem, Book, Location)
         .outerjoin(Book, InventoryUsedItem.book_id == Book.id)
@@ -157,7 +159,7 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
         .where(
             or_(
                 InventoryUsedItem.item_status.is_(None),
-                InventoryUsedItem.item_status.notin_(["HITL_PENDING", "HITL_REQUIRED"]),
+                InventoryUsedItem.item_status.notin_(NOT_YET_STOCKED),
             )
         )
     )
@@ -177,8 +179,10 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
                 "base_price": book.base_price if book else 0.0,
                 "cover_image_url": cover_url,
             },
-            "grade": item.condition_grade if item.condition_grade else ("MINT" if (item.ubci_score or 85) >= 95 else "GOOD"),
-            "ubci_score": item.ubci_score if item.ubci_score is not None else 85,
+            # UBCI 점수는 매입가를 결정하는 규정 산식의 출력이므로 기본값으로 채우지 않는다.
+            # 검수 전이라 값이 없으면 None을 그대로 내려보내고 화면이 "미산출"로 표기한다.
+            "grade": item.condition_grade or None,
+            "ubci_score": item.ubci_score,
             "zone": zone_str,
             "quantity": 1,
             # 하드코딩 상수 대신 실제 등급 확정 주체(AI 자동 판정 / HITL 결재자)를 내려준다.

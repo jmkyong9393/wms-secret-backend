@@ -776,7 +776,23 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
         })
 
     # 2. Fetch USED items from inventory_used_items (Each LPN item is uniquely 1-qty)
-    used_stmt = select(InventoryUsedItem, Book).join(Book, InventoryUsedItem.book_id == Book.id)
+    #
+    # 검수가 끝나 등급이 확정된 품목만 판매 가능 재고로 취급한다. 선부착 대기
+    # (PENDING_INSPECTION)와 결재 대기(HITL_*)는 아직 팔 수 없고 등급·점수도 없으므로
+    # 동적 가격 산정과 3D 적재 시뮬레이션 입력에서 제외한다.
+    from sqlalchemy import or_
+
+    NOT_SELLABLE = ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
+    used_stmt = (
+        select(InventoryUsedItem, Book)
+        .join(Book, InventoryUsedItem.book_id == Book.id)
+        .where(
+            or_(
+                InventoryUsedItem.item_status.is_(None),
+                InventoryUsedItem.item_status.notin_(NOT_SELLABLE),
+            )
+        )
+    )
     used_results = session.exec(used_stmt).all()
     
     for idx, (item, b) in enumerate(used_results):
@@ -793,8 +809,8 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
             "cover_image_url": b.cover_image_url or "",
             "category": b.category_type or "GENERAL",
             "listPrice": b.base_price or 15000,
-            "ubciScore": item.ubci_score or 85,
-            "conditionGrade": item.condition_grade or "GOOD",
+            "ubciScore": item.ubci_score,
+            "conditionGrade": item.condition_grade or None,
             "isNew": False,
             "daysInInventory": days_in_inventory,
             "stock_qty": 1,
