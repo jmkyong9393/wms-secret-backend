@@ -4,12 +4,12 @@
 
 절차:
   1) 실제 검수 작업 N건을 /api/v1/inbound/evaluate로 투입 (실 GPT-4o 호출 발생, 비용 소모)
-  2) 태스크 처리 중 `docker restart wms-worker`로 워커 강제 재시작 (SIGTERM)
+  2) 태스크 처리 중 `docker restart wms-secret-worker`로 워커 강제 재시작 (SIGTERM)
   3) 전 건이 터미널 상태(APPROVED/REJECTED/HITL_REQUIRED/FAILED)에 도달하는지 폴링
   4) Redis DLQ 잔량과 워커 재전달 로그를 수집해 JSON 리포트 저장
 
 실행:  .venv/Scripts/python.exe scripts/chaos_test_runner.py [결과.json] [N=4]
-전제:  docker compose 스택 기동(wms-api :8000, wms-worker, wms-redis, wms-postgres),
+전제:  docker compose 스택 기동(wms-secret-api :8000, wms-secret-worker, wms-secret-redis, wms-secret-postgres),
        .env OPENAI 키 유효, app/experiment_data/ 에 테스트 이미지 존재.
 
 주의: 과거 scripts/debug/test_chaos.py는 print 시뮬레이터였다(실측 아님).
@@ -67,9 +67,9 @@ def enqueue(n: int) -> list[dict]:
 
 
 def kill_worker() -> str:
-    print(">>> 워커 강제 재시작 (docker restart wms-worker)")
+    print(">>> 워커 강제 재시작 (docker restart wms-secret-worker)")
     t0 = time.time()
-    subprocess.run(["docker", "restart", "wms-worker"], check=True, capture_output=True)
+    subprocess.run(["docker", "restart", "wms-secret-worker"], check=True, capture_output=True)
     return f"restart took {time.time()-t0:.1f}s"
 
 
@@ -94,14 +94,14 @@ def poll(jobs: list[dict]) -> dict:
 
 def dlq_length() -> int:
     out = subprocess.run(
-        ["docker", "exec", "wms-redis", "redis-cli", "LLEN", "wms:dlq:inspection_tasks"],
+        ["docker", "exec", "wms-secret-redis", "redis-cli", "LLEN", "wms:dlq:inspection_tasks"],
         capture_output=True, text=True)
     return int(out.stdout.strip() or 0)
 
 
 def worker_log_evidence() -> list[str]:
     out = subprocess.run(
-        ["docker", "logs", "wms-worker", "--since", "10m"],
+        ["docker", "logs", "wms-secret-worker", "--since", "10m"],
         capture_output=True, text=True, encoding="utf-8", errors="replace")
     keywords = ("Redlock", "already locked", "acks", "Restoring", "unacknowledged",
                 "process_inspection", "restart", "Connected to redis")
