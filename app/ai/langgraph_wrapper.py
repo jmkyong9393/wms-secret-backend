@@ -138,6 +138,10 @@ class LangGraphInspectionWrapper:
                 # "결함 미검출"과 "도서가 안 찍힌 컷"을 구분해 표시/필터링하는 근거.
                 "invalid_image_indexes": final_state.get("invalid_image_indexes") or [],
                 "vision_failed": bool(final_state.get("vision_failed")),
+                # 증거 대조가 판독을 전건 기각해 점수의 근거가 사라진 상태.
+                # ubci_score는 산식상 100이 되지만 그것은 "무결점"이 아니라 "미확정"이므로,
+                # 화면이 100점/S급으로 확정 표시하지 않도록 플래그를 함께 내려보낸다.
+                "score_unverified": bool(final_state.get("score_unverified")),
                 # MINT 무결점 확정 건의 자동 매입/환불 대상 여부.
                 # (예전 Fast-track 분기가 담당하던 비즈니스 기능을 플래그로 대체)
                 "auto_refund_eligible": bool(final_state.get("auto_refund_eligible")),
@@ -194,7 +198,17 @@ class LangGraphInspectionWrapper:
                 "type": dtype,
                 "label": DEFECT_TRANSLATION_MAP.get(dtype, dtype or "상태 결함"),
                 "confidence": d.get("confidence"),
-                "deduction": d.get("preliminary_deduction"),
+                # 확신도의 출처. "yolo"면 탐지 모델의 실측값, "vlm"이면 VLM 자기 신고(추정치)다.
+                # 실측에서 VLM은 확신도를 전건 0.8로 평평하게 써 넣었으므로(실제 제보값은
+                # 0.437~0.795) 화면이 둘을 구분하지 못하면 근거 없는 수치를 근거처럼 보여준다.
+                "conf_source": d.get("conf_source"),
+                "conf_flat_selfreported": d.get("conf_flat_selfreported"),
+                # Policy가 실제로 적용한 감점. preliminary_deduction(Vision 예비값)은 그룹
+                # 산정·Cap·오탐 제외를 반영하지 않아 화면에 표시하면 총점과 어긋난다.
+                # (실측: 마모 5건에 예비 -5점씩 표시 → -25점으로 읽혔으나 실제 감점은 -7점)
+                "deduction": d.get("applied_deduction", d.get("preliminary_deduction")),
+                "deduction_scope": d.get("deduction_scope"),
+                "deduction_note": d.get("deduction_note"),
             })
 
         return [grouped[k] for k in sorted(grouped.keys())]
