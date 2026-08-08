@@ -1,6 +1,5 @@
 import logging
 logger = logging.getLogger(__name__)
-from datetime import datetime
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional
@@ -23,6 +22,10 @@ class HitlOverrideRequest(BaseModel):
     targetGrade: Optional[str] = Field(None, description="A, B, C, S 등")
     primaryReasonCode: str = Field(..., description="DMG_EXT_CRUSH 등 단일 사유")
     reasonComment: Optional[str] = Field(None)
+    # [2026-08-08] 더 이상 AdminAuditLog에 그대로 쓰이지 않는다 - 서버가 exclude/adopt/
+    # editedBboxes 반영 후 job.agent_logs.defects로부터 감사 로그용 좌표를 직접 재조립한다
+    # (프론트가 보내는 이 값은 모달을 연 시점의 스냅샷이라 편집분을 반영하지 못했다).
+    # 구버전 프론트와의 호환을 위해 필드는 유지하되 무시한다.
     defectCoordinates: Optional[List[Any]] = Field(default_factory=list)
     reviewDurationMs: Optional[int] = Field(0, description="관리자 체류 시간")
     # --- BBox 채택/제외 (2026-08-07) ---
@@ -32,33 +35,17 @@ class HitlOverrideRequest(BaseModel):
         default_factory=list, description="오탐으로 판단해 감점에서 제외할 결함 인덱스")
     adoptedCandidateIndexes: Optional[List[int]] = Field(
         default_factory=list, description="AI가 놓쳤으나 실제 결함으로 채택할 YOLO 후보 인덱스")
+    # --- BBox 좌표 직접 수정 (2026-08-08) ---
+    # 검수자가 화면에서 확정 결함의 박스를 드래그해 위치/크기를 고친 결과. index는
+    # agent_logs.defects 배열 기준(excludedDefectIndexes와 동일 인덱스 공간)이며,
+    # xmin/ymin/xmax/ymax는 Vision Agent와 동일한 0~1000 상대좌표다.
+    editedBboxes: Optional[List[Dict[str, Any]]] = Field(
+        default_factory=list,
+        description="검수자가 직접 고친 결함 좌표. [{index, xmin, ymin, xmax, ymax}]")
 
 class BulkOverridePayload(BaseModel):
     items: List[HitlOverrideRequest]
 
-
-def _hitl_special_notes(
-    agent_logs: Dict[str, Any],
-    item: "HitlOverrideRequest",
-    inspector: str,
-) -> str:
-    """HITL 결재 근거를 보증서 생성기에 넘길 특이사항 문장으로 조립한다.
-
-    자동 승인 건과 달리 HITL 건은 **사람이 최종 판단**했으므로, 그 사유와 코멘트가
-    보증서에 드러나야 한다. 기존 Vision 특이사항이 있으면 뒤에 덧붙인다.
-    """
-    parts = [f"관리자 수동 검수 확정 (검수자: {inspector})"]
-    if item.primaryReasonCode:
-        parts.append(f"판정 사유: {item.primaryReasonCode}")
-    if item.targetGrade:
-        parts.append(f"확정 등급: {item.targetGrade}")
-    comment = (item.reasonComment or "").strip()
-    if comment:
-        parts.append(f"검수자 의견: {comment}")
-    prior = (agent_logs.get("special_notes") or "").strip()
-    if prior:
-        parts.append(f"AI 판독 특이사항: {prior}")
-    return " / ".join(parts)
 
 class HitlTaskResponse(BaseModel):
     id: UUID
@@ -119,6 +106,13 @@ def submit_hitl_override(
     audit_logs = []
     processed_count = 0
     rejected_job_ids = []  # 커밋 후 Restock 판정 그래프(자동 발주 제안)를 태울 반려 확정 건
+    # [2026-08-08] 커밋 후 보증서 생성(GPT-4o-mini)을 워커로 태울 승인 확정 건.
+    # 종전에는 이 루프 안에서 build_certificate_document()를 건별로 동기 호출했는데,
+    # 합성 시드 데이터 다건을 한 번에 승인하는 요청에서 순차 LLM 호출이 쌓여
+    # wms-secret-api 컨테이너가 OOM(exit 137)으로 죽었다. 반려 확정 건의 Restock 제안
+    # 큐잉과 동일한 원리로, 등급 확정·랙 배정·재고 편입은 이 요청 안에서 동기로 끝내고
+    # 보증서 문서화만 워커로 분리한다 (app/worker/tasks.py generate_hitl_certificate 참조).
+    approved_job_ids_for_cert = []
 
     # 이 오버라이드를 실제로 결재한 관리자. InventoryUsedItem.inspected_by에 그대로 기록해
     # 재고 상세/보증서 화면의 "입고 처리 담당자"가 하드코딩 상수가 아니라 실제 결재자를
@@ -143,13 +137,17 @@ def submit_hitl_override(
             
         previous_state = job.status
 
-        # --- 검수자의 BBox 채택/제외 반영 (2026-08-07) ---
+        # --- 검수자의 BBox 채택/제외/좌표수정 반영 (2026-08-07, 좌표수정은 2026-08-08 추가) ---
         # 판정을 지우지 않고 표식만 남긴다. 결함 목록에서 삭제하면 "관리자가 무엇을 보고
         # 무엇을 뺐는지"가 사라져 감사 추적이 끊기고, 나중에 오탐/미탐 라벨로 재사용할 수도
         # 없다. 감점 산정에서만 제외하고 화면에는 제외 표식과 함께 계속 보인다.
-        if item.excludedDefectIndexes or item.adoptedCandidateIndexes:
-            _logs = dict(job.agent_logs or {})
-            _defects = list(_logs.get("defects") or [])
+        _logs = dict(job.agent_logs or {})
+        _defects = list(_logs.get("defects") or [])
+        has_bbox_ui_edits = bool(
+            item.excludedDefectIndexes or item.adoptedCandidateIndexes or item.editedBboxes
+        )
+
+        if has_bbox_ui_edits:
             _cands = list(_logs.get("yolo_candidates") or [])
 
             for idx in (item.excludedDefectIndexes or []):
@@ -172,16 +170,40 @@ def submit_hitl_override(
                     "description": "관리자가 YOLO 후보에서 직접 채택",
                 })
 
+            # [2026-08-08 신설] 검수자가 드래그로 직접 고친 BBox 좌표를 반영한다. 판정
+            # 자체(type/confidence 등)는 AI 산출을 유지하고 좌표만 덮어써, "AI가 뭘 봤는지"와
+            # "사람이 어디로 고쳤는지"를 hitl_bbox_edited 표식으로 함께 남긴다(위 exclude/adopt와
+            # 동일하게 삭제가 아니라 표식 방식 - 감사 추적 유지).
+            for edit in (item.editedBboxes or []):
+                if not isinstance(edit, dict):
+                    continue
+                idx = edit.get("index")
+                if not isinstance(idx, int) or not (0 <= idx < len(_defects)) or not isinstance(_defects[idx], dict):
+                    continue
+                try:
+                    new_bbox = {
+                        "xmin": int(edit["xmin"]),
+                        "ymin": int(edit["ymin"]),
+                        "xmax": int(edit["xmax"]),
+                        "ymax": int(edit["ymax"]),
+                    }
+                except (KeyError, TypeError, ValueError):
+                    continue
+                _defects[idx] = {**_defects[idx], "bbox": new_bbox, "hitl_bbox_edited": True}
+
             _logs["defects"] = _defects
             _logs["hitl_bbox_edit"] = {
                 "excluded": item.excludedDefectIndexes or [],
                 "adopted": item.adoptedCandidateIndexes or [],
+                "edited_bboxes": item.editedBboxes or [],
                 "edited_by": hitl_inspector,
             }
             job.agent_logs = _logs
 
             # 편집된 목록으로 점수를 다시 낸다. 관리자가 목표 등급을 명시했으면 그쪽이
-            # 우선이므로(아래 clamp) 여기서는 참고 점수만 갱신한다.
+            # 우선이므로(아래 clamp) 여기서는 참고 점수만 갱신한다. BBox 좌표 수정도
+            # 재산정 대상이다 - policy의 _effective_ratio가 좌표 면적에서 ratio를 유도하므로
+            # 박스 크기를 줄이면 감점도 그만큼 줄어야 한다.
             try:
                 from app.ai.agents import policy_agent
                 scored = [d for d in _defects if not d.get("hitl_excluded")]
@@ -197,6 +219,17 @@ def submit_hitl_override(
             except Exception as e:
                 logger.error(f"BBox 편집 후 점수 재산정 실패 (판정은 유지): {e}")
 
+        # [2026-08-08 신설] AuditLog(및 그 소스를 읽는 research/export-dataset 재학습
+        # 파이프라인)에 남길 최종 BBox 좌표를 여기서 다시 조립한다. 프론트가 보내는
+        # item.defectCoordinates는 모달을 연 시점의 agent_logs.defect_coordinates 스냅샷이라
+        # 위 exclude/adopt/edit 결과를 반영하지 못한다 - 그 값을 그대로 감사 로그에 남기면
+        # 관리자가 오탐이라고 제외한 BBox까지 "검증 완료" 라벨로 재학습 데이터에 흘러간다.
+        # build_defect_coordinates는 파이프라인 완료 시점에도 쓰는 동일 함수라 포맷이 항상 일치한다.
+        from app.ai.langgraph_wrapper import LangGraphInspectionWrapper
+        final_defect_coordinates = LangGraphInspectionWrapper.build_defect_coordinates(
+            _defects, job.image_urls or []
+        )
+
         # Determine new status based on decision
         if item.decision.startswith("APPROVE"):
             job.status = JobStatusEnum.APPROVED
@@ -211,58 +244,13 @@ def submit_hitl_override(
             # 점수/등급 표기가 확정값을 따르도록).
             job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, target_grade)
             lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or f"LPN-260728-A002"
-            # [2026-08-06 수정] HITL 승인 건의 보증서 본문을 생성한다.
-            #
-            # 종전에는 아래 cert_url 문자열만 만들어 재고에 저장했고, 그 URL이 가리키는
-            # 보증서 본문(job.agent_logs["certificate"])은 **생성된 적이 없었다.**
-            # 원인은 그래프 배선이다 - HITL로 이관되면 human_node에서 조기 종료되어
-            # report_agent를 타지 않는다(supervisor.py 주석 참조). 그 결과 HITL 승인 건은
-            # 상세/보증서 화면에서 링크는 있는데 내용이 없는 상태였다.
-            #
-            # 관리자가 입력한 사유 코드와 코멘트를 함께 넣어, 자동 승인 건과 달리
-            # **사람의 결재 근거가 보증서에 반영**되게 한다.
-            try:
-                agent_logs = job.agent_logs or {}
-                cert_state = {
-                    "ubci_score": job.ubci_score,
-                    "defects": agent_logs.get("defects") or [],
-                    "book_title": agent_logs.get("book_title") or "",
-                    "special_notes": _hitl_special_notes(agent_logs, item, hitl_inspector),
-                }
-                from app.ai.agents import build_certificate_document
-                cert_doc = build_certificate_document(cert_state)
-                cert_doc["cert_id"] = f"CERT-{datetime.now().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
-                cert_doc["issued_by"] = "HITL"
-                cert_doc["inspected_by"] = hitl_inspector
-                # [2026-08-06 수정] HITL 이관 건은 그래프가 human_node에서 조기 종료되어
-                # report_agent 노드를 타지 않으므로, 진단 기록(executed_agents)에 Report Agent가
-                # "미실행"으로 남는다. 그러나 보증서 생성(build_certificate_document)은 Report
-                # Agent와 동일한 작업이고 여기 HITL 결재 시점에 실제로 수행되었으므로, 실행
-                # 기록과 서술(report_text)을 함께 남겨 상세 화면 타임라인에 표시되게 한다.
-                # (그래프 재배선이 아니라 결재 시점 집행 기록 - 프리즈 규정의 판정/집행 분리 준수)
-                executed_agents = list(agent_logs.get("executed_agents") or [])
-                if "report_agent" not in executed_agents:
-                    executed_agents.append("report_agent")
-                # 결재 시점 타임스탬프를 별도 기록 - 진단 타임라인이 검수 시각 하나로 전 행을
-                # 찍지 않고, Report Agent 행만 실제 결재(보증서 생성) 시각을 표시할 수 있게 한다.
-                from app.models.wms import now_kst
-                report_generated_at = now_kst().strftime("%Y-%m-%d %H:%M:%S")
-                report_text = (
-                    f"HITL 결재 시점 보증서 생성 - {cert_doc['cert_id']} / 결재자 {hitl_inspector} / "
-                    f"최종 확정 UBCI {job.ubci_score}점 ({target_grade}) - 관리자 결재 근거가 보증서 특이사항에 반영됨"
-                )
-                job.agent_logs = {
-                    **agent_logs,
-                    "certificate": cert_doc,
-                    "executed_agents": executed_agents,
-                    "report_text": report_text,
-                    "report_generated_at": report_generated_at,
-                }
-                logger.info(f"HITL 보증서 생성 완료: {cert_doc['cert_id']} (job {job.id})")
-            except Exception as ex:
-                # 보증서 생성 실패가 결재 자체를 막지 않는다. 다만 조용히 넘어가면
-                # 다시 "링크만 있고 내용 없는" 상태가 되므로 반드시 로그를 남긴다.
-                logger.error(f"HITL 보증서 생성 실패 (job {job.id}): {ex}")
+            # [2026-08-08 수정] HITL 승인 건의 보증서 본문 생성(GPT-4o-mini, build_certificate_document)을
+            # 더 이상 이 요청 스레드에서 동기 호출하지 않는다. 종전에는 매 승인 건마다 여기서 LLM을
+            # 호출했는데, 합성 시드 데이터 다건을 한 번에 승인하는 요청에서 순차 LLM 호출이 쌓여
+            # wms-secret-api 컨테이너가 OOM(exit 137)으로 죽었다. 등급 확정·랙 배정·재고 편입은
+            # 그대로 이 자리에서 동기로 끝내고, 보증서 문서화만 커밋 후 워커로 큐잉한다
+            # (app/worker/tasks.py generate_hitl_certificate - 판정/집행 분리 원칙 준수).
+            approved_job_ids_for_cert.append(str(job.id))
 
             try:
                 cert_code = str(job.id)[:6].upper()
@@ -371,7 +359,7 @@ def submit_hitl_override(
             new_state=job.status,
             target_grade=item.targetGrade,
             primary_reason_code=item.primaryReasonCode,
-            defect_coordinates=[coord.dict() if hasattr(coord, 'dict') else coord for coord in (item.defectCoordinates or [])],
+            defect_coordinates=final_defect_coordinates,
             review_duration_ms=item.reviewDurationMs
         )
         session.add(audit)
@@ -388,6 +376,13 @@ def submit_hitl_override(
         from app.worker.tasks import enqueue_restock_proposal
         for rejected_id in rejected_job_ids:
             enqueue_restock_proposal(rejected_id)
+
+    # 승인 확정 건의 보증서 생성(GPT-4o-mini)도 같은 이유로 커밋 후 워커에 큐잉한다.
+    # 같은 요청 안에서 N건을 동기로 돌리다 OOM으로 죽은 사고(2026-08-08)의 재발 방지.
+    if approved_job_ids_for_cert:
+        from app.worker.tasks import enqueue_hitl_certificate
+        for approved_id in approved_job_ids_for_cert:
+            enqueue_hitl_certificate(approved_id, hitl_inspector)
 
     return {
         "status": "success",

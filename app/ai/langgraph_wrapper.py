@@ -210,6 +210,15 @@ class LangGraphInspectionWrapper:
                 "deduction_scope": d.get("deduction_scope"),
                 "deduction_note": d.get("deduction_note"),
             })
+            # HITL 관리자 편집 이력 표식 (2026-08-08). 파이프라인 정상 산출 시점에는
+            # defects에 이 키들이 존재하지 않으므로 여기서 그냥 빠진다 - 하위 호환 유지.
+            last = entry["bboxes"][-1]
+            if d.get("hitl_excluded"):
+                last["hitl_excluded"] = True
+            if d.get("hitl_adopted"):
+                last["hitl_adopted"] = True
+            if d.get("hitl_bbox_edited"):
+                last["hitl_bbox_edited"] = True
 
         return [grouped[k] for k in sorted(grouped.keys())]
 
