@@ -12,6 +12,7 @@ from app.core.exceptions import (
     InactiveAccountException,
     TooManyLoginAttemptsException,
 )
+from app.core.sse_ticket_service import issue_sse_ticket
 from app.domains.auth import throttle
 from app.core import password_policy
 from app.domains.auth.schemas import (
@@ -152,6 +153,17 @@ def submit_privacy_consent(
 
     user = user_service.record_privacy_consent(session=session, user=current_user)
     return user
+
+
+@router.post("/sse-ticket", summary="SSE 스트림 1회성 접근 티켓 발급")
+async def issue_stream_ticket(
+    scope: str,
+    current_user: User = Depends(get_current_user),
+):
+    """쿠키를 실을 수 없는 클라이언트용 SSE 접근 티켓 발급. scope에는 스트림 경로를 그대로 넣는다."""
+    role = str(current_user.role.value) if hasattr(current_user.role, "value") else str(current_user.role)
+    ticket, expires_in = await issue_sse_ticket(scope=scope, employee_id=current_user.employee_id, role=role)
+    return {"ticket": ticket, "expires_in": expires_in, "scope": scope}
 
 
 @router.get("/password-policy", response_model=PasswordPolicyResponse, summary="비밀번호 작성 규칙 조회")

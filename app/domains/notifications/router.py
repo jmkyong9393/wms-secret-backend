@@ -8,6 +8,8 @@ from sqlmodel import Session, select
 
 from app.db.session import get_db
 from app.models.wms import Notification, now_kst
+from app.core.stream_auth import require_stream_access
+from app.models.wms import User
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +130,7 @@ def clear_all_notifications(
 
 
 @router.get("/stream", summary="실시간 WMS 전역 알림 SSE 스트리밍")
-async def stream_notifications(request: Request):
+async def stream_notifications(request: Request, _user: User = Depends(require_stream_access)):
     """
     실시간 WMS 알림 SSE (Server-Sent Events) 스트리밍 엔드포인트.
     Redis Pub/Sub(notifications:global 채널)을 구독하여, POST /trigger-fds 등으로

@@ -8,6 +8,8 @@ from app.domains.returns.schemas import InspectionRequest
 from app.domains.returns.service import ReturnService
 from fastapi.responses import StreamingResponse
 import redis.asyncio as redis
+from app.core.stream_auth import require_stream_access
+from app.models.wms import User
 
 router = APIRouter(prefix="/returns", tags=["Returns & AI Inspections"])
 
@@ -29,7 +31,7 @@ def create_inspection(
     return {"job_id": job_id, "message": "검수 파이프라인 가동 시작"}
 
 @router.get("/inspections/{job_id}/stream")
-async def stream_inspection_status(job_id: str):
+async def stream_inspection_status(job_id: str, _user: User = Depends(require_stream_access)):
     """
     SSE 푸시 알림 API (Redis Pub/Sub 연동)
     DB 폴링 없이, Celery 워커가 작업 완료 시 Redis에 발행하는 이벤트를 구독하여

@@ -1,12 +1,14 @@
+"""SSE 스트림 접근용 1회성 티켓 (Redis, TTL).
+
+쿠키를 실을 수 없는 클라이언트가 쿼리스트링으로 넘겨 인증하는 경로다.
+"""
 import json
 import secrets
-from typing import Any
-from uuid import UUID
+from typing import Any, Optional
 
 import redis.asyncio as redis
 
 from app.core.config import settings
-
 
 SSE_TICKET_KEY_PREFIX = "sse_ticket"
 
@@ -15,72 +17,42 @@ def get_sse_ticket_key(ticket: str) -> str:
     return f"{SSE_TICKET_KEY_PREFIX}:{ticket}"
 
 
-# JWT 인증을 통과한 사용자에게 1회성 SSE 티켓 발급
-async def issue_sse_ticket(
-    job_id: UUID,
-    user_id: UUID,
-    tenant_id: UUID,
-) -> tuple[str, int]:
+def _client() -> redis.Redis:
+    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+async def issue_sse_ticket(scope: str, employee_id: str, role: str) -> tuple[str, int]:
+    """인증된 사용자에게 특정 scope 전용 1회성 티켓을 발급한다."""
     ticket = secrets.token_urlsafe(32)
     expires_in = settings.SSE_TICKET_EXPIRE_SECONDS
+    payload: dict[str, Any] = {"scope": scope, "employee_id": employee_id, "role": role}
 
-    redis_client = redis.Redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-    )
-
-    payload: dict[str, Any] = {
-        "job_id": str(job_id),
-        "user_id": str(user_id),
-        "tenant_id": str(tenant_id),
-    }
-
+    client = _client()
     try:
-        await redis_client.set(
-            get_sse_ticket_key(ticket),
-            json.dumps(payload),
-            ex=expires_in,
-        )
+        await client.set(get_sse_ticket_key(ticket), json.dumps(payload), ex=expires_in)
     finally:
-        await redis_client.aclose()
-
+        await client.aclose()
     return ticket, expires_in
 
 
-# 티켓을 조회함과 동시에 삭제
-# 같은 티켓은 두 번 사용할 수 없음
-async def consume_sse_ticket(
-    ticket: str,
-    job_id: UUID,
-) -> dict[str, Any] | None:
-    redis_client = redis.Redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=True,
-    )
-
+async def consume_sse_ticket(ticket: str, scope: str) -> Optional[dict[str, Any]]:
+    """티켓을 조회와 동시에 삭제한다. 같은 티켓은 두 번 쓸 수 없다."""
+    client = _client()
     try:
-        raw_payload = await redis_client.getdel(
-            get_sse_ticket_key(ticket)
-        )
+        raw = await client.getdel(get_sse_ticket_key(ticket))
     finally:
-        await redis_client.aclose()
+        await client.aclose()
 
-    if raw_payload is None:
+    if raw is None:
         return None
-
     try:
-        payload = json.loads(raw_payload)
+        payload = json.loads(raw)
     except json.JSONDecodeError:
         return None
 
-    # 티켓이 발급된 검수 작업과 요청 경로의 job_id가 같은지 확인
-    if payload.get("job_id") != str(job_id):
+    # 발급 대상 scope와 실제 접속하려는 스트림이 같은지 확인한다.
+    if payload.get("scope") != scope:
         return None
-
-    if payload.get("user_id") is None:
+    if not payload.get("employee_id"):
         return None
-    
-    if payload.get("tenant_id") is None:
-        return None
-
     return payload
