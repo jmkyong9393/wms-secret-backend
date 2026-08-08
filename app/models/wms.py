@@ -447,6 +447,16 @@ class BoardPost(SQLModel, table=True):
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
+class BoardComment(SQLModel, table=True):
+    __tablename__ = "board_comments"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    post_id: UUID = Field(foreign_key="board_posts.id", ondelete="CASCADE")
+    author_id: UUID = Field(foreign_key="users.id", ondelete="CASCADE")
+    content: str
+    created_at: datetime = Field(default_factory=now_kst)
+    updated_at: datetime = Field(default_factory=now_kst)
+
 class Notification(SQLModel, table=True):
     """
     WMS 전역 알림 이력.
