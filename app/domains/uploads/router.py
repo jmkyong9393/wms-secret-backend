@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from typing import Set
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Response
 import boto3
 from botocore.exceptions import ClientError
 from app.core.config import settings
@@ -22,22 +24,30 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
 #      실행시키는 저장형 XSS 경로가 열려 있었고,
 #   2) file_name에 `../`나 절대경로를 넣어 의도하지 않은 키 위치에 쓰는 경로 조작이 가능했다.
 #
-# 이 서비스가 업로드하는 것은 **도서 검수 사진뿐**이므로, 허용 목록(whitelist) 방식으로
-# 이미지 포맷만 통과시킨다. 차단 목록(blacklist)은 새 확장자가 나올 때마다 뚫리므로 쓰지 않는다.
+# 도서 검수 사진 업로드는 이미지 포맷만 통과시킨다. 차단 목록(blacklist)은 새 확장자가
+# 나올 때마다 뚫리므로 쓰지 않고 허용 목록(whitelist) 방식만 쓴다.
 ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 ALLOWED_UPLOAD_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
+
+# [2026-08-08 추가] 게시판 첨부파일은 이미지 외에 문서 형식도 필요하다 - 도서 검수
+# 사진 업로드(위 기본 화이트리스트)와는 별도로 관리한다. 실행 가능한 스크립트 형식
+# (.html/.svg/.js 등)은 여전히 제외되고, 사무용 문서 확장자만 추가로 허용한다.
+BOARD_ALLOWED_EXTENSIONS = ALLOWED_UPLOAD_EXTENSIONS | {
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".hwp", ".txt",
+}
 
 # S3 키에 그대로 넣어도 안전한 문자만 남긴다 (한글/공백/특수문자 → '_')
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]")
 
 
-def sanitize_upload_filename(file_name: str) -> str:
+def sanitize_upload_filename(file_name: str, allowed_extensions: Set[str] = ALLOWED_UPLOAD_EXTENSIONS) -> str:
     """
     업로드 파일명을 S3 키로 쓰기 안전한 형태로 정규화한다.
 
     - 경로 구분자를 제거해 디렉터리 이동(`../`, `/etc/passwd`)을 차단한다.
     - 허용 문자 외에는 언더스코어로 치환한다.
     - 확장자는 소문자로 통일한다.
+    - `allowed_extensions`를 지정하지 않으면 도서 검수 사진 화이트리스트(이미지 전용)를 쓴다.
     """
     # 경로 성분을 통째로 버리고 마지막 이름만 취한다 (백슬래시 경로도 함께 처리)
     base = os.path.basename(file_name.replace("\\", "/")).strip()
@@ -47,10 +57,10 @@ def sanitize_upload_filename(file_name: str) -> str:
 
     stem, ext = os.path.splitext(base)
     ext = ext.lower()
-    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+    if ext not in allowed_extensions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"허용되지 않는 파일 형식입니다. 허용 확장자: {', '.join(sorted(ALLOWED_UPLOAD_EXTENSIONS))}",
+            detail=f"허용되지 않는 파일 형식입니다. 허용 확장자: {', '.join(sorted(allowed_extensions))}",
         )
 
     safe_stem = _SAFE_NAME_PATTERN.sub("_", stem)[:80] or "upload"
@@ -71,6 +81,11 @@ def validate_upload_mime(file_type: str) -> str:
 def authorize_cloudfront_upload(
     response: Response,
     file_name: str,
+    category: str = Query(
+        "image",
+        pattern="^(image|board)$",
+        description="화이트리스트 선택: image=도서 검수 사진(기본), board=게시판 첨부(이미지+문서)",
+    ),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -79,10 +94,15 @@ def authorize_cloudfront_upload(
     [수정 이력 - 2026-08-06] 종전에는 인증 없이 호출할 수 있었다. 확장자를 아무리 검증해도,
     업로드 자격 자체를 누구에게나 발급하면 외부인이 우리 스토리지에 파일을 쌓을 수 있다.
     업로드는 로그인한 작업자만 수행하는 동작이므로 인증을 필수로 건다.
+
+    [수정 이력 - 2026-08-08] `category=board`는 게시판 첨부용 확장 화이트리스트
+    (`BOARD_ALLOWED_EXTENSIONS`)를 적용한다 - 도서 검수 사진 업로드(기본값)의
+    화이트리스트는 그대로 이미지 전용으로 남긴다.
     """
     # 서명 쿠키는 uploads/* 전체에 대한 쓰기 권한이므로, 요청 파일명도 함께 검증해
     # 허용 형식이 아닌 업로드 시도에는 자격을 내주지 않는다.
-    sanitize_upload_filename(file_name)
+    allowed_extensions = BOARD_ALLOWED_EXTENSIONS if category == "board" else ALLOWED_UPLOAD_EXTENSIONS
+    sanitize_upload_filename(file_name, allowed_extensions)
     # 임시 URL (실제로는 CDN 주소 매핑)
     resource_url = f"https://cdn.wms-ai.com/uploads/*"
     
