@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     LOGIN_FAIL_MAX_ATTEMPTS: int = 10
     LOGIN_FAIL_WINDOW_SECONDS: int = 300
 
+    # SSE 스트림 접근 티켓 유효시간(초). 발급 직후 연결에만 쓰이므로 짧게 유지한다.
+    SSE_TICKET_EXPIRE_SECONDS: int = 30
+
     # Invitation Codes (회원가입 제한코드)
     WORKER_INVITATION_CODE: str = "WMS_WORKER_2026"
     MASTER_INVITATION_CODE: str = "WMS_MASTER_2026"

@@ -12,6 +12,8 @@ from app.models.wms import now_kst, InboundJob, Book, ReturnJob, InventoryUsedIt
 from app.domains.inbound.service import generate_signed_cookie, lookup_book_by_isbn
 import base64
 import os
+from app.core.stream_auth import require_stream_access
+from app.models.wms import User
 
 
 class UploadCookieRequest(BaseModel):
@@ -300,7 +302,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
 
 
 @router.get("/stream/{job_id}")
-async def stream_evaluation_progress(job_id: str):
+async def stream_evaluation_progress(job_id: str, _user: User = Depends(require_stream_access)):
     """
     [SSE] AI 작업 상태 실시간 푸시 API. Celery 워커가 Redis Pub/Sub 채널(return_job:{job_id})에
     발행하는 진행 이벤트를 구독해, 프론트엔드가 기대하는 필드 형태(job_id/progress/message/
