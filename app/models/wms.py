@@ -323,8 +323,10 @@ class PickingInstructionItem(SQLModel, table=True):
     quantity: int = Field(default=1)
     picked_quantity: int = Field(default=0)
     zone: str = Field(default="A", max_length=50)
-    rack: str = Field(default="01", max_length=50)
-    shelf: str = Field(default="01", max_length=50)
+    # 위치 표기는 zone-rack-shelf 무패딩 정본(예: A-1-1). 패딩을 넣으면 locations의
+    # 실제 값과 어긋나 같은 위치가 두 표기로 표시된다.
+    rack: str = Field(default="1", max_length=50)
+    shelf: str = Field(default="1", max_length=50)
     pick_seq: int = Field(default=1)        # 동선 정렬 피킹 순서
     unit_price: float = Field(default=0.0)  # 주문 시점 확정 권당 도매가
     status: str = Field(default="PENDING", max_length=20)  # PickingItemStatusEnum
