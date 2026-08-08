@@ -32,7 +32,7 @@ def generate_signed_cookies(resource_url: str, expire_minutes: int = 5) -> Dict[
     cloudfront_signer = CloudFrontSigner(key_id, rsa_signer)
     
     # Expiration time
-    expire_date = datetime.now_kst() + datetime.timedelta(minutes=expire_minutes)
+    expire_date = now_kst() + datetime.timedelta(minutes=expire_minutes)
     
     # Generate the signed policy
     policy = cloudfront_signer.build_policy(
