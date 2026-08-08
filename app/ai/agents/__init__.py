@@ -215,10 +215,21 @@ class QualityCertificateResult(BaseModel):
 
 
 class DefectFinding(BaseModel):
-    """고객용 보증서에 노출되는 결함 1건의 서술."""
-    image_index: int = Field(default=0, description="이 결함이 발견된 원본 검수 이미지 인덱스")
+    """고객용 보증서에 노출되는 결함 **항목** 1건의 서술.
+
+    [주의] 탐지 건수와 1:1이 아니다. 같은 유형이 같은 부위에서 여러 번 잡히거나(모서리
+    마모는 한 구석이 여러 컷에 걸쳐 검출된다) 묶음으로 감점되는 유형은 고객에게 **하나의
+    항목**으로 보여야 한다. 종전에는 findings 길이를 결함 배열 길이와 강제로 맞춰서,
+    마모 3건이 잡히면 "또 발견되었습니다"가 3줄 나왔다.
+    """
+    image_index: int = Field(default=0, description="이 항목을 대표하는 원본 검수 이미지 인덱스")
+    location: str = Field(
+        default="",
+        description="고객이 읽는 위치 표현 (예: 앞표지 아래쪽 모서리, 책등 하단). "
+                    "좌표·인덱스 같은 내부 표기를 쓰지 않는다",
+    )
     label: str = Field(description="결함 이름 (예: 내지 손글씨/낙서). 코드가 아닌 사람이 읽는 한국어")
-    deduction: int = Field(default=0, description="이 결함으로 차감된 UBCI 점수")
+    deduction: int = Field(default=0, description="이 항목으로 차감된 UBCI 점수 (묶음이면 묶음 합계를 한 번만)")
     reason: str = Field(description="상세 사유 한 문장. 고객이 읽는 문장이므로 결함을 숨기지 않되 위트 있고 정중하게 포장")
 
 
@@ -682,14 +693,59 @@ preliminary_deduction 값만 재계산해서 반환하세요.
     # 판독 근거(스캔 장수, 앙상블 후보 수, 결함 유형)를 여기서 확정해 State에 싣는다.
     scanned_cnt = len(image_paths)
 
+    # --- 마모 후보 자동 채택 (2026-08-08, 조장 승인) ---
+    #
+    # [문제] VLM이 마모 후보의 채택 여부를 결정하는 구조에서, 같은 도서·같은 후보 5건인데
+    # 실행마다 5건 전부 채택 / 1건만 채택으로 갈렸다. 1건만 채택된 실행에서는 뒤표지 우측
+    # 마모(제보 확신도 79.5%, 육안 확인된 실제 결함)를 통째로 놓치고 UBCI 97점 S급(MINT)이
+    # 나왔다 - 모서리가 두 곳 닳은 책이 무결점 최상급으로 확정된 것이다(job b7b34ae1).
+    #
+    # 원인은 해상도다. 마모는 원본에서 25~44px 두께의 띠로 나타나는데, VLM은 축소된 전체
+    # 사진을 보므로 그것이 표지 가장자리 선인지 마모인지 구분할 수 없다. 프롬프트 문제가
+    # 아니므로 문구로는 고쳐지지 않는다.
+    #
+    # [조치] 마모에 한해 후보를 전건 채택하고, 판정은 **결함별 크롭을 확대해서 보는**
+    # 증거 대조 검증에 맡긴다. 판단 주체를 없애는 것이 아니라, 실제로 볼 수 있는 쪽으로
+    # 옮기는 것이다. 실측에서 크롭 검증은 확인된 결함 3건 전부에 YES를, 오탐 2건 중
+    # 어느 것에도 YES를 주지 않았다(확신도는 1위가 오탐이라 판별에 쓸 수 없었다).
+    #
+    # 범위는 DMG_EDGE_WEAR 하나다. 낙서는 Track 2·3의 doodle 전담 모델이, 찢어짐과
+    # 오염·물젖음·변색은 VLM이 계속 담당한다. VLM은 여기서도 제보에 없는 마모를 추가로
+    # 보고할 수 있고, 모서리를 몇 곳으로 셀지는 _edge_wear_profile()이 결정론적으로 정한다.
+    auto_adopted = 0
+    for cand in (yolo_candidates or []):
+        if str(cand.get("type") or "") != "DMG_EDGE_WEAR":
+            continue
+        cb, ci = cand.get("bbox"), int(cand.get("image_index") or 0)
+        if not isinstance(cb, dict):
+            continue
+        # VLM이 이미 같은 상자를 보고했으면 중복 등록하지 않는다
+        if any(
+            int(d.get("image_index") or 0) == ci and _bbox_iou(d.get("bbox"), cb) >= 0.5
+            for d in defects
+        ):
+            continue
+        defects.append({
+            "type": "DMG_EDGE_WEAR",
+            "ratio": 0,                      # _effective_ratio가 BBox 면적에서 유도한다
+            "bbox": dict(cb),
+            "image_index": ci,
+            "confidence": cand.get("confidence"),
+            "conf_source": "yolo",
+            "adopted_from_candidate": True,  # 감사 추적: VLM 판독이 아니라 자동 채택분
+        })
+        auto_adopted += 1
+    if auto_adopted:
+        is_mint = False
+        print(f"[Vision Agent] 마모 후보 {auto_adopted}건 자동 채택 (판정은 크롭 검증이 담당)")
+
     # --- 속지 마모 제외 (2026-08-07, 조장 지시) ---
     #
     # 모서리 마모는 책의 겉면에서 발생한다. 속지 컷에 측면 마모가 걸려 보이더라도 그 부위는
     # 표지·책등 컷에서 이미 검출되므로, 속지에서 또 세면 같은 손상을 이중으로 계산하게 된다.
     # 판정 주체를 옮기는 것이 아니라 **판정 대상에서 빼는 것**이다.
     #
-    # 표지·뒤표지·책등(Track 1)의 마모는 그대로 VLM 종합 판단에 맡긴다 - 여러 컷을 함께 보고
-    # 같은 모서리인지 다른 모서리인지 정리하는 것은 탐지 모델이 할 수 없는 일이다.
+    # 자동 채택분도 이 필터를 통과해야 하므로 채택 **뒤**에 둔다.
     before = len(defects)
     defects = [
         d for d in defects
@@ -725,6 +781,12 @@ preliminary_deduction 값만 재계산해서 반환하세요.
             if c.get("confidence") is not None
         }
         for d in defects:
+            # 자동 채택분은 제보 확신도를 그대로 쓰는 것이 **설계**다. 이걸 복사 위반으로
+            # 잡으면 Critic Stage A가 전건을 HITL로 올려 자동화가 성립하지 않는다.
+            # 복사 탐지의 대상은 "VLM이 판독했다고 주장하면서 실제로는 제보를 되돌려준 것"
+            # 뿐이다.
+            if d.get("adopted_from_candidate"):
+                continue
             try:
                 if round(float(d.get("confidence")), 4) in cand_confs:
                     d["conf_copied_from_candidate"] = True
@@ -753,7 +815,9 @@ preliminary_deduction 값만 재계산해서 반환하세요.
     vlm_confs = [
         round(float(d.get("confidence")), 4)
         for d in defects
-        if d.get("conf_source") != "yolo" and d.get("confidence") is not None
+        if d.get("conf_source") != "yolo"
+        and not d.get("adopted_from_candidate")
+        and d.get("confidence") is not None
     ]
     if len(vlm_confs) >= 2 and len(set(vlm_confs)) == 1:
         for d in defects:
@@ -855,14 +919,36 @@ preliminary_deduction 값만 재계산해서 반환하세요.
 # 실패 시 fail-open - 부가 검증이므로 LLM 장애가 판독 결과를 폐기시키지 않는다.
 
 # 증거 대조 검증을 면제하는 YOLO 실측 확신도 하한.
-# 물리 탐지 모델이 이 이상으로 잡은 검출을, 좌표를 픽셀로 환산하지도 못하는 LLM이
-# 뒤집게 두면 근거의 위계가 역전된다 (실측: 76% 검출이 기각되어 100점 MINT가 됐다).
-VERIFY_EXEMPT_CONF = float(os.getenv("WMS_VERIFY_EXEMPT_CONF", "0.60"))
+#
+# [2026-08-08 사실상 폐기 — 기본값 1.01로 아무것도 면제하지 않는다]
+# 이 면제는 "물리 탐지 모델이 높은 확신도로 잡은 것은 LLM이 뒤집으면 안 된다"는 전제로
+# 넣었으나, 그 전제가 실측으로 깨졌다. job b7b34ae1의 후보 5건을 육안 대조한 결과
+# **확신도 1위(75.8%)가 오탐**이었고 52.4%가 실재하는 손상이었다. 확신도 순서와 진위가
+# 무관하므로 확신도를 근거로 심사를 면제할 수 없다.
+#
+# 게다가 이 면제는 정작 문제가 된 실패를 막지도 못했다. 면제는 **확정 결함**에 적용되는데,
+# 고확신 후보가 VLM 게이트에서 탈락하면 애초에 결함이 되지 못해 면제할 대상 자체가 없었다.
+#
+# 값은 환경변수로 남겨 두되(실험 목적) 운영 기본값은 전건 심사다.
+VERIFY_EXEMPT_CONF = float(os.getenv("WMS_VERIFY_EXEMPT_CONF", "1.01"))
 
 # BBox 주변을 얼마나 넓게 잘라 볼지. 결함만 딱 자르면 맥락(주변 표지면과의 대비)이
 # 사라져 판단이 어려워지므로 여유를 준다.
 VERIFY_CROP_EXPAND = 3.0
 VERIFY_CROP_SIZE = 512
+
+# 크롭의 종횡비 상한. 모서리 마모는 266x26px 같은 극단적인 띠 형태가 흔한데, 그대로
+# 잘라 보내면 위아래 맥락이 없어 "이게 마모인지 표지 가장자리 선인지" 판단할 수 없다.
+# 짧은 축에 여백을 더 줘서 최소한의 주변 면을 함께 보여준다.
+VERIFY_CROP_MAX_ASPECT = 3.0
+
+# 짧은 변이 최소 이 크기가 되도록 확대한다. 종전에는 긴 변만 512로 맞췄는데, 띠 형태에서는
+# 긴 변이 이미 크므로 확대 배율이 1.6배에 그쳐 결함 디테일이 전혀 커지지 않았다
+# (실측: 75.8% 후보가 "화질이 거칠어 판단이 어렵습니다"로 UNCLEAR 반환).
+VERIFY_CROP_MIN_SHORT = 224
+VERIFY_CROP_MAX_LONG = 896
+# 원본에 없는 정보는 확대해도 생기지 않는다. 과도한 업스케일은 토큰만 쓰고 뭉갠 픽셀만 만든다.
+VERIFY_CROP_MAX_UPSCALE = 4.0
 
 
 def _crop_around_bbox(
@@ -900,23 +986,36 @@ def _crop_around_bbox(
         if x2 <= x1 or y2 <= y1:
             return None
 
-        # 여백은 **짧은 변**을 기준으로 계산해 축마다 같은 양을 더한다.
+        bw, bh = x2 - x1, y2 - y1
+
+        # 여백은 **짧은 변**을 기준으로 잡는다.
         #
         # [주의] 긴 변 기준 정사각 크롭으로 만들면 안 된다. 모서리 마모는 33x374px 같은
         # 가늘고 긴 띠 형태가 흔한데, 긴 변에 배율을 곱하면 1122px 정사각이 되어 표지
         # 전체가 잡힌다 - 확대해서 보여 주려던 목적이 정확히 무산된다(실측 defect#3).
-        pad = max(min(x2 - x1, y2 - y1) * (expand - 1) / 2, 24.0)
-        left = max(0, int(x1 - pad))
-        top = max(0, int(y1 - pad))
-        right = min(iw, int(x2 + pad))
-        bottom = min(ih, int(y2 + pad))
+        pad_x = pad_y = max(min(bw, bh) * (expand - 1) / 2, 24.0)
+
+        # 다만 짧은 변 기준만으로는 띠 형태에서 여백이 너무 인색해진다(266x26 -> 318x78,
+        # 4:1). 위아래 맥락이 없으면 마모인지 표지 가장자리 선인지 구분할 수 없다.
+        # 종횡비가 상한을 넘으면 **짧은 축에만** 여백을 더 준다.
+        if bw > bh:
+            pad_y = max(pad_y, (bw / VERIFY_CROP_MAX_ASPECT - bh) / 2)
+        else:
+            pad_x = max(pad_x, (bh / VERIFY_CROP_MAX_ASPECT - bw) / 2)
+
+        left = max(0, int(x1 - pad_x))
+        top = max(0, int(y1 - pad_y))
+        right = min(iw, int(x2 + pad_x))
+        bottom = min(ih, int(y2 + pad_y))
         crop = img.crop((left, top, right, bottom))
         if crop.width < 8 or crop.height < 8:
             return None
 
-        # 종횡비를 유지한 채 긴 변을 out_size에 맞춘다. 정사각으로 늘이면 띠 형태 결함이
-        # 왜곡되고, 여백을 채워 정사각을 만들면 그 여백이 또 하나의 판단 대상이 된다.
-        scale = out_size / max(crop.width, crop.height)
+        # 배율은 **짧은 변**을 기준으로 정한다. 긴 변만 out_size에 맞추면 띠 형태에서는
+        # 긴 변이 이미 커서 배율이 1.6배에 그치고 결함 디테일이 전혀 확대되지 않는다.
+        short, long_ = min(crop.width, crop.height), max(crop.width, crop.height)
+        scale = max(VERIFY_CROP_MIN_SHORT / short, out_size / long_)
+        scale = min(scale, VERIFY_CROP_MAX_LONG / long_, VERIFY_CROP_MAX_UPSCALE)
         if scale > 1:
             crop = crop.resize(
                 (max(8, round(crop.width * scale)), max(8, round(crop.height * scale))),
@@ -1040,12 +1139,24 @@ def verify_defects_with_images(
         judged += 1
         d["verify_visible"] = res.visible
         d["verify_reason"] = res.reason
-        if res.visible == "NO":
-            d["verify_status"] = "rejected"
+        # [2026-08-08 조장 결정] 감점은 **YES 에만** 준다.
+        #
+        # 종전에는 UNCLEAR를 감점 유지로 뒀다. "판단이 어렵다"가 "결함이 없다"는 아니므로
+        # 보수적으로 남긴 것이었는데, 실측에서 정반대로 나왔다. job b7b34ae1의 후보 5건을
+        # 육안 대조한 결과 UNCLEAR 2건은 **둘 다 오탐**이었고, 실재하는 손상 3건은 전부
+        # YES를 받았다. 즉 이 모델에서 UNCLEAR는 "못 봤다"보다 "볼 것이 없다"에 가깝다.
+        #
+        # UNCLEAR를 HITL 이관 사유로 쓰는 안도 검토했으나, 5건 중 2건꼴로 발생해 대부분의
+        # 검수가 사람에게 넘어간다 - 자동화가 성립하지 않는다.
+        #
+        # 감수하는 위험: 해상도 때문에 못 본 진짜 결함이 감점에서 빠진다. 표본이 도서 1권
+        # 이므로 재촬영으로 표본을 키운 뒤 재검토한다.
+        if res.visible in ("NO", "UNCLEAR"):
+            d["verify_status"] = "rejected" if res.visible == "NO" else "unclear"
             suspects.append(i)
             notes.append(f"#{i} {label}: {res.reason}")
         else:
-            d["verify_status"] = "confirmed" if res.visible == "YES" else "unclear"
+            d["verify_status"] = "confirmed"
 
     if judged == 0 and not suspects:
         # 전건 면제/생략이면 심사를 한 적이 없다. 통과로 위장하지 않는다.
@@ -1612,7 +1723,10 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
                     "bbox": d.get("bbox"),
                     "ratio": d.get("ratio"),
                     "confidence": d.get("confidence"),
-                    "deduction": d.get("preliminary_deduction"),
+                    # 크롭을 직접 본 증거 대조 검증의 판정. Stage B는 이미지를 보지 않으므로
+                    # 이 값을 좌표 휴리스틱으로 뒤집지 않도록 프롬프트에서 명시한다.
+                    "verified": d.get("verify_visible") or "미심사",
+                    "deduction": d.get("applied_deduction", d.get("preliminary_deduction")),
                 }
                 for i, d in enumerate(defects)
             ]
@@ -1626,16 +1740,28 @@ Vision AI가 보고한 결함 판독이 타당한지 보수적이고 엄격하�
 - 판독 결함 목록(JSON): {json.dumps(evidence, ensure_ascii=False)}
 - Policy 산출 점수: UBCI {score}점
 
+[중요 - 당신은 이미지를 보지 않습니다]
+당신에게는 좌표와 메타데이터만 주어집니다. 따라서 **"실제로 손상이 보이는가"는 판단하지
+마세요.** 그 판단은 결함 부위를 확대한 크롭을 직접 본 증거 대조 검증이 이미 수행했고,
+그 결과가 아래 목록의 verified 필드에 있습니다. 좌표만 보고 그 판정을 뒤집지 마세요.
+당신의 역할은 **좌표·개수·유형의 구조적 모순**을 찾는 것으로 한정됩니다.
+
+[모서리 마모(DMG_EDGE_WEAR)에 대한 주의]
+한 권에는 모서리가 여러 개이고 보통 함께 닳습니다. 같은 구석이 앞표지·뒤표지·책등 컷에
+모두 잡히기도 합니다. 따라서 **마모가 한 이미지에 여러 건 보고되거나 여러 컷에 걸쳐
+보고되는 것은 정상이며 오탐의 근거가 아닙니다.** 감점은 건수가 아니라 "책 기준으로 서로
+다른 모서리 몇 곳인가"로 산정되며(중복은 Policy가 좌표로 합칩니다), 이 계산은 이미
+결정론적으로 끝나 있습니다. 마모 건수가 많다는 이유로 REJECTED를 내지 마세요.
+
 [REJECTED로 판단해야 하는 경우]
 1. BBox가 이미지 대부분(면적 50% 이상)을 덮는 결함 - 인쇄된 본문/표/삽화를 결함으로
    오탐했을 가능성이 높습니다. (좌표계는 0~1000 기준)
-2. 서로 다른 이미지에 거의 동일한 좌표·유형으로 중복 보고된 결함.
+2. 마모가 **아닌** 유형이 서로 다른 이미지에 거의 동일한 좌표로 중복 보고된 경우.
 3. 결함 유형과 발견 위치가 물리적으로 모순되는 경우
    (예: 표지에만 생기는 손상이 내지에서 보고됨).
 4. special_notes의 서술과 결함 목록이 서로 모순되는 경우.
-5. confidence가 현저히 낮은데(0.3 미만) 감점이 큰 경우.
 
-위 어디에도 해당하지 않으면 APPROVED로 판단하세요. 애매하면 REJECTED를 선택하세요.
+위 어디에도 해당하지 않으면 APPROVED로 판단하세요.
 오탐이 의심되는 항목이 있으면 suspect_indices에 해당 index를 넣으세요.
 """
             structured_critic = llm_mini.with_structured_output(CriticVerdict)
@@ -1758,7 +1884,17 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
     ubci_score = state.get("ubci_score")
     if ubci_score is None:
         ubci_score = 100
-    defects = state.get("defects") or []
+
+    all_defects = state.get("defects") or []
+    # 감점에 실제로 반영된 항목만 고객 문서의 대상이다. 걸러진 항목은 "검토했으나 결함이
+    # 아니라고 판단한 것"이므로 결함으로 보이면 안 된다. 다만 **입력에서 지우지는 않고**
+    # 아래 프롬프트에 사실로 알려 준 뒤 출력 형식으로 통제한다 - 몇 건을 검토해서 몇 건을
+    # 확정했는지는 문서의 신뢰도를 만드는 정보라 작성자가 알아야 한다.
+    defects = [
+        d for d in all_defects
+        if not d.get("evidence_suspect") and d.get("deduction_scope") != "excluded"
+    ]
+    dismissed_cnt = len(all_defects) - len(defects)
     special_notes = state.get("special_notes")
     book_title = state.get("book_title") or "본 도서"
     grade_str = _grade_label(ubci_score)
@@ -1775,7 +1911,6 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
             # 그룹 산정(마모 부위 합산)·Cap·오탐 제외를 전혀 반영하지 않는다 - 보증서에
             # 실제와 다른 감점이 찍히던 원인.
             "deduction": d.get("applied_deduction", d.get("preliminary_deduction") or 0),
-            "deduction_scope": d.get("deduction_scope"),
             "ratio": d.get("ratio"),
             "text_overlap": d.get("text_overlap"),
         }
@@ -1801,29 +1936,72 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
 [검수 결과]
 - 도서명: {book_title}
 - UBCI 최종 점수: {ubci_score}점 ({grade_str})
-- 검출 결함 목록(JSON): {json.dumps(defect_brief, ensure_ascii=False)}
+- 확정 결함 목록(JSON): {json.dumps(defect_brief, ensure_ascii=False)}
 - 정성적 특이사항: {special_notes or "없음"}
+- 참고: 정밀 대조에서 결함이 아닌 것으로 판단해 최종 목록에서 뺀 후보 {dismissed_cnt}건이
+  있습니다. **이 사실은 문서에 쓰지 마세요.** 위 목록이 이미 확정분만 담고 있다는 뜻입니다.
 {unverified_block}
 [작성 규칙]
-1. 결함이 하나도 없으면(빈 목록) condition_detail에 "결함이 없다"는 사실을 반드시 명시하되,
+1. 결함 목록이 **완전히 빈 경우에만** condition_detail에 "결함이 없다"는 사실을 명시하되,
    "해당 없음" 같은 사무적 표현 대신 위트 있게 풀어 쓰세요.
    (예: "샅샅이 뒤졌지만 트집 잡을 곳이 없었습니다" 같은 톤)
+   **결함이 하나라도 있으면 이 톤을 쓰지 마세요.** "결함이 없다는 사실을 찾기 어려웠다"
+   같은 문장은 있는 결함을 없는 것처럼 흐리는 표현이라 금지합니다.
 2. 결함이 있으면 절대 축소하거나 숨기지 말고 정직하게 쓰되, 고객이 불안해지지 않도록
    정중하고 위트 있게 포장하세요. findings 배열에 결함별로 1건씩 채우고,
    각 항목의 image_index/deduction은 위 JSON 값을 그대로 옮기세요.
 3. 과장 광고 금지 - "최고급", "완벽한 신품" 같은 단정적 표현은 쓰지 마세요.
 4. 모든 문장은 한국어 존댓말. 이모지는 쓰지 마세요.
 5. headline은 20자 내외 한 줄, summary는 2~3문장, condition_detail은 2~4문장.
+
+[출력 형식 - findings 배열]
+6. findings는 **탐지 건수가 아니라 고객이 이해하는 항목 단위**로 씁니다.
+   - 위 JSON의 항목 수와 findings 길이를 맞추려 하지 마세요.
+   - 같은 label이 여러 번 나오면 **부위별로 묶어 한 건으로** 쓰세요. 모서리 마모는
+     한 구석이 여러 컷에 걸쳐 잡히므로 건수를 그대로 세면 실제보다 심해 보입니다.
+   - `deduction`이 여러 항목에 같은 값으로 적혀 있으면 그것은 **묶음 합계**입니다.
+     묶은 항목에 그 값을 **한 번만** 쓰고, 항목마다 더하지 마세요.
+   - `location`에는 고객이 읽는 위치를 쓰세요 (예: "앞표지 아래쪽 모서리", "책등 하단").
+     좌표나 인덱스 표기는 쓰지 않습니다.
+
+7. **내부 검수 용어를 노출하지 마세요.** 이 문서는 고객이 읽습니다.
+   금지: "오탐", "제외된 항목", "감점 제외", "묶음 산정", "판독", "검증", "BBox",
+   "좌표", "인덱스", "재검수", "HITL" 등 내부 처리 과정을 가리키는 표현.
+   "또 발견되었습니다", "반복적으로 확인되었습니다" 같이 건수를 세는 표현도 쓰지 마세요.
 """
 
     try:
         structured = llm_mini.with_structured_output(CertificateDocument)
         doc: CertificateDocument = structured.invoke([HumanMessage(content=prompt)])
         result = doc.model_dump()
-        # LLM이 findings를 비우거나 개수를 틀리게 채우면 실제 결함 수와 화면이 어긋난다.
-        # 결함 개수는 검수 사실이므로 LLM 판단에 맡기지 않고 강제로 정합성을 맞춘다.
-        if len(result.get("findings") or []) != len(defects):
+        # [2026-08-08 변경] 종전에는 findings 길이를 결함 배열 길이와 **정확히 일치**시키도록
+        # 강제했다. 그래서 모서리 마모처럼 한 부위가 여러 컷에 걸쳐 잡히는 유형에서 탐지
+        # 건수만큼 문장이 생성됐고, "또 발견되었습니다 / 반복적으로 확인되었습니다"가
+        # 줄줄이 나가 고객에게 실제보다 나쁜 인상을 줬다.
+        #
+        # 이제 findings는 **항목 단위**로 묶는 것이 정상이므로 개수 일치를 요구하지 않는다.
+        # 다만 두 가지는 사실이므로 계속 강제한다.
+        #   - 확정 결함이 있는데 findings가 비면 결함을 숨긴 문서가 된다
+        #   - findings가 확정 결함 수보다 많으면 없는 결함을 지어낸 것이다
+        findings = result.get("findings") or []
+        if defects and (not findings or len(findings) > len(defects)):
             result["findings"] = _fallback_certificate(ubci_score, defects, special_notes)["findings"]
+        elif not defects and findings:
+            result["findings"] = []
+
+        # 묶음 감점은 **한 번만** 표시한다.
+        #
+        # 마모처럼 부위 합산으로 산정되는 유형은 같은 감점값이 여러 항목에 실려 내려간다.
+        # 프롬프트로 "한 번만 쓰라"고 지시해도 모델이 항목마다 그대로 복사해 붙이는 것이
+        # 실측으로 확인됐다(-7점이 3건 → 고객이 -21점으로 읽음). 문서 숫자는 프롬프트가
+        # 아니라 코드가 보장해야 하므로, 같은 라벨·같은 값이 반복되면 첫 항목만 남긴다.
+        seen: set = set()
+        for f in (result.get("findings") or []):
+            key = (f.get("label"), f.get("deduction"))
+            if f.get("deduction") and key in seen:
+                f["deduction"] = 0      # 같은 묶음의 두 번째 이후 항목 - 합계 중복 표기 방지
+            else:
+                seen.add(key)
         return result
     except Exception as e:
         print(f"[Report Agent] 보증서 문서 생성 실패, 결정론적 폴백 사용: {e}")
