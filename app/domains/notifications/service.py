@@ -31,6 +31,13 @@ _TYPE_PRESETS: Dict[str, Dict[str, str]] = {
     "RESTOCK_PROPOSAL": {"category": "자동발주 알림", "severity": "INFO", "link_url": "/admin/po"},
     "FDS_ALERT": {"category": "FDS 이상거래", "severity": "CRITICAL", "link_url": "/admin/fds"},
     "INSPECTION_DONE": {"category": "검수 완료", "severity": "INFO", "link_url": "/inspections"},
+    # [2026-08-08 신설] 출고 파이프라인 3사건. 이전에는 orders/picking.py의
+    # publish_outbound_notification()이 이 서비스를 거치지 않고 Redis에만 직접 발행해
+    # DB에 남지 않았다 (아래 emit_outbound_event 수정 이력 참고).
+    "PICKING_INSTRUCTION_ISSUED": {"category": "출고 피킹 지시", "severity": "INFO", "link_url": "/worker/outbound"},
+    "PICKING_COMPLETED": {"category": "피킹 완료", "severity": "INFO", "link_url": "/admin/outbound"},
+    "WAYBILL_ISSUED": {"category": "송장 발급", "severity": "INFO", "link_url": "/worker/outbound"},
+    "OUTBOUND_SHIPPED": {"category": "출고 완료", "severity": "INFO", "link_url": "/admin/outbound"},
 }
 
 
@@ -162,6 +169,38 @@ def notify_restock_proposal(book_title: str, qty: int, proposal_id: Optional[str
         ref_type="ORDER_PROPOSAL",
         ref_id=proposal_id,
         target_role="ADMIN",
+    )
+
+
+def notify_outbound_event(
+    event_type: str,
+    title: str,
+    description: str,
+    *,
+    instruction_id: Optional[str] = None,
+    target_role: Optional[str] = None,
+) -> None:
+    """
+    출고 파이프라인(피킹 완료/송장 발급/최종 출고) 사건 발행.
+
+    [수정 이력 2026-08-08] orders/picking.py의 publish_outbound_notification()이
+    이 서비스(emit)를 거치지 않고 Redis notifications:global 채널에 직접 publish만
+    했다. 그 결과 notifications 테이블에 저장되지 않아, 화면 이동으로 SSE 연결이
+    끊기는 순간(출고 흐름은 관제 화면 -> 스캐너 화면 등 여러 페이지를 오가므로 거의
+    매번 발생) 발행된 이벤트가 영구 소실됐다. GET /api/v1/notifications는 DB만
+    읽으므로, 출고를 처음부터 끝까지 진행해도 알림 패널이 비어 있던 원인이 이것이다
+    (입고/HITL 알림은 emit()을 거쳐 DB에 남으므로 정상 동작했다). 페이로드 형태도
+    달라(created_at 대신 timestamp, link_url·severity 누락) 실시간 수신에 성공한
+    경우조차 클릭 이동과 상대시각 표시가 깨졌다. 이제 다른 도메인과 동일하게 emit()에
+    위임해 DB 저장과 올바른 페이로드를 함께 보장한다.
+    """
+    emit(
+        type=event_type,
+        title=title,
+        description=description,
+        ref_type="PICKING_INSTRUCTION",
+        ref_id=instruction_id,
+        target_role=target_role,
     )
 
 
