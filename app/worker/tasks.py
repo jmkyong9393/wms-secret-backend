@@ -316,6 +316,101 @@ def enqueue_restock_proposal(return_job_id: str) -> None:
             logger.error(f"[Restock] 인프로세스 폴백마저 실패 - 제안 생성 건너뜀: {e2}")
 
 
+@celery_app.task(name="app.worker.tasks.generate_hitl_certificate", max_retries=1)
+def generate_hitl_certificate(return_job_id: str, hitl_inspector: str) -> Dict[str, Any]:
+    """
+    HITL 승인 건의 고객 보증서 본문을 비동기로 생성한다.
+
+    [배경 - 2026-08-08] 종전에는 admin 라우터(app/domains/admin/router.py
+    submit_hitl_override)가 승인 항목마다 build_certificate_document()(GPT-4o-mini)를
+    요청 스레드에서 동기 호출했다. 합성 시드 데이터 다건을 한 번에 일괄 승인하는
+    요청에서 순차 LLM 호출이 쌓여 wms-secret-api 컨테이너가 OOM(exit 137)으로 죽었다.
+    반려 확정 건의 Restock 제안 큐잉(enqueue_restock_proposal)과 동일한 패턴으로,
+    등급 확정·랙 배정·재고 편입까지는 라우터가 동기로 끝내고 보증서 생성만 워커로
+    넘긴다 (판정/집행 분리 - 등급 확정과 보증서 문서화는 별개 관심사).
+    """
+    from app.db.session import engine
+    from app.ai.agents import build_certificate_document
+
+    try:
+        parsed_job_id = uuid.UUID(return_job_id)
+        with Session(engine) as session:
+            job = session.get(ReturnJob, parsed_job_id)
+            if not job:
+                return {"status": "SKIPPED", "reason": "RETURN_JOB_NOT_FOUND"}
+
+            agent_logs = dict(job.agent_logs or {})
+            target_grade = agent_logs.get("target_grade") or "NORMAL"
+
+            notes = [f"관리자 수동 검수 확정 (검수자: {hitl_inspector})"]
+            reason = agent_logs.get("primary_reason_code")
+            if reason:
+                notes.append(f"판정 사유: {reason}")
+            if target_grade:
+                notes.append(f"확정 등급: {target_grade}")
+            comment = (agent_logs.get("admin_comment") or "").strip()
+            if comment:
+                notes.append(f"검수자 의견: {comment}")
+            prior = (agent_logs.get("special_notes") or "").strip()
+            if prior:
+                notes.append(f"AI 판독 특이사항: {prior}")
+
+            cert_state = {
+                "ubci_score": job.ubci_score,
+                "defects": agent_logs.get("defects") or [],
+                "book_title": agent_logs.get("book_title") or "",
+                "special_notes": " / ".join(notes),
+            }
+            cert_doc = build_certificate_document(cert_state)
+            cert_doc["cert_id"] = f"CERT-{datetime.now().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
+            cert_doc["issued_by"] = "HITL"
+            cert_doc["inspected_by"] = hitl_inspector
+
+            executed_agents = list(agent_logs.get("executed_agents") or [])
+            if "report_agent" not in executed_agents:
+                executed_agents.append("report_agent")
+            report_generated_at = now_kst().strftime("%Y-%m-%d %H:%M:%S")
+            report_text = (
+                f"HITL 결재 시점 보증서 생성 - {cert_doc['cert_id']} / 결재자 {hitl_inspector} / "
+                f"최종 확정 UBCI {job.ubci_score}점 ({target_grade}) - 관리자 결재 근거가 보증서 특이사항에 반영됨"
+            )
+            job.agent_logs = {
+                **agent_logs,
+                "certificate": cert_doc,
+                "executed_agents": executed_agents,
+                "report_text": report_text,
+                "report_generated_at": report_generated_at,
+            }
+            session.add(job)
+            session.commit()
+            logger.info(f"[HITL] 보증서 비동기 생성 완료: {cert_doc['cert_id']} (job {job.id})")
+            return {"status": "SUCCESS", "cert_id": cert_doc["cert_id"]}
+    except Exception as e:
+        logger.exception(f"[HITL] 보증서 비동기 생성 실패 (return_job_id={return_job_id}): {e}")
+        return {"status": "FAILED", "error": str(e)}
+
+
+def enqueue_hitl_certificate(return_job_id: str, hitl_inspector: str) -> None:
+    """
+    HITL 승인 보증서 생성을 비동기로 큐잉한다. Celery 브로커 장애 시 인프로세스 스레드로
+    폴백한다 (enqueue_restock_proposal과 동일 패턴). 결재 자체를 막지 않도록 예외를
+    호출자(오버라이드 제출 흐름)로 전파하지 않는다.
+    """
+    try:
+        generate_hitl_certificate.delay(str(return_job_id), hitl_inspector)
+    except Exception as e:
+        logger.warning(f"[HITL] Celery 큐잉 실패, 인프로세스로 폴백: {e}")
+        try:
+            import threading
+            threading.Thread(
+                target=generate_hitl_certificate,
+                args=(str(return_job_id), hitl_inspector),
+                daemon=True,
+            ).start()
+        except Exception as e2:
+            logger.error(f"[HITL] 인프로세스 폴백마저 실패 - 보증서 생성 건너뜀: {e2}")
+
+
 from celery.signals import worker_ready
 
 
