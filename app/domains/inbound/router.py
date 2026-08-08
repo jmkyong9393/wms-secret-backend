@@ -8,7 +8,7 @@ import json
 import uuid
 import datetime
 from app.db.session import get_db
-from app.models.wms import now_kst, InboundJob, Book, ReturnJob, JobStatusEnum, ubci_grade_from_score
+from app.models.wms import now_kst, InboundJob, Book, ReturnJob, InventoryUsedItem, JobStatusEnum, ubci_grade_from_score
 from app.domains.inbound.service import generate_signed_cookie, lookup_book_by_isbn
 import base64
 import os
@@ -197,6 +197,23 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
                 db.commit()
                 db.refresh(book)
 
+    # LPN 재촬영(재검수)은 촬영 당시 ISBN 바코드 없이 LPN QR만으로 진행될 수 있다
+    # (book_metadata에 isbn이 아예 없음). 이 경우 위 경로로는 book을 찾지 못하지만,
+    # 그 LPN은 최초 입고 시 이미 book_id가 연결돼 있으므로 그 연결을 재사용한다.
+    # 여기서도 book을 못 찾으면 return_jobs.book_id NOT NULL 위반으로 500이 난다.
+    if not book and request.lpn:
+        existing_item = db.exec(
+            select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode == request.lpn)
+        ).first()
+        if existing_item:
+            book = db.get(Book, existing_item.book_id)
+
+    if not book:
+        raise HTTPException(
+            status_code=422,
+            detail="도서 정보를 확인할 수 없습니다. ISBN을 다시 스캔하거나 LPN 재촬영으로 진행해주세요."
+        )
+
     job_id = f"job-{uuid.uuid4().hex[:8]}"
 
     # [수정 이력] 예전에는 base64 이미지를 로컬 디스크에만 저장하고 컨테이너 절대경로
@@ -249,7 +266,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
 
     # ReturnJob DB row 생성 - lpn/book_category/book_metadata는 agent_logs(JSONB)에 보존
     new_job = ReturnJob(
-        book_id=book.id if book else None,
+        book_id=book.id,
         image_urls=public_image_urls,
         status=JobStatusEnum.PENDING.value,
         agent_logs={
