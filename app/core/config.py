@@ -41,10 +41,14 @@ class Settings(BaseSettings):
     LABEL_PRINTER_PORT: int = 9100
     LABEL_PRINTER_TIMEOUT_SECONDS: float = 5.0
 
-    # XP-423B: 203 DPI(약 8 dots/mm), 라벨 50mm × 30mm
+    # XP-423B: 203 DPI(약 8 dots/mm), 라벨 50mm × 31mm (다이컷 라벨 RS5031 실측 규격)
     LABEL_PRINTER_DPI: int = 203
     LABEL_PRINTER_LABEL_WIDTH_MM: int = 50
-    LABEL_PRINTER_LABEL_HEIGHT_MM: int = 30
+    LABEL_PRINTER_LABEL_HEIGHT_MM: int = 31
+
+    # RS5031 라벨 인쇄 여백 (제조사 규격: 왼쪽 1.5mm, 위쪽 1.44mm)
+    LABEL_PRINTER_MARGIN_LEFT_MM: float = 1.5
+    LABEL_PRINTER_MARGIN_TOP_MM: float = 1.44
 
     # ZPL 전송 인코딩 (프린터 한글 설정에 따라 utf-8 또는 euc-kr)
     LABEL_PRINTER_ENCODING: str = "utf-8"

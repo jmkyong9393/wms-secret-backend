@@ -62,9 +62,9 @@ def test_zpl_control_characters_are_sanitized():
     assert "GRADE: GO OD" in zpl
 
 
-def test_label_dimensions_match_203dpi_50x30mm():
+def test_label_dimensions_match_203dpi_50x31mm():
     zpl = build_lpn_label_zpl(lpn_barcode="LPN-DIM-TEST")
 
-    # 203 DPI 기준 50mm=400dots, 30mm=240dots
+    # 203 DPI 기준 50mm=400dots, 31mm=248dots (RS5031 다이컷 라벨 실측 규격)
     assert "^PW400" in zpl
-    assert "^LL240" in zpl
+    assert "^LL248" in zpl
