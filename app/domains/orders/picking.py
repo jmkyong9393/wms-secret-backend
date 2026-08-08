@@ -29,34 +29,36 @@ from app.models.wms import (
 logger = logging.getLogger(__name__)
 
 
+# 이벤트 종류별 수신 대상. 지정 없으면 전체 공개(관리자+작업자 모두 수신) - INSPECTION_DONE과
+# 동일 관례. WAYBILL_ISSUED만 "포장하세요"라는 작업 지시라 WORKER 전용으로 좁힌다.
+_OUTBOUND_TARGET_ROLE: Dict[str, str] = {
+    "PICKING_INSTRUCTION_ISSUED": "WORKER",
+    "WAYBILL_ISSUED": "WORKER",
+}
+
+
 def publish_outbound_notification(event_type: str, category: str, title: str, description: str, extra: Optional[Dict[str, Any]] = None) -> None:
     """
-    notifications:global Redis Pub/Sub 채널에 출고 파이프라인 이벤트를 발행한다.
-    헤더 벨/토스트(SSE)와 worker 스캐너 화면이 실시간 수신한다. Redis 미가용 시 무시(비치명).
-    """
-    try:
-        import json
-        import redis as sync_redis
-        from app.core.redis_pubsub import REDIS_URL
+    출고 파이프라인(피킹 완료/송장 발급/최종 출고) 이벤트를 알림으로 발행한다.
 
-        event = {
-            "type": event_type,
-            "category": category,
-            "title": title,
-            "description": description,
-            "time_ago": "방금 전",
-            "timestamp": now_kst().isoformat(),
-            **(extra or {}),
-        }
-        # 발행은 부가 기능 - Redis 지연/장애가 주문 파이프라인을 블로킹하지 않도록 짧은 타임아웃 강제
-        client = sync_redis.Redis.from_url(
-            REDIS_URL, decode_responses=True,
-            socket_timeout=2, socket_connect_timeout=2,
+    [수정 이력 2026-08-08] 종전에는 Redis notifications:global 채널에 직접 publish만 하고
+    notifications DB 테이블에는 저장하지 않았다. 그 결과 화면 이동으로 SSE 연결이 끊기는
+    순간(출고 흐름은 관제 화면 -> 스캐너 화면 등 여러 페이지를 오가므로 거의 매번 발생)
+    발행된 이벤트가 영구 소실됐고, GET /api/v1/notifications는 DB만 읽으므로 출고를 끝까지
+    진행해도 알림 패널이 계속 비어 있었다. category 인자는 notifications.service의
+    _TYPE_PRESETS가 event_type 기준으로 이미 확정하므로 여기서는 쓰지 않는다(호출부 호환을
+    위해 파라미터만 유지) - 문구가 호출부마다 달라지는 것을 막기 위한 서비스 설계 원칙과 일치.
+    """
+    from app.domains.notifications.service import notify_outbound_event
+
+    try:
+        notify_outbound_event(
+            event_type=event_type,
+            title=title,
+            description=description,
+            instruction_id=(extra or {}).get("instruction_id"),
+            target_role=_OUTBOUND_TARGET_ROLE.get(event_type),
         )
-        try:
-            client.publish("notifications:global", json.dumps(event, ensure_ascii=False))
-        finally:
-            client.close()
     except Exception as e:
         logger.warning(f"Outbound notification publish failed (non-fatal): {e}")
 
@@ -193,7 +195,7 @@ def generate_llm_narrative(items: List[PickingInstructionItem], customer_name: s
 
         lines = "\n".join(
             f"{it.pick_seq}. [{it.stock_type}] {it.title} x{it.quantity}권 "
-            f"@ Zone {it.zone}-Rack {it.rack}-Shelf {it.shelf}"
+            f"@ {it.zone}-{it.rack}-{it.shelf}"
             + (f" (LPN: {it.lpn_barcode})" if it.lpn_barcode else " (ISBN 스캔)")
             for it in items
         )

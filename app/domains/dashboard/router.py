@@ -104,12 +104,24 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     # 신품 Fast-track은 무검수 입고라 UBCI 점수가 없고, 수량 단위도 다르다(권수 vs LPN 건수).
     # 같은 파이에 넣으면 신품 물량이 등급 조각을 압도해 등급 구성을 읽을 수 없다.
     # 신품/중고 비교는 카테고리별 누적 막대가 담당한다.
+    #
+    # [수정 이력] value는 파이 조각 각도 계산용 실개수(건)다. 프론트 범례가 이 값에 그대로
+    # "%"를 붙여 렌더해 617%/965%/532% 같은 값이 나왔다. 문구를 호출부(프론트)가 지어내면
+    # 같은 사건이 화면마다 다르게 표시된다는 이 코드베이스의 원칙대로, 퍼센트는 총합 대비
+    # 비율을 여기서 확정해 pct로 함께 내려준다 (value는 그대로 유지 - Pie 조각 크기용).
+    grade_total = sum(grade_counts.values())
+    def _pct(n: int) -> float:
+        return round(n / grade_total * 100, 1) if grade_total else 0.0
+
     ubci_grade_data = [
-        {"name": "MINT (95~100점)", "value": grade_counts["MINT"], "color": "#10b981"},
-        {"name": "GOOD (85~94점)", "value": grade_counts["GOOD"], "color": "#3b82f6"},
-        {"name": "NORMAL (65~84점)", "value": grade_counts["NORMAL"], "color": "#f59e0b"},
-        {"name": "REJECT (65점 미만)", "value": grade_counts["REJECT"], "color": "#ef4444"},
+        {"name": "MINT (95~100점)", "value": grade_counts["MINT"], "pct": _pct(grade_counts["MINT"]), "color": "#10b981"},
+        {"name": "GOOD (85~94점)", "value": grade_counts["GOOD"], "pct": _pct(grade_counts["GOOD"]), "color": "#3b82f6"},
+        {"name": "NORMAL (65~84점)", "value": grade_counts["NORMAL"], "pct": _pct(grade_counts["NORMAL"]), "color": "#f59e0b"},
+        {"name": "REJECT (65점 미만)", "value": grade_counts["REJECT"], "pct": _pct(grade_counts["REJECT"]), "color": "#ef4444"},
     ]
+    # 파이 중앙 라벨(MINT+GOOD 합산 비율)도 프론트가 "86%"로 하드코딩해두고 있었다 - 실데이터와
+    # 무관하게 항상 같은 숫자가 떠 있었다. 여기서 실계산값을 함께 내려 하드코딩을 대체한다.
+    mint_good_pct = _pct(grade_counts["MINT"] + grade_counts["GOOD"])
 
     # 7일간 일별 입출고 실집계 (입고: InventoryUsedItem 생성 시각, 출고: AUTO_PO를 제외한 Order 생성 시각)
     volume_data = []
@@ -182,6 +194,7 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     return {
         "volume_data": volume_data,
         "ubci_grade_data": ubci_grade_data,
+        "ubci_mint_good_pct": mint_good_pct,
         "category_data": category_data,
     }
 
