@@ -1,0 +1,42 @@
+name: Nexus Backend CI/CD (v3.1)
+on:
+  push: { branches: [main] }
+permissions: { id-token: write, contents: read }
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ap-northeast-2
+    - id: ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    - uses: docker/setup-buildx-action@v3
+
+    - name: Build & Push Backend (api+worker 공용, Model Baked)
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ steps.ecr.outputs.registry }}/nexus-backend-repo:${{ github.sha }}
+          ${{ steps.ecr.outputs.registry }}/nexus-backend-repo:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Deploy via SSH (Rolling Update)
+      if: ${{ secrets.EC2_HOST != '' }}
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ubuntu
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          REG=${{ steps.ecr.outputs.registry }}
+          SHA=${{ github.sha }}
+          kubectl set image deployment/wms-api       api=$REG/nexus-backend-repo:$SHA
+          kubectl set image deployment/wms-ai-worker ai-worker=$REG/nexus-backend-repo:$SHA
+          kubectl rollout status deployment/wms-api --timeout=180s
