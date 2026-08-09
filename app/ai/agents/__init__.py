@@ -1601,6 +1601,44 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
 # ==========================================
 # 3. Critic Agent (판정 애매 도서 & 최대 루프 초과 시 HITL 이관 제어)
 # ==========================================
+def critic_stage_a_integrity_check(defects: list, image_count: int, score) -> list[str]:
+    """Vision 결함 목록과 Policy 산출 점수의 결정론적 정합성 대조 (LLM 미사용).
+    critic_agent Stage A 본체 - admin/router.py HITL 재검증도 재사용 (배경: 33번 문서)."""
+    integrity_issues: list[str] = []
+
+    for i, d in enumerate(defects):
+        if not isinstance(d, dict):
+            integrity_issues.append(f"결함[{i}] 형식 오류")
+            continue
+        # BBox 누락: 프론트가 결함 위치를 표시할 수 없어 "투명 공개" 보증이 깨진다.
+        if not isinstance(d.get("bbox"), dict):
+            integrity_issues.append(f"결함[{i}]({d.get('type')}) BBox 좌표 누락")
+        # image_index 범위 초과: VLM이 존재하지 않는 이미지를 지목한 환각 신호.
+        idx = d.get("image_index")
+        if image_count and isinstance(idx, int) and not (0 <= idx < image_count):
+            integrity_issues.append(f"결함[{i}] image_index({idx})가 촬영 장수({image_count}) 범위를 벗어남")
+
+    # 결함이 있는데 감점이 0점(=100점 만점)이면 Vision과 Policy 보고가 모순된다.
+    if defects and score == 100:
+        integrity_issues.append(f"결함 {len(defects)}건이 보고되었으나 UBCI 감점이 0점(100점)으로 산출됨")
+
+    # 결함이 없는데 감점이 발생한 경우도 마찬가지로 모순이다.
+    if not defects and score is not None and score < 100:
+        integrity_issues.append(f"결함 0건인데 UBCI {score}점(감점 {100 - score}점)이 산출됨")
+
+    # 확신도를 YOLO 제보에서 그대로 베낀 결함 - 이미지를 보고 판단한 결과가 아니다.
+    # Vision Agent가 결정론적으로 표시해 둔 플래그를 여기서 정합성 위반으로 승격시킨다.
+    # (판독을 신뢰할 수 없으므로 자동 확정 금지 - 결함 자체는 근거로 보존한다)
+    copied = [i for i, d in enumerate(defects) if isinstance(d, dict) and d.get("conf_copied_from_candidate")]
+    if copied:
+        integrity_issues.append(
+            f"결함 {len(copied)}건의 확신도가 YOLO 제보 값과 완전히 일치 - VLM이 이미지를 "
+            f"직접 판단하지 않고 제보를 반환한 것으로 보임"
+        )
+
+    return integrity_issues
+
+
 def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
     print("[Agent] Critic Agent: 판정 결과 애매성 평가 및 HITL 관리자 이관 판단 중...")
     revision = state.get("revision_count", 0)
@@ -1658,37 +1696,8 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
     # LLM 없이 결정론적으로 검증 가능한 항목들을 여기서 대조한다.
     defects = state.get("defects") or []
     image_count = len(state.get("image_paths") or [])
-    integrity_issues = []
-
-    for i, d in enumerate(defects):
-        if not isinstance(d, dict):
-            integrity_issues.append(f"결함[{i}] 형식 오류")
-            continue
-        # BBox 누락: 프론트가 결함 위치를 표시할 수 없어 "투명 공개" 보증이 깨진다.
-        if not isinstance(d.get("bbox"), dict):
-            integrity_issues.append(f"결함[{i}]({d.get('type')}) BBox 좌표 누락")
-        # image_index 범위 초과: VLM이 존재하지 않는 이미지를 지목한 환각 신호.
-        idx = d.get("image_index")
-        if image_count and isinstance(idx, int) and not (0 <= idx < image_count):
-            integrity_issues.append(f"결함[{i}] image_index({idx})가 촬영 장수({image_count}) 범위를 벗어남")
-
-    # 결함이 있는데 감점이 0점(=100점 만점)이면 Vision과 Policy 보고가 모순된다.
-    if defects and score == 100:
-        integrity_issues.append(f"결함 {len(defects)}건이 보고되었으나 UBCI 감점이 0점(100점)으로 산출됨")
-
-    # 결함이 없는데 감점이 발생한 경우도 마찬가지로 모순이다.
-    if not defects and score is not None and score < 100:
-        integrity_issues.append(f"결함 0건인데 UBCI {score}점(감점 {100 - score}점)이 산출됨")
-
-    # 확신도를 YOLO 제보에서 그대로 베낀 결함 - 이미지를 보고 판단한 결과가 아니다.
-    # Vision Agent가 결정론적으로 표시해 둔 플래그를 여기서 정합성 위반으로 승격시킨다.
-    # (판독을 신뢰할 수 없으므로 자동 확정 금지 - 결함 자체는 근거로 보존한다)
-    copied = [i for i, d in enumerate(defects) if isinstance(d, dict) and d.get("conf_copied_from_candidate")]
-    if copied:
-        integrity_issues.append(
-            f"결함 {len(copied)}건의 확신도가 YOLO 제보 값과 완전히 일치 - VLM이 이미지를 "
-            f"직접 판단하지 않고 제보를 반환한 것으로 보임"
-        )
+    # HITL 재검증(admin/router.py)과 공유하는 별도 함수로 위임 (배경: 33번 문서).
+    integrity_issues = critic_stage_a_integrity_check(defects, image_count, score)
 
     if integrity_issues:
         detail = " / ".join(integrity_issues[:5])
