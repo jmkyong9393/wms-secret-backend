@@ -84,8 +84,9 @@ def scan_safety_stock(
     current_admin=Depends(admin_only),
 ):
     """
-    저재고 수동 스캔 트리거. 가용 재고(신품+중고)가 안전선(POService.SAFETY_STOCK_THRESHOLD)
-    미만인 도서에 대해 Restock 판정 그래프를 실행해 PENDING 제안 카드를 생성한다
+    저재고 수동 스캔 트리거. 가용 재고(신품+중고)가 안전선(system_settings의
+    safety_stock_threshold, GET/PUT /api/v1/admin/settings로 조회/변경) 미만인 도서에
+    대해 Restock 판정 그래프를 실행해 PENDING 제안 카드를 생성한다
     (1회 최대 POService.SCAN_LIMIT건).
     """
     return po_service.scan_safety_stock(db)

@@ -571,3 +571,19 @@ class LabelPrintJob(SQLModel, table=True):
     error: Optional[str] = Field(default=None, max_length=500)
     created_at: datetime = Field(default_factory=now_kst)
     printed_at: Optional[datetime] = Field(default=None)
+
+
+class SystemSetting(SQLModel, table=True):
+    """
+    서버 전역 설정 키-값 저장소 (2026-08-09 신설).
+
+    이전에는 안전재고 같은 값이 코드 상수(po/service.py SAFETY_STOCK_THRESHOLD,
+    ai/agents/restock.py MIN_SAFETY_STOCK)로 하드코딩돼 있어 "세션에서 값을 바꿨는데
+    반영이 안 된다"는 문제가 났다 - 애초에 백엔드가 읽을 설정 저장소가 없었다.
+    앞으로 추가될 다른 서버 설정도 이 테이블에 얹을 수 있게 범용 키-값으로 둔다.
+    """
+    __tablename__ = "system_settings"
+
+    key: str = Field(primary_key=True, max_length=100)
+    value: str = Field(max_length=500)
+    updated_at: datetime = Field(default_factory=now_kst)

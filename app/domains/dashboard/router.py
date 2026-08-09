@@ -332,6 +332,39 @@ def get_weekly_insights(session: Session = Depends(get_db)) -> Dict[str, Any]:
     return _serialize_weekly_insight(insight, cached=False)
 
 
+@router.get("/weekly-insights/history")
+def get_weekly_insights_history(
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    지난 주간 인사이트 이력 (2026-08-09 신설).
+
+    weekly_insights는 지연 물질화라 실제로 방문된 주만 행이 쌓인다 - ISO 주 1건뿐이라
+    1년에 52행 수준이라 용량 문제는 아니다. 다만 기존에는 이번 주 1건만 조회하는
+    엔드포인트뿐이라 과거 주를 볼 방법이 없었다. HITL 대기열처럼 전체를 한 번에 fetch하는
+    패턴을 반복하지 않도록, 여기서는 처음부터 limit/offset 배치 페이지네이션을 강제한다
+    (프론트는 "더보기" 버튼으로 다음 배치를 이어붙인다).
+    """
+    from app.models.wms import WeeklyInsight
+
+    total = session.exec(select(func.count(WeeklyInsight.id))).one()
+    rows = session.exec(
+        select(WeeklyInsight)
+        .order_by(WeeklyInsight.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    return {
+        "items": [_serialize_weekly_insight(w, cached=True) for w in rows],
+        "total": int(total or 0),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 def _serialize_weekly_insight(w, cached: bool) -> Dict[str, Any]:
     return {
         "report_week": w.report_week,
