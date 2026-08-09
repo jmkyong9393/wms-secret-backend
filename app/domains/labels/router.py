@@ -39,6 +39,10 @@ router = APIRouter(prefix="/labels", tags=["Labels"])
 class LabelPrintRequest(BaseModel):
     lpn: str = Field(min_length=1, max_length=64)
     mode: Literal["LPN", "UBCI"] = "LPN"
+    # LPN 모드 전용: 선부착 시점에 이미 확정된 도서 식별 정보
+    book_title: Optional[str] = Field(default=None, max_length=200)
+    isbn: Optional[str] = Field(default=None, max_length=20)
+    worker_id: Optional[str] = Field(default=None, max_length=64)
     # UBCI 모드 전용: 확정 등급과 점수
     condition_grade: Optional[str] = Field(default=None, max_length=16)
     ubci_score: Optional[Decimal] = None
@@ -74,7 +78,12 @@ def print_label(
             ubci_score=body.ubci_score,
         )
     else:
-        zpl = build_lpn_label_zpl(lpn_barcode=body.lpn)
+        zpl = build_lpn_label_zpl(
+            lpn_barcode=body.lpn,
+            book_title=body.book_title or "",
+            isbn=body.isbn or "",
+            worker_id=body.worker_id or "",
+        )
 
     if settings.LABEL_PRINT_MODE == "QUEUE":
         job = LabelPrintJob(lpn=body.lpn, mode=body.mode, zpl=zpl)
