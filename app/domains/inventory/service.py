@@ -27,24 +27,30 @@ def recommend_optimal_warehouse_zone(grade: str = "MINT", category: str = "IT/�
         zone = "D"
 
     # 2. 카테고리별 랙 (Rack 1-5) (동선 최적화)
-    category_rack_map = {
-        "IT/컴퓨터": "1",
-        "소설/문학": "2",
-        "경제/경영": "3",
-        "자연과학": "4",
-        "만화/웹툰": "5",
-    }
-    rack = category_rack_map.get(category, "1")
+    # 알라딘 실카테고리 값("컴퓨터/모바일", "소설/시/희곡" 등)은 표기가 다양해 부분 일치로 매핑한다.
+    c = category or ""
+    if "컴퓨터" in c or "IT" in c:
+        rack = "1"   # IT/컴퓨터
+    elif "소설" in c or "에세이" in c or "문학" in c or "시" in c:
+        rack = "2"   # 소설/문학
+    elif "경제" in c or "경영" in c or "자기계발" in c:
+        rack = "3"   # 경제/경영
+    elif "과학" in c or "수학" in c or "외국어" in c or "수험" in c:
+        rack = "4"   # 자연과학/수험서
+    else:
+        rack = "5"   # 만화/기타 (만화·여행·역사·인문·예술·어린이 등)
 
     # 3. 크기/판형별 선반 (Shelf 1-4) (용적률 최적화)
-    if standard_size in ["대형판", "국배판", "A4"]:
-        shelf = "1" # 최하단 대형/무거운 도서 전용 선반
-    elif standard_size in ["4륙판", "신국판"]:
+    # 실값은 "4x6배판 188x257mm"처럼 치수가 붙은 문자열이라 부분 일치로 판별한다.
+    ss = standard_size or ""
+    if any(k in ss for k in ("대형", "국배판", "A4", "4x6배판")):
+        shelf = "1" # 최하단 대형/무거운 도서 전용 선반 (하중 부담 방지)
+    elif any(k in ss for k in ("신국판", "국판", "4륙판")):
         shelf = "2" # 중형 표준 선반
-    elif standard_size in ["문고판"]:
+    elif "문고" in ss:
         shelf = "3" # 소형 고밀도 선반
     else:
-        shelf = "4" # 상단 보조 선반
+        shelf = "4" # 상단 보조 선반 (판형 미상)
 
     return zone, rack, shelf
 
