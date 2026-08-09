@@ -1,8 +1,8 @@
-"""baseline: current nexus wms schema
+"""baseline v2.14.0.0 rebuild from verified schema
 
-Revision ID: 93914f0eae5a
-Revises: 
-Create Date: 2026-08-05 03:32:47.304422
+Revision ID: b43da7d61022
+Revises: 6361f0c587a8
+Create Date: 2026-08-09 05:17:33.087017
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '93914f0eae5a'
+revision: str = 'b43da7d61022'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -67,6 +67,19 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_table('label_print_jobs',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('lpn', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
+    sa.Column('mode', sqlmodel.sql.sqltypes.AutoString(length=8), nullable=False),
+    sa.Column('zpl', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('status', sqlmodel.sql.sqltypes.AutoString(length=12), nullable=False),
+    sa.Column('error', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('printed_at', sa.DateTime(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_label_print_jobs_lpn'), 'label_print_jobs', ['lpn'], unique=False)
+    op.create_index(op.f('ix_label_print_jobs_status'), 'label_print_jobs', ['status'], unique=False)
     op.create_table('locations',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('zone', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
@@ -108,6 +121,12 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_table('system_settings',
+    sa.Column('key', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
+    sa.Column('value', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.PrimaryKeyConstraint('key')
+    )
     op.create_table('users',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('employee_id', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
@@ -119,6 +138,7 @@ def upgrade() -> None:
     sa.Column('role', sa.Enum('MASTER', 'ADMIN', 'WORKER', 'GUEST', name='userroleenum'), nullable=False),
     sa.Column('status', sa.Enum('ACTIVE', 'INACTIVE', name='userstatusenum'), nullable=False),
     sa.Column('must_change_password', sa.Boolean(), nullable=False),
+    sa.Column('privacy_consent_at', sa.DateTime(), nullable=True),
     sa.Column('last_login', sa.DateTime(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -259,6 +279,17 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['order_id'], ['orders.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_table('board_comments',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('post_id', sa.Uuid(), nullable=False),
+    sa.Column('author_id', sa.Uuid(), nullable=False),
+    sa.Column('content', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['author_id'], ['users.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['post_id'], ['board_posts.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
     op.create_table('boards',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('job_id', sa.Uuid(), nullable=True),
@@ -363,6 +394,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_inventory_used_items_lpn_barcode'), table_name='inventory_used_items')
     op.drop_table('inventory_used_items')
     op.drop_table('boards')
+    op.drop_table('board_comments')
     op.drop_table('return_jobs')
     op.drop_index(op.f('ix_picking_instructions_order_id'), table_name='picking_instructions')
     op.drop_index(op.f('ix_picking_instructions_instruction_no'), table_name='picking_instructions')
@@ -378,6 +410,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_employee_id'), table_name='users')
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
+    op.drop_table('system_settings')
     op.drop_table('orders')
     op.drop_index(op.f('ix_notifications_type'), table_name='notifications')
     op.drop_index(op.f('ix_notifications_is_read'), table_name='notifications')
@@ -385,6 +418,9 @@ def downgrade() -> None:
     op.drop_table('notifications')
     op.drop_index(op.f('ix_locations_barcode'), table_name='locations')
     op.drop_table('locations')
+    op.drop_index(op.f('ix_label_print_jobs_status'), table_name='label_print_jobs')
+    op.drop_index(op.f('ix_label_print_jobs_lpn'), table_name='label_print_jobs')
+    op.drop_table('label_print_jobs')
     op.drop_table('inbound_jobs')
     op.drop_table('fds_reports')
     op.drop_index(op.f('ix_books_isbn'), table_name='books')
