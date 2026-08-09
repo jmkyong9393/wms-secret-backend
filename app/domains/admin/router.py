@@ -354,6 +354,8 @@ def submit_hitl_override(
             # 실제로 호출되면 100% ImportError로 죽던 코드였다 (Pipeline A/B 통합 이전의 잔재).
             # 상태만 PENDING으로 되돌리고 아무것도 재큐잉하지 않아 작업이 그대로 멈춰있던 문제도
             # 함께 수정 - /admin/hitl/{job_id}/re-inspect와 동일하게 Celery로 재큐잉한다.
+            # was_hitl은 재큐잉 전 원래 상태(previous_state) 기준. 배경: 01-freeze-zones.md.
+            was_hitl = str(previous_state) == JobStatusEnum.HITL_REQUIRED.value
             job.status = JobStatusEnum.PENDING
             job.retry_count += 1
             session.add(job)
@@ -361,11 +363,16 @@ def submit_hitl_override(
 
             from app.worker.tasks import process_inspection
             try:
-                process_inspection.delay(str(job.id))
+                process_inspection.delay(str(job.id), was_hitl=was_hitl)
             except Exception as e:
                 logger.warning(f"Celery 재큐잉 실패, 인프로세스로 폴백: {e}")
                 import threading
-                threading.Thread(target=process_inspection, args=(str(job.id),), daemon=True).start()
+                threading.Thread(
+                    target=process_inspection,
+                    args=(str(job.id),),
+                    kwargs={"was_hitl": was_hitl},
+                    daemon=True,
+                ).start()
         else:
             raise BadRequestException(f"Unknown decision: {item.decision}")
         
@@ -480,14 +487,8 @@ def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
     if not job.image_urls:
         raise BadRequestException("No images found for this job.")
 
-    # [2026-08-06] 관리자 결재 대기 건을 재검수할 때는 "HITL 잠금"을 세운다.
-    # 재검수는 일반 입고와 같은 process_inspection을 태우므로, 같은 모델이 이번엔 APPROVE로
-    # 결론내면 사람 결재 없이 재고에 편입돼 버린다. HITL 이관은 "AI 판단으로 확정 불가"라는
-    # 판정이므로, 같은 판정자가 스스로 그것을 뒤집게 두면 이관이 무의미해진다.
-    # 판정(점수·결함)은 최신 재판독으로 갱신하되 집행만 막는다 (워커가 이 플래그를 읽는다).
+    # was_hitl을 process_inspection에 태스크 인자로 직접 넘긴다. 배경: 01-freeze-zones.md.
     was_hitl = str(job.status) == JobStatusEnum.HITL_REQUIRED.value
-    if was_hitl:
-        job.agent_logs = {**(job.agent_logs or {}), "hitl_locked": True}
 
     job.status = JobStatusEnum.PENDING.value
     job.retry_count = (job.retry_count or 0) + 1
@@ -496,10 +497,15 @@ def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
 
     from app.worker.tasks import process_inspection
     try:
-        process_inspection.delay(str(job.id))
+        process_inspection.delay(str(job.id), was_hitl=was_hitl)
     except Exception as e:
         import threading
-        threading.Thread(target=process_inspection, args=(str(job.id),), daemon=True).start()
+        threading.Thread(
+            target=process_inspection,
+            args=(str(job.id),),
+            kwargs={"was_hitl": was_hitl},
+            daemon=True,
+        ).start()
 
     return {
         "status": "queued",
