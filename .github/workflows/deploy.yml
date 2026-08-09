@@ -6,6 +6,10 @@ permissions: { id-token: write, contents: read }
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    # 잡 레벨 env — 모든 스텝의 if:/with: 어디서든 동일하게 보장되어 참조되는 위치에
+    # 따라 평가 시점이 갈리는 스텝 레벨 env 논쟁 자체를 없앤다.
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
     steps:
     - name: Free runner disk space (Model Baking 이미지가 큼 — 기본 여유공간 부족으로 빌드 중 디스크 고갈)
       uses: jlumbroso/free-disk-space@main
@@ -34,11 +38,9 @@ jobs:
 
     - name: Deploy via SSH (Rolling Update)
       if: ${{ env.EC2_HOST != '' }}
-      env:
-        EC2_HOST: ${{ secrets.EC2_HOST }}
       uses: appleboy/ssh-action@v1
       with:
-        host: ${{ secrets.EC2_HOST }}
+        host: ${{ env.EC2_HOST }}
         username: ubuntu
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
