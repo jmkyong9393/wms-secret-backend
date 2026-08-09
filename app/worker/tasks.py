@@ -481,7 +481,7 @@ def scan_safety_stock_proposals() -> Dict[str, Any]:
         max_retries=3,
         # 지수 백오프는 코드 내부에 `retry(countdown=...)` 로직으로 직접 구현하여 우아하게 제어함.
 )
-def process_inspection(self, return_job_id: str) -> Dict[str, Any]:
+def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict[str, Any]:
     """
     LangGraph 기반 AI 비전 검수 메인 워커.
     
@@ -553,18 +553,10 @@ def process_inspection(self, return_job_id: str) -> Dict[str, Any]:
         if decision not in ["APPROVE", "REJECT", "HITL"]:
             raise ValueError(f"Unknown AI decision: {decision}")
 
-        # --- HITL 결재 잠금 (2026-08-06) ---
-        # 이미 "사람이 봐야 한다"고 이관된 건은 재검수 결과가 무엇이든 자동 확정하지 않는다.
-        #
-        # 재검수는 일반 입고와 같은 이 태스크를 태우므로, 같은 모델이 이번엔 APPROVE로
-        # 결론내면 관리자 결재 없이 그대로 재고에 편입됐다(실제 사례: LPN-260804-A006 -
-        # HITL 이관 건이 retry 4회 뒤 AI 단독으로 APPROVED/IN_STOCK 확정).
-        # HITL 이관은 그 자체가 "AI 판단으로는 확정할 수 없다"는 판정인데, 같은 판정자를
-        # 한 번 더 돌려 스스로 뒤집게 두면 이관이 아무 의미가 없다.
-        #
-        # 판정 자체는 갱신한다(점수·결함 목록은 최신 재판독 결과로 덮인다). 다만 **집행**만
-        # 막아 관리자 결재 경로(/admin/hitl/override)로 보낸다 - 판정/집행 분리 원칙.
-        if (agent_logs_in or {}).get("hitl_locked") and decision == "APPROVE":
+        # --- HITL 결재 잠금 --- 이미 사람이 봐야 한다고 이관된 건은 재검수 결과와 무관하게
+        # 자동 확정하지 않는다. 판정(점수·결함)은 갱신하되 집행만 막아 관리자 결재 경로로
+        # 보낸다 (판정/집행 분리 원칙). 배경: 01-freeze-zones.md.
+        if was_hitl and decision == "APPROVE":
             logger.info(
                 f"[HITL 잠금] 재검수 결과 APPROVE이나 관리자 결재 대기 건이므로 자동 확정을 보류합니다. "
                 f"(return_job_id={return_job_id}, ubci_score={ai_result.get('ubci_score')})"
