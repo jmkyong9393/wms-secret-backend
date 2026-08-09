@@ -28,7 +28,9 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Deploy via SSH (Rolling Update)
-      if: ${{ secrets.EC2_HOST != '' }}
+      if: ${{ env.EC2_HOST != '' }}
+      env:
+        EC2_HOST: ${{ secrets.EC2_HOST }}
       uses: appleboy/ssh-action@v1
       with:
         host: ${{ secrets.EC2_HOST }}
