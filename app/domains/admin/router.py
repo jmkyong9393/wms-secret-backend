@@ -42,6 +42,11 @@ class HitlOverrideRequest(BaseModel):
     editedBboxes: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list,
         description="검수자가 직접 고친 결함 좌표. [{index, xmin, ymin, xmax, ymax}]")
+    # --- BBox 신규 추가 (2026-08-09) ---
+    # AI가 아예 놓친 결함을 검수자가 직접 그려 넣은 것. defects 배열에 새 항목으로 추가된다.
+    addedBboxes: Optional[List[Dict[str, Any]]] = Field(
+        default_factory=list,
+        description="검수자가 직접 그린 신규 결함. [{type, xmin, ymin, xmax, ymax, imageIndex}]")
 
 class BulkOverridePayload(BaseModel):
     items: List[HitlOverrideRequest]
@@ -137,14 +142,13 @@ def submit_hitl_override(
             
         previous_state = job.status
 
-        # --- 검수자의 BBox 채택/제외/좌표수정 반영 (2026-08-07, 좌표수정은 2026-08-08 추가) ---
-        # 판정을 지우지 않고 표식만 남긴다. 결함 목록에서 삭제하면 "관리자가 무엇을 보고
-        # 무엇을 뺐는지"가 사라져 감사 추적이 끊기고, 나중에 오탐/미탐 라벨로 재사용할 수도
-        # 없다. 감점 산정에서만 제외하고 화면에는 제외 표식과 함께 계속 보인다.
+        # 검수자의 BBox 채택/제외/좌표수정/신규추가 반영. 제외는 삭제가 아니라 표식만
+        # 남긴다(감사 추적 유지, 재학습 라벨 재사용 가능성 보존).
         _logs = dict(job.agent_logs or {})
         _defects = list(_logs.get("defects") or [])
         has_bbox_ui_edits = bool(
-            item.excludedDefectIndexes or item.adoptedCandidateIndexes or item.editedBboxes
+            item.excludedDefectIndexes or item.adoptedCandidateIndexes
+            or item.editedBboxes or item.addedBboxes
         )
 
         if has_bbox_ui_edits:
@@ -170,10 +174,8 @@ def submit_hitl_override(
                     "description": "관리자가 YOLO 후보에서 직접 채택",
                 })
 
-            # [2026-08-08 신설] 검수자가 드래그로 직접 고친 BBox 좌표를 반영한다. 판정
-            # 자체(type/confidence 등)는 AI 산출을 유지하고 좌표만 덮어써, "AI가 뭘 봤는지"와
-            # "사람이 어디로 고쳤는지"를 hitl_bbox_edited 표식으로 함께 남긴다(위 exclude/adopt와
-            # 동일하게 삭제가 아니라 표식 방식 - 감사 추적 유지).
+            # 검수자가 드래그로 고친 좌표 반영. 판정(type/confidence)은 AI 산출을 유지하고
+            # 좌표만 덮어쓰며 hitl_bbox_edited 표식을 남긴다.
             for edit in (item.editedBboxes or []):
                 if not isinstance(edit, dict):
                     continue
@@ -191,33 +193,75 @@ def submit_hitl_override(
                     continue
                 _defects[idx] = {**_defects[idx], "bbox": new_bbox, "hitl_bbox_edited": True}
 
+            # 검수자가 그린 신규 결함. AI가 놓친 것을 사람이 직접 채워 넣은 것이므로
+            # hitl_added 표식과 함께 defects에 새 항목으로 추가한다.
+            for added in (item.addedBboxes or []):
+                if not isinstance(added, dict):
+                    continue
+                try:
+                    new_bbox = {
+                        "xmin": int(added["xmin"]),
+                        "ymin": int(added["ymin"]),
+                        "xmax": int(added["xmax"]),
+                        "ymax": int(added["ymax"]),
+                    }
+                except (KeyError, TypeError, ValueError):
+                    continue
+                _defects.append({
+                    "type": added.get("type") or "UNKNOWN",
+                    "ratio": 0,
+                    "bbox": new_bbox,
+                    "image_index": added.get("imageIndex", 0),
+                    "hitl_added": True,
+                    "description": "관리자가 직접 추가",
+                })
+
             _logs["defects"] = _defects
             _logs["hitl_bbox_edit"] = {
                 "excluded": item.excludedDefectIndexes or [],
                 "adopted": item.adoptedCandidateIndexes or [],
                 "edited_bboxes": item.editedBboxes or [],
+                "added_bboxes": item.addedBboxes or [],
                 "edited_by": hitl_inspector,
             }
             job.agent_logs = _logs
 
-            # 편집된 목록으로 점수를 다시 낸다. 관리자가 목표 등급을 명시했으면 그쪽이
-            # 우선이므로(아래 clamp) 여기서는 참고 점수만 갱신한다. BBox 좌표 수정도
-            # 재산정 대상이다 - policy의 _effective_ratio가 좌표 면적에서 ratio를 유도하므로
-            # 박스 크기를 줄이면 감점도 그만큼 줄어야 한다.
+            # BBox 편집분으로 점수를 재산정한다. 재산정 결과와 Critic Stage A 재검증은
+            # _logs["hitl_revalidation"]에 1차 판독과 분리해 기록한다 (배경: 33번 문서).
+            from app.models.wms import now_kst
+            scored = [d for d in _defects if not d.get("hitl_excluded")]
+            hitl_revalidation: Dict[str, Any] = {
+                "revalidated_by": hitl_inspector,
+                "revalidated_at": now_kst().isoformat(),
+            }
             try:
                 from app.ai.agents import policy_agent
-                scored = [d for d in _defects if not d.get("hitl_excluded")]
                 recomputed = policy_agent({
                     "defects": scored,
                     "book_title": _logs.get("book_title") or "",
                 })
                 if recomputed.get("ubci_score") is not None:
                     job.ubci_score = recomputed["ubci_score"]
-                    _logs["policy_text"] = recomputed.get("policy_text") or _logs.get("policy_text")
+                    hitl_revalidation["policy_score"] = recomputed["ubci_score"]
+                    hitl_revalidation["policy_text"] = recomputed.get("policy_text")
                     _logs["hitl_bbox_edit"]["recomputed_score"] = recomputed["ubci_score"]
-                    job.agent_logs = _logs
             except Exception as e:
                 logger.error(f"BBox 편집 후 점수 재산정 실패 (판정은 유지): {e}")
+                hitl_revalidation["policy_error"] = str(e)
+
+            try:
+                from app.ai.agents import critic_stage_a_integrity_check
+                stage_a_issues = critic_stage_a_integrity_check(scored, len(job.image_urls or []), job.ubci_score)
+                hitl_revalidation["critic_stage_a_passed"] = not stage_a_issues
+                hitl_revalidation["critic_stage_a_issues"] = stage_a_issues
+                if stage_a_issues:
+                    logger.warning(f"HITL 편집 후 Critic Stage A 정합성 위반 (job={job.id}): {stage_a_issues}")
+            except Exception as e:
+                logger.error(f"HITL 편집 후 Critic Stage A 재검증 실패 (판정은 유지): {e}")
+                hitl_revalidation["critic_stage_a_error"] = str(e)
+
+            _logs["hitl_revalidation"] = hitl_revalidation
+            job.agent_logs = _logs
 
         # [2026-08-08 신설] AuditLog(및 그 소스를 읽는 research/export-dataset 재학습
         # 파이프라인)에 남길 최종 BBox 좌표를 여기서 다시 조립한다. 프론트가 보내는
@@ -229,6 +273,9 @@ def submit_hitl_override(
         final_defect_coordinates = LangGraphInspectionWrapper.build_defect_coordinates(
             _defects, job.image_urls or []
         )
+        # 최종 BBox 좌표를 job.agent_logs에도 동기화한다 (감사 로그와 같은 값 유지, 배경: 33번 문서).
+        _logs["defect_coordinates"] = final_defect_coordinates
+        job.agent_logs = _logs
 
         # Determine new status based on decision
         if item.decision.startswith("APPROVE"):
@@ -243,7 +290,11 @@ def submit_hitl_override(
             # 계산되는 문제가 있었다. 재산정은 보증서 생성보다 먼저 수행한다 (보증서 본문의
             # 점수/등급 표기가 확정값을 따르도록).
             job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, target_grade)
-            lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or f"LPN-260728-A002"
+            # lpn_barcode가 없으면 새로 채번한다 (구 하드코딩 fallback 사고, 배경: 33번 문서).
+            from app.domains.inventory.service import generate_next_lpn_barcode
+            lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or generate_next_lpn_barcode(session, zone="B")
+            if not (job.agent_logs and job.agent_logs.get("lpn_barcode")):
+                job.agent_logs = {**(job.agent_logs or {}), "lpn_barcode": lpn}
             # [2026-08-08 수정] HITL 승인 건의 보증서 본문 생성(GPT-4o-mini, build_certificate_document)을
             # 더 이상 이 요청 스레드에서 동기 호출하지 않는다. 종전에는 매 승인 건마다 여기서 LLM을
             # 호출했는데, 합성 시드 데이터 다건을 한 번에 승인하는 요청에서 순차 LLM 호출이 쌓여
@@ -275,9 +326,11 @@ def submit_hitl_override(
             # HITL에서 반려된 건은 Zone E(격리/폐기) 배정도 안 되고 InventoryUsedItem row도
             # 안 만들어져 실물 추적이 안 되고 있었다 - 자동 반려 경로(worker/tasks.py)와
             # 동일하게 Zone E 격리 랙 배정을 호출하도록 교정.
-            from app.domains.inventory.service import assign_rack_location_after_inspection
+            from app.domains.inventory.service import assign_rack_location_after_inspection, generate_next_lpn_barcode
             from app.models.wms import clamp_ubci_score_to_grade
-            lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or f"LPN-260728-A002"
+            lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or generate_next_lpn_barcode(session, zone="B")
+            if not (job.agent_logs and job.agent_logs.get("lpn_barcode")):
+                job.agent_logs = {**(job.agent_logs or {}), "lpn_barcode": lpn}
             # [2026-08-06 수정] 반려 확정도 승인 분기와 동일하게 점수를 확정 등급(REJECT) 구간으로
             # 재산정한다 (검수 내역 목록의 점수-등급 모순 방지, 기존 or 40 임의 폴백 제거).
             job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, "REJECT")
