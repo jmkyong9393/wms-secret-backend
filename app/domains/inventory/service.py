@@ -89,7 +89,17 @@ def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int):
     """
     from app.models.wms import Inventory, InventoryLog
 
-    location = get_or_create_location(db, zone="A", rack="1", shelf="1")
+    # [2026-08-09 수정] recommend_optimal_warehouse_zone()이 있는데도 zone/rack/shelf를
+    # 전부 "A-1-1"로 하드코딩해, 신품은 카테고리·판형과 무관하게 한 칸에만 쌓이고 있었다
+    # (조장 실측: 재고 목록 전 행이 A-1-1). Zone은 grade="NEW"라 항상 A로 고정되지만
+    # rack/shelf는 중고와 동일한 3D 알고리즘을 그대로 태운다.
+    rec_zone, rec_rack, rec_shelf = recommend_optimal_warehouse_zone(
+        grade="NEW",
+        category=book.category_type or "IT/컴퓨터",
+        base_price=book.base_price or 20000.0,
+        standard_size=book.standard_size,
+    )
+    location = get_or_create_location(db, zone=rec_zone, rack=rec_rack, shelf=rec_shelf)
     inv = db.exec(
         select(Inventory).where(Inventory.book_id == book.id, Inventory.location_id == location.id)
     ).first()
