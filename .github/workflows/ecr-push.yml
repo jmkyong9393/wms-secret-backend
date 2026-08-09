@@ -1,9 +1,9 @@
-name: Deploy Backend to ECR
+name: Deploy Backend to ECR (Manual Rebuild)
 
-# 코드 프리즈 전까지 main 푸시가 잦아 자동 트리거를 끄고 수동 실행으로 전환.
-# 프리즈/배포 단계 진입 시 아래 push 트리거를 복원할 것:
-#   push:
-#     branches: [ "main" ]
+# deploy.yml이 main 푸시마다 nexus-backend-repo를 자동 빌드/푸시/배포하므로,
+# 이 워크플로우는 코드 변경 없이 이미지만 다시 빌드/푸시하고 싶을 때(캐시 무효화,
+# 베이스 이미지 갱신 등) 쓰는 수동 전용 경로다. 자동 push 트리거는 두지 않는다 -
+# 켜두면 deploy.yml과 이중 빌드가 된다.
 on:
   workflow_dispatch:
 
@@ -30,7 +30,7 @@ jobs:
       - name: Build, tag, and push API image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: secret-backend-repo
+          ECR_REPOSITORY: nexus-backend-repo
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest -f Dockerfile .

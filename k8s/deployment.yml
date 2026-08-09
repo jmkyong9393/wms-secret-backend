@@ -1,7 +1,7 @@
 # FastAPI(uvicorn) API 서버 Deployment
 # 이름(wms-api)은 fastapi-hpa.yaml의 scaleTargetRef와 일치해야 한다.
-# 이미지 빌드/푸시는 ecr-push.yml 워크플로우가 담당하고,
-# 실제 태그 교체는 deploy-prod.yml의 kubectl set image가 수행한다.
+# [2026-08-10] 이미지 빌드/푸시·태그 교체 모두 deploy.yml(main 푸시 자동, SSH 배포)이
+# 담당한다. ecr-push.yml/deploy-prod.yml은 수동 재빌드·재배포용 보조 경로다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,9 +26,9 @@ spec:
     spec:
       containers:
       - name: api
-        # ECR 레포 이름은 ecr-push.yml 워크플로우와 동일 (secret-backend-repo).
+        # ECR 레포 이름은 deploy.yml/ecr-push.yml/deploy-prod.yml과 동일 (nexus-backend-repo).
         # <AWS_ACCOUNT_ID>만 실제 계정 ID로 치환 (restock-scan-cronjob.yaml과 동일 규칙)
-        image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-2.amazonaws.com/secret-backend-repo:latest
+        image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-2.amazonaws.com/nexus-backend-repo:latest
         ports:
         - containerPort: 8000
         # wms-backend-secret 생성 방법은 restock-scan-cronjob.yaml 주석 참조
