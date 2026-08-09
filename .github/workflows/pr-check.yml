@@ -34,7 +34,9 @@ jobs:
         run: uv run ruff format --check app/
         
       - name: Type Check (Mypy)
-        run: uv run mypy app/ || echo "Warning: Mypy failed, check types later"
-        
+        run: |
+          uv run mypy app/ || echo "Warning - Mypy failed, check types later"
+
       - name: Run Tests (Pytest)
-        run: uv run pytest || echo "Warning: No tests written yet or tests failed"
+        run: |
+          uv run pytest || echo "Warning - No tests written yet or tests failed"
