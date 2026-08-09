@@ -4,6 +4,11 @@ from uuid import UUID
 from sqlmodel import Session, select, func
 
 from app.core.exceptions import BadRequestException
+from app.core.settings_service import (
+    DEFAULT_SAFETY_STOCK_THRESHOLD,
+    SAFETY_STOCK_SETTING_KEY,
+    get_int_setting,
+)
 from app.models.wms import (
     Book,
     InventoryUsedItem,
@@ -29,8 +34,11 @@ class POService:
       "발주 승인 즉시 MINT 중고 LPN 생성"이던 기존 오류 경로는 제거되었다.
     """
 
-    SAFETY_STOCK_THRESHOLD = 5  # 저재고 스캔 기준 (신품+중고 합산 가용 재고)
     SCAN_LIMIT = 8               # 스캔 1회당 최대 제안 생성 수 (LLM 비용 상한)
+    # [2026-08-09 리팩토링] 저재고 스캔 기준(신품+중고 합산 가용 재고)이 코드 상수라 UI에서
+    # 바꿀 수 없었다 (app/ai/agents/restock.py의 발주수량 바닥값 MIN_SAFETY_STOCK과 서로
+    # 다른 값으로 따로 놀던 버그도 이게 원인). system_settings 테이블의 단일 값으로 통합했다
+    # - GET/PUT /api/v1/admin/settings, app/core/settings_service.py 참고.
 
     # ------------------------------------------------------------------
     # 조회 (칸반보드)
@@ -224,6 +232,10 @@ class POService:
             select(Book).where(Book.is_active == True).order_by(Book.virtual_stock.asc()).limit(60)
         ).all()
 
+        safety_stock_threshold = get_int_setting(
+            db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD
+        )
+
         created = []
         for book in candidates:
             if len(created) >= self.SCAN_LIMIT:
@@ -231,7 +243,7 @@ class POService:
             if book.id in pending_book_ids:
                 continue
             available = max(0, int(book.virtual_stock or 0)) + int(used_counts.get(book.id, 0))
-            if available >= self.SAFETY_STOCK_THRESHOLD:
+            if available >= safety_stock_threshold:
                 continue
             proposal = generate_and_store_proposal(
                 db, book,

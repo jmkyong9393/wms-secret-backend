@@ -8,13 +8,16 @@ from app.core.security import RoleChecker
 
 router = APIRouter(prefix="/research", tags=["Research & Analytics"])
 
-# 연구용 데이터 추출은 MASTER 권한을 요구 (보안 강화)
+# 데이터셋 export는 다른 관리자 도메인과 동일하게 MASTER/ADMIN 공통 권한.
+admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
+# FDS 리포트는 관리자별 검수 속도(blind approval 의심)를 분석하는 자기감시성 리포트라
+# ADMIN이 자신의 이상 승인 패턴을 스스로 조회할 수 있게 되는 걸 막기 위해 MASTER 전용 유지.
 master_only = RoleChecker([UserRoleEnum.MASTER])
 
 @router.get("/export-dataset")
 def export_mlops_dataset(
     session: Session = Depends(get_db),
-    current_admin = Depends(master_only)
+    current_admin = Depends(admin_only)
 ):
     """
     MLOps용 BBox 좌표 데이터셋 추출기 (SCI 논문용)

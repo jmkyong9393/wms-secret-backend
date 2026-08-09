@@ -111,6 +111,21 @@ LPN_ZONES = ("A", "B", "C", "D", "E")
 LPN_LIVE_ZONE = "A"  # 라이브 검수 네임스페이스 (시드/데모는 B~E를 쓴다)
 
 
+def generate_next_lpn_barcode(db: Session, zone: str = None) -> str:
+    """등록 라인(zone) 기준 다음 LPN 문자열만 채번한다 (행 생성은 호출부 책임).
+    순번 규칙은 assign_and_print_lpn과 동일(zone+날짜 접두어 기준 max+1). 배경: 33번 문서."""
+    zone_code = (zone or LPN_LIVE_ZONE).strip().upper()[-1:]
+    if zone_code not in LPN_ZONES:
+        zone_code = LPN_LIVE_ZONE
+    date_str = now_kst().strftime("%y%m%d")
+    prefix = f"LPN-{date_str}-{zone_code}"
+    last = db.query(InventoryUsedItem.lpn_barcode).filter(
+        InventoryUsedItem.lpn_barcode.like(f"{prefix}%")
+    ).order_by(InventoryUsedItem.lpn_barcode.desc()).first()
+    seq_num = (int(last[0][-3:]) + 1) if last else 1
+    return f"{prefix}{seq_num:03d}"
+
+
 def generate_lpn(
     db: Session,
     book_id: str = None,

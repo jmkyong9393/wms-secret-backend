@@ -30,6 +30,11 @@ from sqlmodel import Session, select, func
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
+from app.core.settings_service import (
+    DEFAULT_SAFETY_STOCK_THRESHOLD,
+    SAFETY_STOCK_SETTING_KEY,
+    get_int_setting,
+)
 from app.models.wms import (
     Book,
     InventoryLog,
@@ -43,15 +48,14 @@ logger = logging.getLogger(__name__)
 # 발주 판단 상수 (결정론적 산식의 근거 - 문서/발표 시 그대로 인용)
 LEAD_TIME_DAYS = 7      # 도매처 발주 → 입고 리드타임 가정
 SAFETY_DAYS = 7         # 리드타임 외 추가 안전 버퍼 (일 단위)
-MIN_SAFETY_STOCK = 3    # 판매 이력이 없어도 유지할 최소 안전 재고선
-# [수정 이력 2026-08-09, 조장 지시] 15 → 3. 카탈로그 424종 실측 기준 재고 중앙값이 5권
-# (평균 6권)이라 15는 424종 중 414종(97.6%)을 자동으로 미달 판정했다 - 판매이력이 아직
-# 없는 흔한 케이스마다 Restock 칸반에 "긴급 발주" 카드가 뜨는 원인이었다(alert fatigue).
-# 5도 검토했으나 중앙값과 정확히 같아 타이틀 절반이 그대로 미달권에 남는다(stock<=5가
-# 232종/54.7%). 3으로 하면 하위 20%(85종)만 걸려 "정말 얇은 재고"에 신호가 집중된다.
-# 판매 중인 타이틀은 daily_velocity*(LEAD_TIME_DAYS+SAFETY_DAYS) 수요 커버가 이 상수를
-# 대체하므로(아래 max() 산식), 이 변경은 판매이력이 아직 없는 타이틀의 민감도만 조정한다.
 WHOLESALE_RATE = 0.6    # 도매 매입가 = 정가의 60%
+# 판매 이력이 없어도 유지할 최소 안전 재고선(min_safety_stock)은 더 이상 여기 상수가 아니다.
+# [2026-08-09 리팩토링] 조장 지시로 15 → 3까지는 코드 상수로 고쳤으나(카탈로그 424종 실측
+# 기준 재고 중앙값 5권, 15는 97.6%를 미달 판정해 alert fatigue 유발 - 3이면 하위 20%만
+# 걸림), po/service.py의 저재고 스캔 대상 선정 기준(SAFETY_STOCK_THRESHOLD, 당시 5)과
+# 서로 다른 값으로 따로 노는 걸 뒤늦게 발견했다. 둘 다 "안전재고"라는 같은 개념을 가리켜야
+# 하므로 system_settings 테이블의 단일 값(safety_stock_threshold)으로 통합했다 -
+# collect_restock_context()가 매 호출마다 조회한다. GET/PUT /api/v1/admin/settings로 조회/변경.
 
 # 사유 문장 생성+수량 제안 전용 LLM. 비용 최적화 원칙에 따라 gpt-4o-mini 고정
 # (프리즈 규정 대상인 검수 파이프라인 밖의 도메인 로직이지만 동일 원칙을 따른다).
@@ -104,10 +108,12 @@ def collect_restock_context(
     new_stock = max(0, int(book.virtual_stock or 0))
     current_stock = new_stock + int(used_in_stock or 0)
 
+    min_safety_stock = get_int_setting(db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD)
+
     # 안전재고 산식: (리드타임+버퍼) 기간의 예상 수요를 커버할 목표 재고를 잡고,
     # 부족분 + 이번 반려로 소실된 수량을 기준 발주량으로 삼는다.
     daily_velocity = sales_30d / 30.0
-    demand_cover = max(math.ceil(daily_velocity * (LEAD_TIME_DAYS + SAFETY_DAYS)), MIN_SAFETY_STOCK)
+    demand_cover = max(math.ceil(daily_velocity * (LEAD_TIME_DAYS + SAFETY_DAYS)), min_safety_stock)
     baseline = max(demand_cover - current_stock, 0) + max(0, int(rejected_quantity))
 
     # 재고 소진 예상일 기반 긴급도 (LLM 폴백 및 프롬프트 앵커 겸용)
@@ -133,6 +139,7 @@ def collect_restock_context(
         "reject_reason_code": reject_reason_code,
         "baseline_quantity": int(baseline),
         "rule_urgency": urgency,
+        "min_safety_stock": min_safety_stock,
     }
 
 
@@ -166,7 +173,7 @@ def run_restock_agent(context: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
 - 재고 소진 예상: {context['days_of_stock'] if context['days_of_stock'] is not None else '판매 이력 없음'}일
 {reject_line}
 - 결정론적 안전재고 산식 기준 수량: {context['baseline_quantity']}권
-  (산식: 리드타임 {LEAD_TIME_DAYS}일 + 안전버퍼 {SAFETY_DAYS}일 수요 커버 목표, 최소 안전선 {MIN_SAFETY_STOCK}권)
+  (산식: 리드타임 {LEAD_TIME_DAYS}일 + 안전버퍼 {SAFETY_DAYS}일 수요 커버 목표, 최소 안전선 {context['min_safety_stock']}권)
 
 [규칙]
 1. reorder_quantity는 기준 수량을 앵커로 삼되, 판매 추세·반려 손실을 고려해 조정하세요.

@@ -18,6 +18,7 @@ from app.domains.notifications import router as notifications
 from app.domains.fds import router as fds
 from app.domains.labels import router as labels
 from app.domains.board import router as board
+from app.domains.settings import router as system_settings
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -32,7 +33,7 @@ from app.core.middleware import LoggingMiddleware
 app = FastAPI(
     title="Nexus",
     description="다중 에이전트 기반 B2B 물류 자동화 플랫폼 Nexus Backend",
-    version="2.14.0.0"
+    version="2.15.0.0"
 )
 
 # ==========================================
@@ -200,6 +201,7 @@ app.include_router(notifications.router, prefix=settings.API_V1_STR)
 app.include_router(fds.router, prefix=settings.API_V1_STR)
 app.include_router(labels.router, prefix=settings.API_V1_STR)
 app.include_router(board.router, prefix=settings.API_V1_STR)
+app.include_router(system_settings.router, prefix=settings.API_V1_STR)
 
 import os
 from fastapi.staticfiles import StaticFiles
@@ -214,7 +216,7 @@ def health_check():
     """
     로드밸런서(K8s Ingress 등) 또는 KEDA 스케일링을 위한 서버 헬스 체크 엔드포인트입니다.
     """
-    return {"status": "ok", "version": "2.14.0.0"}
+    return {"status": "ok", "version": "2.15.0.0"}
 
 @app.get("/db-check")
 def db_check(session: Session = Depends(get_db)):
