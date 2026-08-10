@@ -13,6 +13,10 @@ from .agents import (
     report_agent
 )
 
+# 감점 근거가 모서리 마모뿐인 건을 관리자 확인으로 이관한다. 정확도를 자동화율과
+# 맞바꾸는 스위치이며, 탐지기 정밀도가 올라가면 끄는 것을 검토한다(실측 비용 1.9%).
+WEAR_ONLY_ESCALATES = os.getenv("WMS_WEAR_ONLY_ESCALATES", "1") == "1"
+
 # LangSmith Tracing 활성화 (LLMOps)
 os.environ["LANGSMITH_TRACING"] = "true"
 os.environ["LANGSMITH_PROJECT"] = "WMS_AI_Project"
@@ -131,6 +135,40 @@ def supervisor_node(state: WMSInspectionState) -> WMSInspectionState:
             "executed_agents": ["supervisor"],
             "messages": [AIMessage(content=f"[Supervisor] {decision}: {rationale}")],
         }
+
+    # 0-1) 마모 단독 판정 게이트.
+    #
+    #      모서리 마모 탐지기의 정밀도가 낮다는 것이 실측으로 확인됐다(정답 확인 도서 3권
+    #      기준 후보 23건 중 실제 2~3건). 그런데도 감점이 마모에서만 나온 건은 그 신호 하나로
+    #      등급이 확정된다 - 실제로 2699건 중 50건이 여기 해당했고 그중 49건이 MINT였다.
+    #      다른 유형이 함께 잡힌 건은 그쪽이 판정을 뒷받침하므로 대상이 아니다.
+    #
+    #      LLM을 쓰지 않는 결정론적 규칙이라 Supervisor의 기존 성격을 유지한다.
+    #      정확도를 자동화율과 맞바꾸는 선택이며, 실측 비용은 1.9%다(조장 승인).
+    if WEAR_ONLY_ESCALATES and ubci_score is not None:
+        scored_types = {
+            str(d.get("type") or "")
+            for d in defects
+            if isinstance(d, dict) and not d.get("evidence_suspect") and not d.get("hitl_excluded")
+        }
+        if scored_types == {"DMG_EDGE_WEAR"}:
+            decision = "ESCALATE_HUMAN"
+            rationale = (
+                f"마모 단독 판정 - 감점 근거가 모서리 마모 {len(defects)}건뿐이다. "
+                f"해당 탐지기는 정밀도가 낮아 이 신호만으로 UBCI {ubci_score}점을 확정하지 않고 "
+                f"관리자 확인으로 이관한다."
+            )
+            print(f"[Supervisor Manager] 지휘 결정: {decision} - {rationale}")
+            return {
+                "supervisor_decision": decision,
+                "supervisor_rationale": rationale,
+                # 점수는 남긴다. 관리자가 무엇을 고칠지 판단할 기준이 필요하다
+                # (커버리지 게이트와 달리 여기서는 판독 자체가 실패한 것이 아니다).
+                "auto_refund_eligible": False,
+                "reason_code": "WEAR_ONLY_HITL",
+                "executed_agents": ["supervisor"],
+                "messages": [AIMessage(content=f"[Supervisor] {decision}: {rationale}")],
+            }
 
     # 1) HITL 이관: Critic이 애매성을 보고했거나(경계선 58~66점 / 최대 재시도 초과),
     #    재검수 루프가 한계에 도달한 경우. 자동 판정을 강행하지 않고 사람에게 넘긴다.
