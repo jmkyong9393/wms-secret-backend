@@ -693,27 +693,12 @@ preliminary_deduction 값만 재계산해서 반환하세요.
     # 판독 근거(스캔 장수, 앙상블 후보 수, 결함 유형)를 여기서 확정해 State에 싣는다.
     scanned_cnt = len(image_paths)
 
-    # --- 마모 후보 자동 채택 (2026-08-08, 조장 승인) ---
-    #
-    # [문제] VLM이 마모 후보의 채택 여부를 결정하는 구조에서, 같은 도서·같은 후보 5건인데
-    # 실행마다 5건 전부 채택 / 1건만 채택으로 갈렸다. 1건만 채택된 실행에서는 뒤표지 우측
-    # 마모(제보 확신도 79.5%, 육안 확인된 실제 결함)를 통째로 놓치고 UBCI 97점 S급(MINT)이
-    # 나왔다 - 모서리가 두 곳 닳은 책이 무결점 최상급으로 확정된 것이다(job b7b34ae1).
-    #
-    # 원인은 해상도다. 마모는 원본에서 25~44px 두께의 띠로 나타나는데, VLM은 축소된 전체
-    # 사진을 보므로 그것이 표지 가장자리 선인지 마모인지 구분할 수 없다. 프롬프트 문제가
-    # 아니므로 문구로는 고쳐지지 않는다.
-    #
-    # [조치] 마모에 한해 후보를 전건 채택하고, 판정은 **결함별 크롭을 확대해서 보는**
-    # 증거 대조 검증에 맡긴다. 판단 주체를 없애는 것이 아니라, 실제로 볼 수 있는 쪽으로
-    # 옮기는 것이다. 실측에서 크롭 검증은 확인된 결함 3건 전부에 YES를, 오탐 2건 중
-    # 어느 것에도 YES를 주지 않았다(확신도는 1위가 오탐이라 판별에 쓸 수 없었다).
-    #
-    # 범위는 DMG_EDGE_WEAR 하나다. 낙서는 Track 2·3의 doodle 전담 모델이, 찢어짐과
-    # 오염·물젖음·변색은 VLM이 계속 담당한다. VLM은 여기서도 제보에 없는 마모를 추가로
-    # 보고할 수 있고, 모서리를 몇 곳으로 셀지는 _edge_wear_profile()이 결정론적으로 정한다.
+    # --- 마모 후보 자동 채택 [WEAR_AUTO_ADOPT, 기본 꺼짐] ---
+    # 켜면 YOLO 마모 후보를 VLM 채택 여부와 무관하게 전건 결함으로 등록하고, 판정은
+    # 확대 크롭을 보는 증거 대조 검증에 맡긴다(마모 한정, 다른 유형은 VLM 판독 유지).
+    # 끈 이유와 켜기 전 전제는 WEAR_AUTO_ADOPT 선언부 주석 참조.
     auto_adopted = 0
-    for cand in (yolo_candidates or []):
+    for cand in (yolo_candidates or []) if WEAR_AUTO_ADOPT else []:
         if str(cand.get("type") or "") != "DMG_EDGE_WEAR":
             continue
         cb, ci = cand.get("bbox"), int(cand.get("image_index") or 0)
@@ -759,20 +744,10 @@ preliminary_deduction 값만 재계산해서 반환하세요.
         print(f"[Vision Agent] 속지 마모 {inner_wear_dropped}건 제외 (겉면에서 중복 검출되는 부위)")
 
     # --- 확신도 출처 확정 + YOLO 제보 복사 탐지 (결정론적) ---
-    #
-    # [2026-08-07 실측] job b7b34ae1에서 확정 결함 5건의 BBox가 YOLO 제보와 **픽셀 단위로
-    # 완전히 동일**한데도 복사 탐지가 한 건도 걸리지 않았다. 종전 탐지는 confidence 값의
-    # 일치만 봤는데, VLM은 좌표는 그대로 베끼면서 confidence만 전건 0.8로 덮어썼기 때문이다
-    # (실제 제보값은 0.758 / 0.795 / 0.524 / 0.437 / 0.59). 즉 감시 대상 필드가 틀렸다.
-    #
-    # 두 가지를 분리해서 처리한다.
-    #  1) 출처(conf_source): BBox가 제보와 일치하면 그 결함의 확신도는 **제보의 실측값**이다.
-    #     VLM이 써 넣은 값은 근거 없는 자기 신고이므로 실측값으로 교체하고 원본을 보존한다.
-    #     제보에 없는 좌표면 VLM 단독 판독이므로 "추정치"임을 명시한다.
-    #     (제보 채택 자체는 정상 동작이다 - 위반이 아니다)
-    #  2) 위반(conf_copied_from_candidate): VLM이 이미지를 보지 않았다는 신호만 남긴다.
-    #     - 확신도까지 제보와 소수점 4자리로 동일 (종전 기준)
-    #     - 또는 확정 결함 2건 이상에 **완전히 동일한 확신도**를 부여 (평평한 자기 신고)
+    # 출처(conf_source): BBox가 제보와 일치하면 확신도를 제보 실측값으로 교체하고
+    #   VLM 자기 신고는 conf_vlm_selfreported 에 보존한다. 제보에 없으면 "vlm"(추정치).
+    # 위반(conf_copied_from_candidate): VLM이 이미지를 보지 않은 신호. 확신도가 제보와
+    #   소수점 4자리까지 같거나, 확정 결함 2건 이상에 동일한 확신도를 부여한 경우.
     copied_conf = 0
     if defects and yolo_candidates:
         cand_confs = {
@@ -918,37 +893,39 @@ preliminary_deduction 값만 재계산해서 반환하세요.
 # 비용: 결함이 0건이면 호출하지 않는다(MINT 물량에서 추가 비용 0).
 # 실패 시 fail-open - 부가 검증이므로 LLM 장애가 판독 결과를 폐기시키지 않는다.
 
-# 증거 대조 검증을 면제하는 YOLO 실측 확신도 하한.
-#
-# [2026-08-08 사실상 폐기 — 기본값 1.01로 아무것도 면제하지 않는다]
-# 이 면제는 "물리 탐지 모델이 높은 확신도로 잡은 것은 LLM이 뒤집으면 안 된다"는 전제로
-# 넣었으나, 그 전제가 실측으로 깨졌다. job b7b34ae1의 후보 5건을 육안 대조한 결과
-# **확신도 1위(75.8%)가 오탐**이었고 52.4%가 실재하는 손상이었다. 확신도 순서와 진위가
-# 무관하므로 확신도를 근거로 심사를 면제할 수 없다.
-#
-# 게다가 이 면제는 정작 문제가 된 실패를 막지도 못했다. 면제는 **확정 결함**에 적용되는데,
-# 고확신 후보가 VLM 게이트에서 탈락하면 애초에 결함이 되지 못해 면제할 대상 자체가 없었다.
-#
-# 값은 환경변수로 남겨 두되(실험 목적) 운영 기본값은 전건 심사다.
+# 증거 대조 검증 면제 확신도 하한. 기본값 1.01 = 면제 없음(전건 심사).
+# 확신도는 진위와 무관한 것이 실측으로 확인되어 판단 근거로 쓰지 않는다.
 VERIFY_EXEMPT_CONF = float(os.getenv("WMS_VERIFY_EXEMPT_CONF", "1.01"))
 
-# BBox 주변을 얼마나 넓게 잘라 볼지. 결함만 딱 자르면 맥락(주변 표지면과의 대비)이
-# 사라져 판단이 어려워지므로 여유를 준다.
+# ── 마모 판정 실험 플래그 [미사용/확장예정 — 기본 꺼짐] ────────────────────────
+#
+# 존치 사유: 마모 탐지기를 재학습해 정밀도를 올린 뒤 곧바로 재실험하기 위한 완성 코드다.
+# 지우면 측정 설계를 처음부터 다시 짜야 한다. 켜기 전에 아래 전제를 반드시 재측정할 것.
+#
+# 두 플래그는 **짝으로만 의미가 있다.** 하나만 켜면 어느 쪽도 옳지 않다.
+#   - 채택만 켜면  : 오탐 후보가 그대로 감점된다
+#   - 제외만 켜면  : VLM이 채택한 결함에서 감점만 빠져 점수가 오른다
+#
+# 끈 이유 (2026-08-09 실측, 정답 확인 도서 3권):
+#   마모 후보 23건 중 실제 결함 2~3건 — **탐지기 정밀도 10~13%**.
+#   중재 계층으로 해결되는 문제가 아니며, 켜면 깨끗한 책이 감점된다
+#   (LPN-260810-A005: 후보 12건 전부 오탐인데 크롭 검증이 8건을 YES로 확정 → MINT 95 → 78).
+#   상세: `33_코드_변경이력_설계배경_아카이브` 2026-08-08 추가분.
+
+# YOLO 마모 후보를 VLM 채택 여부와 무관하게 전건 결함으로 등록한다.
+WEAR_AUTO_ADOPT = os.getenv("WMS_WEAR_AUTO_ADOPT", "0") == "1"
+
+# 증거 대조 검증의 UNCLEAR(판단 어려움)를 감점 제외로 처리한다.
+# 실측에서 UNCLEAR 12건은 12건 모두 오탐이었다 - 판정 자체의 근거는 가장 좋다.
+UNCLEAR_EXCLUDES_DEDUCTION = os.getenv("WMS_UNCLEAR_EXCLUDES_DEDUCTION", "0") == "1"
+
+# 크롭 기하. 결함만 딱 자르면 주변 면과의 대비가 사라져 판단할 수 없으므로 여백을 준다.
 VERIFY_CROP_EXPAND = 3.0
 VERIFY_CROP_SIZE = 512
-
-# 크롭의 종횡비 상한. 모서리 마모는 266x26px 같은 극단적인 띠 형태가 흔한데, 그대로
-# 잘라 보내면 위아래 맥락이 없어 "이게 마모인지 표지 가장자리 선인지" 판단할 수 없다.
-# 짧은 축에 여백을 더 줘서 최소한의 주변 면을 함께 보여준다.
-VERIFY_CROP_MAX_ASPECT = 3.0
-
-# 짧은 변이 최소 이 크기가 되도록 확대한다. 종전에는 긴 변만 512로 맞췄는데, 띠 형태에서는
-# 긴 변이 이미 크므로 확대 배율이 1.6배에 그쳐 결함 디테일이 전혀 커지지 않았다
-# (실측: 75.8% 후보가 "화질이 거칠어 판단이 어렵습니다"로 UNCLEAR 반환).
-VERIFY_CROP_MIN_SHORT = 224
+VERIFY_CROP_MAX_ASPECT = 3.0      # 띠 형태 결함의 짧은 축에 맥락을 확보
+VERIFY_CROP_MIN_SHORT = 224       # 배율 기준축 (긴 변 기준이면 띠에서 확대가 안 된다)
 VERIFY_CROP_MAX_LONG = 896
-# 원본에 없는 정보는 확대해도 생기지 않는다. 과도한 업스케일은 토큰만 쓰고 뭉갠 픽셀만 만든다.
-VERIFY_CROP_MAX_UPSCALE = 4.0
+VERIFY_CROP_MAX_UPSCALE = 4.0     # 원본에 없는 정보는 확대해도 생기지 않는다
 
 
 def _crop_around_bbox(
@@ -959,14 +936,8 @@ def _crop_around_bbox(
 ) -> Optional[str]:
     """BBox 주변을 잘라 확대한 이미지를 base64로 돌려준다.
 
-    [왜 자르는가] 전체 이미지를 넣고 "0~1000 좌표계의 (48,121)-(78,139)를 보라"고
-    요구하면 VLM은 그 위치를 찾지 못한다. 정규화 좌표를 픽셀로 환산하는 능력이 없고,
-    그 영역은 1536px 축소본 기준 **35x28px, 전체의 0.055%**라 보이지도 않는다.
-    결과적으로 검증자는 지목된 곳 대신 이미지 전체 인상으로 답했고, 그래서 판정이
-    0건 아니면 전건이라는 이분법으로 흔들렸다 (실측 job b7b34ae1).
-
-    볼 곳을 미리 잘라 512px로 확대해 주면 좌표 환산 문제가 사라지고 작은 결함도
-    실제로 보인다. Track 2·3의 속지 doodle 추론이 쓰는 크롭 전략과 같은 원리다.
+    VLM은 정규화 좌표를 픽셀 위치로 환산하지 못하므로, 볼 곳을 미리 잘라서 넘긴다.
+    (설계 배경: `33_코드_변경이력_설계배경_아카이브` 2026-08-08 추가분 §4)
     """
     try:
         from PIL import Image
@@ -988,16 +959,11 @@ def _crop_around_bbox(
 
         bw, bh = x2 - x1, y2 - y1
 
-        # 여백은 **짧은 변**을 기준으로 잡는다.
-        #
-        # [주의] 긴 변 기준 정사각 크롭으로 만들면 안 된다. 모서리 마모는 33x374px 같은
-        # 가늘고 긴 띠 형태가 흔한데, 긴 변에 배율을 곱하면 1122px 정사각이 되어 표지
-        # 전체가 잡힌다 - 확대해서 보여 주려던 목적이 정확히 무산된다(실측 defect#3).
+        # 여백은 짧은 변 기준. 긴 변 기준 정사각으로 만들면 띠 형태 결함에서 크롭이
+        # 표지 전체로 부풀어 확대 목적이 무산된다.
         pad_x = pad_y = max(min(bw, bh) * (expand - 1) / 2, 24.0)
 
-        # 다만 짧은 변 기준만으로는 띠 형태에서 여백이 너무 인색해진다(266x26 -> 318x78,
-        # 4:1). 위아래 맥락이 없으면 마모인지 표지 가장자리 선인지 구분할 수 없다.
-        # 종횡비가 상한을 넘으면 **짧은 축에만** 여백을 더 준다.
+        # 종횡비가 상한을 넘으면 짧은 축에만 여백을 더해 주변 맥락을 확보한다.
         if bw > bh:
             pad_y = max(pad_y, (bw / VERIFY_CROP_MAX_ASPECT - bh) / 2)
         else:
@@ -1011,8 +977,7 @@ def _crop_around_bbox(
         if crop.width < 8 or crop.height < 8:
             return None
 
-        # 배율은 **짧은 변**을 기준으로 정한다. 긴 변만 out_size에 맞추면 띠 형태에서는
-        # 긴 변이 이미 커서 배율이 1.6배에 그치고 결함 디테일이 전혀 확대되지 않는다.
+        # 배율은 짧은 변 기준. 긴 변에 맞추면 띠 형태에서 확대가 거의 일어나지 않는다.
         short, long_ = min(crop.width, crop.height), max(crop.width, crop.height)
         scale = max(VERIFY_CROP_MIN_SHORT / short, out_size / long_)
         scale = min(scale, VERIFY_CROP_MAX_LONG / long_, VERIFY_CROP_MAX_UPSCALE)
@@ -1046,24 +1011,12 @@ def verify_defects_with_images(
     book_title: str = "",
     special_notes: Optional[str] = None,
 ) -> Optional[CriticVerdict]:
-    """확정된 결함을 **BBox 크롭 단위로 하나씩** 원본 이미지와 대조해 심사한다.
+    """확정된 결함을 BBox 크롭 단위로 하나씩 원본 이미지와 대조해 심사한다.
 
-    [2026-08-07 재설계 — 조장 승인] 종전에는 전체 이미지 여러 장과 결함 목록 전체를
-    한 번의 호출에 넣고 판정 하나를 받았다. 두 가지가 동시에 잘못됐다.
-
-      1) 검증자가 지목된 좌표를 찾지 못한다 (_crop_around_bbox 주석 참조).
-      2) 5건을 한 번에 물으면 그 호출의 전반적 인상이 5건 전부에 동시에 걸린다.
-         **결과가 0건 아니면 전건이었고 2~3건이 나온 적이 없다** - 개별 심사를 하지
-         않았다는 지문이다. temperature=0이므로 샘플링 문제가 아니다.
-
-    건별 크롭 + 건별 호출로 바꿔 두 원인을 함께 제거한다. 판정이 독립적이 되므로
-    중간값이 나올 수 있고, 크롭이 작아 호출 수가 늘어도 총 토큰은 오히려 줄어든다.
-
-    [면제] YOLO 실측 확신도가 VERIFY_EXEMPT_CONF 이상인 검출은 심사하지 않는다.
-    물리 탐지 결과를 LLM이 뒤집는 것은 근거의 위계가 뒤바뀐 것이기 때문이다.
-
-    [보수적 처리] UNCLEAR는 오탐으로 보지 않는다. 판단이 어렵다는 것은 결함이 없다는
-    뜻이 아니므로, 애매할 때 검출을 지워 점수를 올리지 않는다.
+    감점 제외는 기본적으로 NO(명백히 손상 없음)만이다. UNCLEAR 까지 뺄지는
+    UNCLEAR_EXCLUDES_DEDUCTION 이 정한다(기본 꺼짐). 어느 경우든 결함 자체는 지우지 않고
+    표식만 남긴다 - 후속 노드가 볼 근거를 보존하기 위함이다.
+    (설계 배경: `33_코드_변경이력_설계배경_아카이브` 2026-08-08 추가분 §4·§6·§10)
 
     Returns:
         CriticVerdict (decision / reason / suspect_indices) 또는 심사 불가 시 None.
@@ -1079,7 +1032,6 @@ def verify_defects_with_images(
     notes: List[str] = []
 
     for i, d in enumerate(defects):
-        # --- 면제 (B): 고확신 YOLO 검출은 심사 대상이 아니다 ---
         conf = d.get("confidence")
         if (
             d.get("conf_source") == "yolo"
@@ -1139,24 +1091,15 @@ def verify_defects_with_images(
         judged += 1
         d["verify_visible"] = res.visible
         d["verify_reason"] = res.reason
-        # [2026-08-08 조장 결정] 감점은 **YES 에만** 준다.
-        #
-        # 종전에는 UNCLEAR를 감점 유지로 뒀다. "판단이 어렵다"가 "결함이 없다"는 아니므로
-        # 보수적으로 남긴 것이었는데, 실측에서 정반대로 나왔다. job b7b34ae1의 후보 5건을
-        # 육안 대조한 결과 UNCLEAR 2건은 **둘 다 오탐**이었고, 실재하는 손상 3건은 전부
-        # YES를 받았다. 즉 이 모델에서 UNCLEAR는 "못 봤다"보다 "볼 것이 없다"에 가깝다.
-        #
-        # UNCLEAR를 HITL 이관 사유로 쓰는 안도 검토했으나, 5건 중 2건꼴로 발생해 대부분의
-        # 검수가 사람에게 넘어간다 - 자동화가 성립하지 않는다.
-        #
-        # 감수하는 위험: 해상도 때문에 못 본 진짜 결함이 감점에서 빠진다. 표본이 도서 1권
-        # 이므로 재촬영으로 표본을 키운 뒤 재검토한다.
-        if res.visible in ("NO", "UNCLEAR"):
-            d["verify_status"] = "rejected" if res.visible == "NO" else "unclear"
+        # 감점 제외 대상. 기본은 NO(명백히 손상 없음)만이며, UNCLEAR(판단 어려움)까지
+        # 뺄지는 UNCLEAR_EXCLUDES_DEDUCTION 이 정한다(선언부 주석 참조).
+        d["verify_status"] = {"YES": "confirmed", "NO": "rejected"}.get(res.visible, "unclear")
+        excluded = res.visible == "NO" or (
+            res.visible == "UNCLEAR" and UNCLEAR_EXCLUDES_DEDUCTION
+        )
+        if excluded:
             suspects.append(i)
             notes.append(f"#{i} {label}: {res.reason}")
-        else:
-            d["verify_status"] = "confirmed"
 
     if judged == 0 and not suspects:
         # 전건 면제/생략이면 심사를 한 적이 없다. 통과로 위장하지 않는다.
@@ -1378,10 +1321,8 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
             break
 
         if "WEAR" in dtype or "마모" in dtype:
-            # 마모는 건당이 아니라 **부위 단위 그룹 감점**이므로, 개별 BBox에 감점을 쪼개
-            # 붙이면 안 된다. 오버레이가 건당 감점처럼 읽히지 않도록 그룹임을 명시한다.
-            # (실측: 5건 검출 / 부위 3곳 / 그룹 합산 -7점 - 종전 표시는 건당 -5점이라
-            #  화면상 -25점으로 읽혔다)
+            # 마모는 부위 단위 그룹 감점이다. 개별 BBox에 쪼개 붙이면 화면에서 건당
+            # 감점처럼 읽히므로 그룹임을 명시한다.
             d["deduction_scope"] = "group"
             d["deduction_group"] = "EDGE_WEAR"
             if not edge_wear_added:
@@ -1512,17 +1453,8 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         grade_str = "S급 (MINT)" if score >= 95 else ("A급 (GOOD)" if score >= 85 else ("B급 (NORMAL)" if score >= 65 else "REJECT C급 (폐기)"))
         decision_str = "APPROVE" if score >= 65 else "REJECT"
 
-        # [2026-08-07 실측 버그] 증거 대조 검증이 결함을 **전건** 오탐으로 지목하면 감점이
-        # 0이 되어 UBCI 100점 / S급(MINT)이 나온다. LPN-260806-A001 재검수에서 마모 5건이
-        # 전건 제외되며 "결함이 전혀 없는 상태"라는 보증서 문구까지 생성됐다 - 5곳이 검출된
-        # 책이 무결점 최상급으로 확정된 것이다.
-        #
-        # 종전 설계는 critic_agent Stage A가 이 상태를 잡아 HITL로 보내는 것으로 충분하다고
-        # 봤다. 이관은 실제로 동작하지만 **점수·등급·보증서 문구는 그대로 남아** 화면과
-        # 고객 보증서에 100점 MINT로 표시된다. 이관은 집행을 막을 뿐 표시를 고치지 않는다.
-        #
-        # 검증이 판독을 전부 기각했다는 것은 "흠이 없다"가 아니라 "판독하지 못했다"이므로,
-        # 무결점 등급을 주지 않고 판정을 보류한다. (프리즈 규정과 같은 원칙)
+        # 검증이 판독을 전부 기각해 감점 근거가 남지 않은 상태는 "흠이 없다"가 아니라
+        # "판독하지 못했다"이므로 무결점 등급을 주지 않고 판정을 보류한다.
         score_unverified = bool(defects) and total_deduction == 0 and bool(suspect_excluded)
         if score_unverified:  # noqa: SIM102 - 아래 분기들이 이 플래그를 함께 읽는다
             grade_str = "판정 보류 (증거 대조 전건 반려)"
@@ -1926,9 +1858,8 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
         for d in defects
     ]
 
-    # 증거 대조가 판독을 전건 기각한 건은 "무결점"이 아니라 "미확정"이다. 이 사실을 알려
-    # 주지 않으면 결함 목록이 비어 보이므로 LLM이 규칙 1을 적용해 "트집 잡을 곳이 없었다"고
-    # 쓴다 (실측: LPN-260806-A001 마모 5건 전건 제외 → "결함이 전혀 없는 상태" 보증서 발행).
+    # 전건 기각 건은 "무결점"이 아니라 "미확정"이다. 알려주지 않으면 목록이 비어 보여
+    # LLM이 "결함 없음" 톤으로 쓴다.
     unverified = bool(state.get("score_unverified"))
     unverified_block = (
         "\n[중요 - 판정 미확정]\n"
@@ -1983,27 +1914,16 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
         structured = llm_mini.with_structured_output(CertificateDocument)
         doc: CertificateDocument = structured.invoke([HumanMessage(content=prompt)])
         result = doc.model_dump()
-        # [2026-08-08 변경] 종전에는 findings 길이를 결함 배열 길이와 **정확히 일치**시키도록
-        # 강제했다. 그래서 모서리 마모처럼 한 부위가 여러 컷에 걸쳐 잡히는 유형에서 탐지
-        # 건수만큼 문장이 생성됐고, "또 발견되었습니다 / 반복적으로 확인되었습니다"가
-        # 줄줄이 나가 고객에게 실제보다 나쁜 인상을 줬다.
-        #
-        # 이제 findings는 **항목 단위**로 묶는 것이 정상이므로 개수 일치를 요구하지 않는다.
-        # 다만 두 가지는 사실이므로 계속 강제한다.
-        #   - 확정 결함이 있는데 findings가 비면 결함을 숨긴 문서가 된다
-        #   - findings가 확정 결함 수보다 많으면 없는 결함을 지어낸 것이다
+        # findings는 부위 단위로 묶이므로 결함 개수와 일치할 필요가 없다. 다만 확정 결함이
+        # 있는데 비면 결함을 숨긴 문서가 되고, 결함 수보다 많으면 지어낸 것이다.
         findings = result.get("findings") or []
         if defects and (not findings or len(findings) > len(defects)):
             result["findings"] = _fallback_certificate(ubci_score, defects, special_notes)["findings"]
         elif not defects and findings:
             result["findings"] = []
 
-        # 묶음 감점은 **한 번만** 표시한다.
-        #
-        # 마모처럼 부위 합산으로 산정되는 유형은 같은 감점값이 여러 항목에 실려 내려간다.
-        # 프롬프트로 "한 번만 쓰라"고 지시해도 모델이 항목마다 그대로 복사해 붙이는 것이
-        # 실측으로 확인됐다(-7점이 3건 → 고객이 -21점으로 읽음). 문서 숫자는 프롬프트가
-        # 아니라 코드가 보장해야 하므로, 같은 라벨·같은 값이 반복되면 첫 항목만 남긴다.
+        # 묶음 감점은 한 번만 표시한다. 같은 라벨·같은 값이 반복되면 첫 항목만 남긴다
+        # (합계가 항목마다 반복되면 고객이 그 수를 더해서 읽는다).
         seen: set = set()
         for f in (result.get("findings") or []):
             key = (f.get("label"), f.get("deduction"))
