@@ -154,4 +154,75 @@ def list_inspections(
             "updated_at": job.updated_at.strftime("%Y-%m-%d %H:%M:%S") if job.updated_at else None,
         })
 
+    # ------------------------------------------------------------------
+    # 신품 Fast-Track 입고분 병합
+    # ------------------------------------------------------------------
+    # [2026-08-10 신설] 이 화면은 "통합 검수 처리 내역"인데 원장이 return_jobs 하나뿐이라
+    # 신품 입고분이 한 건도 뜨지 않았다. 신품은 무검수 입고라 ReturnJob을 아예 만들지 않기
+    # 때문이다(설계상 정상). 그래서 조장이 직접 등록한 신품이 "나의 검수 내역"에 나타나지
+    # 않았다. 신품의 입고 원장은 InventoryLog(INBOUND/NEW)이므로 그쪽을 함께 읽어 합친다.
+    #
+    # 등급·점수·결함은 신품에 존재하지 않는 값이라 지어내지 않고 None으로 둔다
+    # (화면이 "미표기 (신품 Fast-Track)"으로 표기한다).
+    from app.models.wms import InventoryLog
+
+    # 상태 필터는 검수 파이프라인 상태값이라 신품에는 대응 개념이 없다.
+    # APPROVED(=입고 확정)만 신품과 의미가 통하므로 그 외 필터가 걸리면 신품은 제외한다.
+    include_new = (not status) or status.upper() == "APPROVED"
+
+    if include_new:
+        log_stmt = select(InventoryLog).where(
+            InventoryLog.transaction_type == "INBOUND",
+            InventoryLog.condition_grade == "NEW",
+        )
+        if worker_id:
+            log_stmt = log_stmt.where(InventoryLog.worker_id == worker_id)
+
+        log_rows = db.exec(log_stmt.order_by(InventoryLog.created_at.desc()).limit(limit)).all()
+        new_books = {}
+        if log_rows:
+            book_ids = {lg.book_id for lg in log_rows if lg.book_id}
+            if book_ids:
+                new_books = {b.id: b for b in db.exec(select(Book).where(Book.id.in_(book_ids))).all()}
+
+        for lg in log_rows:
+            b = new_books.get(lg.book_id)
+            items.append({
+                "job_id": f"NEWLOG-{lg.id}",
+                "lpn_barcode": None,  # 신품은 개별 LPN을 발급하지 않는다
+                "book": {
+                    "title": b.title if b else "도서 정보 없음",
+                    "author": b.author if b else "-",
+                    "publisher": b.publisher if b else "-",
+                    "isbn": b.isbn if b else "-",
+                    "base_price": b.base_price if b else 0.0,
+                    "cover_image_url": (b.cover_image_url if b else "") or "",
+                },
+                "image_urls": [],
+                "avg_defect_confidence": None,
+                "ubci_score": None,
+                "grade": "NEW_FASTTRACK",
+                "confirmed_grade": None,
+                "status": "APPROVED",
+                "inspection_source": "NEW_FASTTRACK",
+                "inspected_by": None,
+                "inspector_label": "신품 Fast-Track (무검수 입고)",
+                "inbound_worker_id": lg.worker_id,
+                "defect_count": 0,
+                "defect_types": [],
+                "retry_count": 0,
+                "created_at": lg.created_at.strftime("%Y-%m-%d %H:%M:%S") if lg.created_at else None,
+                "updated_at": lg.updated_at.strftime("%Y-%m-%d %H:%M:%S") if lg.updated_at else None,
+            })
+            total += 1
+
+        # 중고/신품을 한 목록에서 최신순으로 읽도록 병합 후 재정렬한다.
+        items.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+
+    # 작업자 필터는 agent_logs(JSONB) 안에 있어 SQL로 걸지 못하고 파이썬에서 거른다.
+    # 그래서 count 쿼리가 필터를 반영하지 못해 total이 전체 건수로 나왔다(내 검수 1건인데
+    # 2,714건으로 표기). 필터가 걸린 조회에서는 실제 반환 건수를 그대로 쓴다.
+    if worker_id:
+        total = len(items)
+
     return {"items": items, "total": total, "limit": limit, "offset": offset}
