@@ -574,6 +574,15 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
     agent_logs = (job.agent_logs if job else {}) or {}
     inspector = resolve_inspector(item, job)
 
+    # 목록(GET /inventory)과 같은 표기 정본을 쓴다 - "작업자"는 AI/HITL 판정 주체가 아니라
+    # 실제 입고 처리한 사람이어야 한다(라벨 인쇄가 이 값을 그대로 쓴다).
+    from app.models.wms import User as _User
+    inbound_worker_name = None
+    if inspector.get("inbound_worker_id"):
+        _u = db.query(_User).filter(_User.employee_id == inspector["inbound_worker_id"]).first()
+        inbound_worker_name = _u.name if _u else None
+    worker_label = format_worker_label(inspector.get("inbound_worker_id"), inbound_worker_name)
+
     # [수정 이력] 가격을 프론트가 `정가 × UBCI/100`으로 직접 계산하고 있었다. UBCI 100점(MINT)
     # 이면 계수가 1.0이라 **중고 판매가가 신품 정가와 완전히 동일**하게 표시됐고(정가 20,000원 /
     # 중고 판매가 20,000원), 카테고리별 차등도 전혀 반영되지 않았다.
@@ -610,6 +619,7 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
         "zone": zone_str,
         "quantity": 1,
         "worker_id": inspector["label"],
+        "worker_label": worker_label,
         "inspector": inspector,
         # 카테고리별 차등이 적용된 가격 산정 내역 (프론트는 렌더만 한다)
         "pricing": pricing,

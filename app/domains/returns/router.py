@@ -219,6 +219,21 @@ def list_inspections(
         # 중고/신품을 한 목록에서 최신순으로 읽도록 병합 후 재정렬한다.
         items.sort(key=lambda r: r.get("created_at") or "", reverse=True)
 
+    # "작업자"는 AI/HITL 판정 주체(inspector_label)가 아니라 실제 입고 처리한 사람이어야
+    # 한다 - 재고 상세/목록과 같은 표기 정본(format_worker_label)을 여기서도 쓴다.
+    # 라벨 인쇄가 이 필드를 그대로 쓰므로, 없으면 화면·인쇄 양쪽에서 AI 이름이 노출된다.
+    from app.core.constants import format_worker_label
+
+    emp_ids = {it["inbound_worker_id"] for it in items if it.get("inbound_worker_id")}
+    name_by_emp: Dict[str, str] = {}
+    if emp_ids:
+        for u in db.exec(select(User).where(User.employee_id.in_(emp_ids))).all():
+            name_by_emp[u.employee_id] = u.name
+    for it in items:
+        it["worker_label"] = format_worker_label(
+            it.get("inbound_worker_id"), name_by_emp.get(it.get("inbound_worker_id") or "")
+        )
+
     # 작업자 필터는 agent_logs(JSONB) 안에 있어 SQL로 걸지 못하고 파이썬에서 거른다.
     # 그래서 count 쿼리가 필터를 반영하지 못해 total이 전체 건수로 나왔다(내 검수 1건인데
     # 2,714건으로 표기). 필터가 걸린 조회에서는 실제 반환 건수를 그대로 쓴다.
