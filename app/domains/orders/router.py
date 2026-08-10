@@ -103,6 +103,25 @@ def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> Lis
             book = session.get(Book, UUID(line.id.replace("NEW-BOOK-", "")))
             if not book:
                 raise HTTPException(404, f"신품 도서를 찾을 수 없습니다: {line.id}")
+
+            # [2026-08-10 신설] 신품 재고 검증. 중고는 아래 분기에서 IN_STOCK을 확인하는데
+            # 신품에는 검증이 전혀 없어, 재고 0인 책도 주문에 실리고 피킹 지시서까지 발행됐다.
+            # 신품은 발주로 채울 수 있으므로 주문 자체를 막지는 않되(발주 제안이 자동 생성된다),
+            # 보유 수량을 넘는 요청은 여기서 거절한다 - 없는 물건을 팔기로 확정할 수는 없다.
+            from app.models.wms import Inventory as _Inv
+
+            on_hand = sum(
+                (r.quantity or 0)
+                for r in session.exec(select(_Inv).where(_Inv.book_id == book.id)).all()
+            )
+            available = max(on_hand, int(book.virtual_stock or 0))
+            if qty > available:
+                raise HTTPException(
+                    409,
+                    f"'{book.title}' 재고 부족: 요청 {qty}권 / 가용 {available}권. "
+                    f"발주(SCM) 승인으로 재고를 채운 뒤 주문해 주세요.",
+                )
+
             lines.append({
                 "book": book, "is_new": True, "quantity": qty,
                 "ubci_score": None, "days_in_inventory": 1,
@@ -189,7 +208,20 @@ def simulate_b2b_order(session: Session = Depends(get_db)):
     """
     customers = ["교보문고 B2B 지점", "알라딘 중고매장 강남점", "예스24 B2B 물류센터", "영풍문고 종로본점"]
 
-    new_books = session.exec(select(Book).where(Book.is_active == True)).all()
+    # [2026-08-10 수정] 종전에는 활성 도서 전체에서 무작위로 뽑아, 재고가 0인 신품도
+    # 주문에 실렸다(중고는 IN_STOCK 조건이 있었으나 신품은 아무 조건이 없었다).
+    # 시뮬레이션이라도 팔 수 없는 물건을 주문에 넣으면 그 뒤 흐름 전체가 거짓이 된다.
+    from app.models.wms import Inventory as _Inventory
+
+    stock_by_book: Dict[Any, int] = {}
+    for row in session.exec(select(_Inventory)).all():
+        if row.quantity and row.quantity > 0:
+            stock_by_book[row.book_id] = stock_by_book.get(row.book_id, 0) + row.quantity
+
+    new_books = [
+        b for b in session.exec(select(Book).where(Book.is_active == True)).all()
+        if stock_by_book.get(b.id, 0) > 0 or (b.virtual_stock or 0) > 0
+    ]
     used_items = session.exec(
         select(InventoryUsedItem).where(InventoryUsedItem.item_status == ItemStatusEnum.IN_STOCK.value)
     ).all()
@@ -197,7 +229,9 @@ def simulate_b2b_order(session: Session = Depends(get_db)):
     picks: List[OrderLineRequest] = []
     if new_books:
         for b in random.sample(new_books, min(len(new_books), random.randint(1, 2))):
-            picks.append(OrderLineRequest(id=f"NEW-BOOK-{b.id}", quantity=random.randint(1, 3)))
+            # 보유 수량을 넘겨 주문하지 않는다.
+            available = max(stock_by_book.get(b.id, 0), b.virtual_stock or 0)
+            picks.append(OrderLineRequest(id=f"NEW-BOOK-{b.id}", quantity=random.randint(1, min(3, available))))
     if used_items:
         for u in random.sample(used_items, min(len(used_items), random.randint(1, 2))):
             picks.append(OrderLineRequest(id=str(u.id), quantity=1))
@@ -283,6 +317,9 @@ def picking_scan(req: PickingScanRequest, session: Session = Depends(get_db)):
     stmt = select(PickingInstructionItem).join(
         PickingInstruction, PickingInstructionItem.instruction_id == PickingInstruction.id
     ).where(PickingInstruction.status.in_(["PENDING", "ACCEPTED", "IN_PROGRESS"]))
+    # 재고 부족으로 표시된 라인은 스캔 대상에서 뺀다. 목표 수량(total_items)에서도 빠져
+    # 있으므로, 여기서 집히면 picked_items가 목표를 넘어 진행률 회계가 어긋난다.
+    stmt = stmt.where(PickingInstructionItem.status != "OUT_OF_STOCK")
     if req.instruction_id:
         stmt = stmt.where(PickingInstructionItem.instruction_id == req.instruction_id)
     if is_isbn:
@@ -417,12 +454,17 @@ def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: S
                 inv.updated_at = now_kst()
                 session.add(inv)
                 remaining -= deduct
-            if remaining > 0:
-                # inventory 테이블 미등록 신품은 books.virtual_stock에서 차감
-                book = session.get(Book, it.book_id)
-                if book and book.virtual_stock:
-                    book.virtual_stock = max(0, book.virtual_stock - remaining)
-                    session.add(book)
+            # [2026-08-11 수정] 신품 입고(Fast-Track)는 Inventory.quantity와
+            # books.virtual_stock을 **둘 다** 올린다. 종전에는 출고가 Inventory 행이
+            # 모자랄 때(remaining > 0)만 virtual_stock을 깎아서, 정상 출고에서는
+            # virtual_stock이 한 번도 줄지 않고 입출고를 돌수록 부풀었다.
+            # available-books가 Inventory 0일 때 virtual_stock으로 폴백하므로,
+            # 출고를 끝낸 책이 계속 재고로 남아 다시 주문에 실렸다.
+            # 입고가 올린 만큼 출고도 같은 수량을 내린다 (양쪽 대칭).
+            book = session.get(Book, it.book_id)
+            if book:
+                book.virtual_stock = max(0, (book.virtual_stock or 0) - it.quantity)
+                session.add(book)
             session.add(InventoryLog(
                 transaction_type="OUTBOUND",
                 book_id=it.book_id,
@@ -743,14 +785,24 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
     output = []
     now = now_kst()
 
-    # 1. Fetch ALL 44 NEW books from books table with 100% PURE DB inventory stock_qty
+    # 1. 신품 - books 테이블에서 **실제 보유 수량이 있는 것만** 내려보낸다.
+    #
+    # [2026-08-11 수정] 종전에는 select(Book)으로 카탈로그 전 권(626권)을 그대로 내려,
+    # 창고에 한 권도 없는 책까지 "출고 대상 도서"에 떴다. 출고 화면은 팔 수 있는 물건을
+    # 고르는 자리이므로 재고 0은 목록에서 빠져야 한다 (품절 표시가 아니라 제외).
     from app.models.wms import Inventory
-    all_books = session.exec(select(Book)).all()
+    all_books = session.exec(select(Book).where(Book.is_active == True)).all()
     for idx, b in enumerate(all_books):
         # Calculate 100% pure DB inventory quantity (sum of inventory.quantity or b.virtual_stock)
         inv_rows = session.exec(select(Inventory).where(Inventory.book_id == b.id)).all()
         real_inv_qty = sum(inv.quantity for inv in inv_rows) if inv_rows else 0
-        pure_db_stock_qty = real_inv_qty if real_inv_qty > 0 else (b.virtual_stock if (b.virtual_stock and b.virtual_stock > 0) else 1)
+        # [2026-08-10 수정] 재고가 0인 도서에 `else 1`로 **없는 재고를 지어내고 있었다.**
+        # 그 위조값 때문에 재고 0인 신품이 주문 라인에 할당됐고, 피킹 지시서는 실물이 없는
+        # 책을 집으러 가라고 지시했다(A-01-01 사건의 배경). 실제 값을 그대로 내려보내고
+        # 0이면 화면이 품절로 처리하게 한다.
+        pure_db_stock_qty = real_inv_qty if real_inv_qty > 0 else max(0, b.virtual_stock or 0)
+        if pure_db_stock_qty <= 0:
+            continue
 
         output.append({
             "id": f"NEW-BOOK-{b.id}",
@@ -780,16 +832,20 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
     # 검수가 끝나 등급이 확정된 품목만 판매 가능 재고로 취급한다. 선부착 대기
     # (PENDING_INSPECTION)와 결재 대기(HITL_*)는 아직 팔 수 없고 등급·점수도 없으므로
     # 동적 가격 산정과 3D 적재 시뮬레이션 입력에서 제외한다.
+    # [2026-08-11 수정] 종전에는 거부 목록(HITL_*/PENDING_INSPECTION만 제외)이라
+    # SHIPPED·ALLOCATED가 걸러지지 않아 **이미 출고된 LPN이 계속 출고 대상 목록에 떴다.**
+    # 팔 수 있는 상태를 명시하는 허용 목록으로 뒤집는다 - 상태값이 새로 늘어도
+    # 자동으로 제외되므로 같은 누락이 재발하지 않는다.
     from sqlalchemy import or_
 
-    NOT_SELLABLE = ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
+    SELLABLE = [ItemStatusEnum.IN_STOCK.value]
     used_stmt = (
         select(InventoryUsedItem, Book)
         .join(Book, InventoryUsedItem.book_id == Book.id)
         .where(
             or_(
                 InventoryUsedItem.item_status.is_(None),
-                InventoryUsedItem.item_status.notin_(NOT_SELLABLE),
+                InventoryUsedItem.item_status.in_(SELLABLE),
             )
         )
     )
