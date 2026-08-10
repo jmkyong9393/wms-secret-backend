@@ -16,6 +16,24 @@ router = APIRouter(prefix="/admin/hitl", tags=["Admin HITL"])
 # Admin 전용 권한 체커
 admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 
+
+def _resolve_admin_audit_id(current_admin, session: Session) -> UUID:
+    """AdminAuditLog.admin_id는 users.id를 참조하는 UUID FK다. current_admin.id를
+    신뢰하되 DB에 실제로 존재하는지 확인하고, 없으면 관리자 계정으로 폴백한다."""
+    from app.models.wms import User
+    raw_admin_id = str(getattr(current_admin, "id", "") or "")
+    try:
+        parsed_uuid = UUID(raw_admin_id)
+        if session.get(User, parsed_uuid):
+            return parsed_uuid
+    except Exception:
+        pass
+
+    db_admin = session.exec(select(User).where(User.role.in_([UserRoleEnum.MASTER, UserRoleEnum.ADMIN]))).first()
+    if not db_admin:
+        db_admin = session.exec(select(User)).first()
+    return db_admin.id if db_admin else UUID("00000000-0000-0000-0000-000000000001")
+
 class HitlOverrideRequest(BaseModel):
     ticketId: str = Field(..., description="Job Task ID or ID")
     decision: str = Field(..., description="APPROVE_DOWNGRADE, REJECT_RETURN, REJECT_DISCARD, APPROVE_NORMAL")
@@ -255,9 +273,9 @@ def recall_inventory_to_hitl(
         "previous_grade": used_item.condition_grade if used_item else None,
     })
     logs["recall_history"] = history
-    # 회수된 건은 사람이 확정해야 한다. 재검수를 돌려도 AI가 스스로 확정하지 못하게 잠근다.
-    logs["hitl_locked"] = True
     job.agent_logs = logs
+    # 상태를 HITL_REQUIRED로 되돌려 두면, 이후 "AI 재검수"를 눌러도 트리거 시점 상태를 읽어
+    # was_hitl=True가 넘어가므로 AI 단독 확정이 막힌다 (배경: 01-freeze-zones.md).
     job.status = JobStatusEnum.HITL_REQUIRED.value
     session.add(job)
 
@@ -268,7 +286,8 @@ def recall_inventory_to_hitl(
         session.add(used_item)
 
     session.add(AdminAuditLog(
-        admin_id=actor,
+        # admin_id는 users.id를 참조하는 UUID FK다. employee_id 문자열을 넣으면 500이 난다.
+        admin_id=_resolve_admin_audit_id(current_admin, session),
         action="RECALL_TO_HITL",
         target_type="RETURN_JOB",
         target_id=str(job.id),
@@ -553,23 +572,7 @@ def submit_hitl_override(
         
         session.add(job)
         
-        # Admin ID UUID 변환 및 Foreign Key 방어 로직
-        from app.models.wms import User
-        valid_admin_id = None
-        raw_admin_id = str(getattr(current_admin, "id", "") or "")
-        try:
-            parsed_uuid = UUID(raw_admin_id)
-            user_exists = session.get(User, parsed_uuid)
-            if user_exists:
-                valid_admin_id = parsed_uuid
-        except Exception:
-            pass
-
-        if not valid_admin_id:
-            db_admin = session.exec(select(User).where(User.role.in_([UserRoleEnum.MASTER, UserRoleEnum.ADMIN]))).first()
-            if not db_admin:
-                db_admin = session.exec(select(User)).first()
-            valid_admin_id = db_admin.id if db_admin else UUID("00000000-0000-0000-0000-000000000001")
+        valid_admin_id = _resolve_admin_audit_id(current_admin, session)
 
         # Create Audit Log for compliance & FDS
         audit = AdminAuditLog(
