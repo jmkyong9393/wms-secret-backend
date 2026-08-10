@@ -44,8 +44,52 @@ jobs:
         username: ubuntu
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
+          set -e
           REG=${{ steps.ecr.outputs.registry }}
           SHA=${{ github.sha }}
+          SHORT=$(echo $SHA | cut -c1-12)
+
+          # --- DB 마이그레이션 (롤아웃 '전에' 실행) ---
+          #
+          # 종전에는 이 워크플로가 스키마를 건드리지 않아, 컬럼을 추가하는 배포는 사람이
+          # EC2에 들어가 alembic을 수동 실행해야 했다(잊으면 신코드가 없는 컬럼을 조회해 500).
+          #
+          # 순서가 중요하다. 롤아웃 뒤에 돌리면 "새 코드는 떴는데 컬럼은 아직 없는" 구간이
+          # 생긴다. 반대로 마이그레이션을 먼저 하면 구 코드는 새 컬럼을 모를 뿐이라(추가·
+          # nullable) 무해하다. 마이그레이션 파일은 새 이미지에만 있으므로 실행 중인 파드가
+          # 아니라 **새 이미지로 만든 일회성 Job**으로 돌린다. DATABASE_URL은 배포와 동일한
+          # 시크릿에서 주입해 접속 정보가 두 곳으로 갈라지지 않게 한다.
+          kubectl delete job wms-migrate-$SHORT --ignore-not-found
+          cat <<EOF | kubectl apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: wms-migrate-$SHORT
+          spec:
+            backoffLimit: 1
+            ttlSecondsAfterFinished: 600
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                - name: migrate
+                  image: $REG/nexus-backend-repo:$SHA
+                  command: ["alembic", "upgrade", "head"]
+                  env:
+                  - name: DATABASE_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: wms-backend-secret
+                        key: DATABASE_URL
+          EOF
+
+          # 마이그레이션이 실패하면 여기서 배포를 멈춘다 (set -e). 깨진 스키마 위에
+          # 새 코드를 올리는 것보다 구 버전이 계속 도는 편이 안전하다.
+          kubectl wait --for=condition=complete job/wms-migrate-$SHORT --timeout=300s \
+            || { echo "::error::DB 마이그레이션 실패 - 배포를 중단합니다"; kubectl logs job/wms-migrate-$SHORT --tail=50; exit 1; }
+          kubectl logs job/wms-migrate-$SHORT --tail=20
+
+          # --- 애플리케이션 롤링 업데이트 ---
           kubectl set image deployment/wms-api       api=$REG/nexus-backend-repo:$SHA
           kubectl set image deployment/wms-ai-worker ai-worker=$REG/nexus-backend-repo:$SHA
           kubectl rollout status deployment/wms-api --timeout=180s
