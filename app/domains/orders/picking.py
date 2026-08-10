@@ -72,14 +72,57 @@ def generate_instruction_no(session: Session) -> str:
     return f"{prefix}-{len(todays) + 1:04d}"
 
 
-def _location_of(session: Session, location_id: Optional[UUID]) -> Dict[str, str]:
+def _unpad(value: Optional[str], default: str) -> str:
+    """
+    위치 좌표를 무패딩 정본으로 정규화한다 (PickingInstructionItem 모델 주석 규정: 예 A-1-1).
+    "01" 같은 패딩 표기가 섞이면 같은 칸이 화면마다 다른 문자열로 보인다.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return default
+    # "01" -> "1". 모두 0인 값("0", "00")은 유효한 칸이 아니므로 기본값으로 되돌린다.
+    return s.lstrip("0") or default
+
+
+def _fallback_location_for_book(book: Optional[Book], grade: str) -> Dict[str, str]:
+    """
+    재고 행이 없어 실제 적치 위치를 알 수 없을 때 쓸 위치.
+
+    [2026-08-10 수정] 종전에는 `{"zone":"A","rack":"01","shelf":"01"}`을 하드코딩해
+    **창고에 존재하지도 않는 A-01-01을 지시서에 박아 넣었다**(실측: 배포 DB의 실제 위치는
+    전부 A-1-1·C-1-4 같은 무패딩 표기이고 "01"은 단 한 건도 없다). 작업자는 없는 칸으로
+    안내받고, 화면상으로는 정상 지시서처럼 보여 실패가 드러나지 않았다.
+
+    이제 입고 시점과 **같은 3차원 알고리즘**(등급→존 / 카테고리→랙 / 판형→선반)으로
+    "이 책이 놓일 자리"를 산출한다. 재고가 채워지면 실제로 배정될 칸과 일치하므로,
+    지어낸 좌표가 아니라 규칙에서 유도된 좌표가 된다.
+    """
+    from app.domains.inventory.service import recommend_optimal_warehouse_zone
+
+    zone, rack, shelf = recommend_optimal_warehouse_zone(
+        grade=grade,
+        category=(book.category_type if book else None) or "IT/컴퓨터",
+        base_price=(book.base_price if book else None) or 20000.0,
+        standard_size=(book.standard_size if book else None),
+    )
+    return {"zone": zone, "rack": rack, "shelf": shelf}
+
+
+def _location_of(
+    session: Session,
+    location_id: Optional[UUID],
+    *,
+    book: Optional[Book] = None,
+    grade: str = "NEW",
+) -> Dict[str, str]:
+    """실제 적치 위치를 돌려준다. 없으면 3차원 알고리즘으로 유도한 자리로 대체한다."""
     if location_id:
         loc = session.get(Location, location_id)
         if loc:
             # DB에 "A" / "Zone C" 표기가 혼재 - 동선 정렬 일관성을 위해 "Zone " 접두어 제거 정규화
             zone = (loc.zone or "A").replace("Zone", "").replace("zone", "").strip() or "A"
-            return {"zone": zone, "rack": loc.rack or "01", "shelf": loc.shelf or "01"}
-    return {"zone": "A", "rack": "01", "shelf": "01"}
+            return {"zone": zone, "rack": _unpad(loc.rack, "1"), "shelf": _unpad(loc.shelf, "1")}
+    return _fallback_location_for_book(book, grade)
 
 
 def allocate_order_items(session: Session, order: Order) -> List[PickingInstructionItem]:
@@ -117,7 +160,8 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
         for used in used_rows:
             if remaining <= 0:
                 break
-            loc = _location_of(session, used.location_id)
+            # 중고는 등급이 존을 가른다(MINT=B / GOOD=C / NORMAL=D). 폴백도 같은 규칙을 따른다.
+            loc = _location_of(session, used.location_id, book=book, grade=used.condition_grade or "NORMAL")
             used.item_status = ItemStatusEnum.ALLOCATED.value
             used.updated_at = now_kst()
             session.add(used)
@@ -144,7 +188,9 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
                 .where(Inventory.quantity > 0)
                 .order_by(Inventory.created_at.asc())
             ).first()
-            loc = _location_of(session, inv.location_id if inv else None)
+            # 신품은 Zone A 고정이지만 랙/선반은 카테고리·판형이 정한다. 재고 행이 없으면
+            # (아직 입고 전) 같은 알고리즘으로 배정 예정 칸을 산출한다.
+            loc = _location_of(session, inv.location_id if inv else None, book=book, grade="NEW")
             draft.append(PickingInstructionItem(
                 instruction_id=None,
                 order_item_id=oi.id,
