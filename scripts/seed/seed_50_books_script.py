@@ -1,12 +1,22 @@
+"""도서 카탈로그 시딩 + 신품 재고 투입.
+
+[2026-08-11 수정] 종전에는 Book 행에 `virtual_stock`만 채웠다. 신품 재고의 SSOT가
+`Inventory` 행 합계로 일원화된 뒤에는 그렇게 심은 재고가 어디에서도 보이지 않는다
+(주문·발주·피킹이 전부 Inventory를 읽는다). 실입고와 같은 관문을 통과시켜
+위치 배정과 InventoryLog 원장까지 동일하게 남긴다.
+"""
 import sys
 import random
+from pathlib import Path
 from uuid import uuid4
 from datetime import datetime, date
 
-sys.path.append(r'E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend')
+# 레포 루트를 import 경로에 넣는다 (절대경로 하드코딩 제거 - 다른 PC/컨테이너에서도 동작).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.db.session import engine
 from sqlmodel import Session, select
+from app.domains.inventory.service import fasttrack_new_stock_inbound
 from app.models.wms import Book
 
 # 50 Rich Bestseller Korean Books Seed Data
@@ -69,7 +79,6 @@ with Session(engine) as db:
 
     for title, author, publisher, isbn, price in BOOKS_50:
         if isbn not in existing_isbns:
-            v_stock = random.randint(2, 8)
             new_book = Book(
                 id=uuid4(),
                 title=title,
@@ -77,11 +86,16 @@ with Session(engine) as db:
                 publisher=publisher,
                 isbn=isbn,
                 base_price=price,
-                virtual_stock=v_stock,
                 is_active=True,
                 published_date=date(2024, 1, 15)
             )
             db.add(new_book)
+            db.flush()  # book.id 확보 (아래 입고 관문이 참조한다)
+
+            # 재고는 Inventory 행으로 심는다. virtual_stock 직접 대입은 SSOT를 우회해
+            # "카탈로그에는 있는데 어디에도 없는 재고"를 만든다.
+            fasttrack_new_stock_inbound(db, new_book, random.randint(2, 8), worker_id="SEED")
+
             existing_isbns.add(isbn)
             added_count += 1
 
