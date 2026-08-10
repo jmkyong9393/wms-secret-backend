@@ -68,6 +68,8 @@ jobs:
           spec:
             backoffLimit: 1
             ttlSecondsAfterFinished: 600
+            # 이미지 pull이 길어도 스스로 죽지 않게 넉넉히 두되, 무한 대기는 막는다.
+            activeDeadlineSeconds: 1200
             template:
               spec:
                 restartPolicy: Never
@@ -88,12 +90,39 @@ jobs:
                         key: DATABASE_URL
           EOF
 
-          # 마이그레이션이 실패하면 여기서 배포를 멈춘다 (set -e). 깨진 스키마 위에
+          # 마이그레이션 완료를 기다린다. 실패하면 배포를 멈춘다 - 깨진 스키마 위에
           # 새 코드를 올리는 것보다 구 버전이 계속 도는 편이 안전하다.
-          kubectl wait --for=condition=complete job/wms-migrate-$SHORT --timeout=300s \
-            || { echo "::error::DB 마이그레이션 실패 - 배포를 중단합니다"; kubectl logs job/wms-migrate-$SHORT --tail=50 --all-containers --ignore-errors 2>&1 || true; kubectl describe job/wms-migrate-$SHORT 2>&1 | tail -20 || true; exit 1; }
+          #
+          # [2026-08-10 사고 2] 종전에는 `kubectl wait --for=condition=complete --timeout=300s`를
+          # 썼는데 5분 안에 끝나지 못해 배포가 중단됐다. 이 Job은 **모델이 구워진 거대 이미지를
+          # 처음 pull** 해야 하고(빌드·푸시에만 10분 걸리는 이미지), 롤아웃 전에 도는 첫 파드라
+          # 노드 캐시가 비어 있다. 300초는 이 환경에서 애초에 부족한 값이었다.
+          #
+          # 또한 `kubectl wait`는 complete 조건만 볼 수 있어 **Job이 이미 실패해도 타임아웃까지
+          # 그대로 기다린다.** 완료·실패를 함께 감시해 진짜 실패는 즉시 드러나게 한다.
+          MIGRATED=0
+          for _ in $(seq 1 120); do   # 120 x 10s = 최대 20분 (activeDeadlineSeconds와 동일)
+            if [ "$(kubectl get job wms-migrate-$SHORT -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null)" = "True" ]; then
+              MIGRATED=1; break
+            fi
+            if [ "$(kubectl get job wms-migrate-$SHORT -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null)" = "True" ]; then
+              echo "::error::DB 마이그레이션 실패 - 배포를 중단합니다"
+              kubectl logs job/wms-migrate-$SHORT --tail=50 --all-containers --ignore-errors 2>&1 || true
+              kubectl describe job/wms-migrate-$SHORT 2>&1 | tail -30 || true
+              exit 1
+            fi
+            sleep 10
+          done
+
+          if [ "$MIGRATED" != "1" ]; then
+            echo "::error::DB 마이그레이션 시간 초과 - 배포를 중단합니다"
+            kubectl describe job/wms-migrate-$SHORT 2>&1 | tail -30 || true
+            kubectl get pods -l job-name=wms-migrate-$SHORT 2>&1 || true
+            exit 1
+          fi
+
           # 성공 로그는 어디까지나 참고용이므로 실패해도 배포를 막지 않는다(`|| true`).
-          # [2026-08-10 사고] 이 줄에 가드가 없어, 마이그레이션이 성공(condition met)한 뒤
+          # [2026-08-10 사고 1] 이 줄에 가드가 없어, 마이그레이션이 성공(condition met)한 뒤
           # `kubectl logs job/...`이 BadRequest로 죽으면서 set -e가 배포 전체를 중단시켰다.
           # Job 파드가 2개 이상이면(재시도 등) kubectl이 종료된 파드를 골라 이 오류를 낸다.
           kubectl logs job/wms-migrate-$SHORT --tail=20 --all-containers --ignore-errors 2>&1 || true
@@ -101,4 +130,6 @@ jobs:
           # --- 애플리케이션 롤링 업데이트 ---
           kubectl set image deployment/wms-api       api=$REG/nexus-backend-repo:$SHA
           kubectl set image deployment/wms-ai-worker ai-worker=$REG/nexus-backend-repo:$SHA
-          kubectl rollout status deployment/wms-api --timeout=180s
+          # 마이그레이션 Job이 같은 이미지를 이미 받아뒀다면 캐시가 살아 빠르지만, 다른
+          # 노드에 스케줄되면 여기서 다시 pull 한다. 180초는 이 이미지 크기에 부족하다.
+          kubectl rollout status deployment/wms-api --timeout=600s
