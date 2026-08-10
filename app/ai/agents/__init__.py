@@ -237,7 +237,7 @@ class CertificateDocument(BaseModel):
     """
     Report Agent가 생성하는 고객 공개용 보증서 본문.
     프론트(/certificate/[lpn])는 이 필드들을 그대로 렌더하기만 하며, 어떤 문장도 프론트에서
-    조립하지 않는다. (기존에는 등급별 if-else 문장이 프론트에 하드코딩되어 있었다.)
+    조립하지 않는다. 
     """
     headline: str = Field(description="보증서 상단 한 줄 총평. 위트 있게, 단 과장 광고는 금지 (예: '표지부터 마지막 장까지, 흠잡을 데가 없었습니다')")
     summary: str = Field(description="종합 소견 2~3문장. 검수 방식과 판정 결과를 고객 눈높이로 설명")

@@ -5,7 +5,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: restock-scan-batch
-  namespace: wms
+  namespace: default
 spec:
   schedule: "0 18 * * *"
   concurrencyPolicy: Forbid
@@ -35,7 +35,7 @@ spec:
                   name: wms-backend-secret
                   key: DATABASE_URL
             - name: REDIS_URL
-              value: "redis://redis-master.wms.svc.cluster.local:6379/0"
+              value: "redis://redis-master.default.svc.cluster.local:6379/0"
             # 브로커 장애 폴백(인프로세스 스캔) 시에만 사용된다
             - name: OPENAI_API_KEY
               valueFrom:
