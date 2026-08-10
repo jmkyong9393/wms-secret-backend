@@ -1,3 +1,4 @@
+import logging
 import random
 from datetime import datetime
 from uuid import UUID
@@ -25,6 +26,7 @@ from app.domains.orders.picking import (
 )
 from app.ai.bin_packing_agent import bin_packing_agent
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/orders", tags=["Orders & Outbound"])
 
 @router.get("/")
@@ -108,13 +110,9 @@ def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> Lis
             # 신품에는 검증이 전혀 없어, 재고 0인 책도 주문에 실리고 피킹 지시서까지 발행됐다.
             # 신품은 발주로 채울 수 있으므로 주문 자체를 막지는 않되(발주 제안이 자동 생성된다),
             # 보유 수량을 넘는 요청은 여기서 거절한다 - 없는 물건을 팔기로 확정할 수는 없다.
-            from app.models.wms import Inventory as _Inv
+            from app.domains.inventory.service import get_new_stock_qty
 
-            on_hand = sum(
-                (r.quantity or 0)
-                for r in session.exec(select(_Inv).where(_Inv.book_id == book.id)).all()
-            )
-            available = max(on_hand, int(book.virtual_stock or 0))
+            available = get_new_stock_qty(session, book.id)
             if qty > available:
                 raise HTTPException(
                     409,
@@ -211,16 +209,12 @@ def simulate_b2b_order(session: Session = Depends(get_db)):
     # [2026-08-10 수정] 종전에는 활성 도서 전체에서 무작위로 뽑아, 재고가 0인 신품도
     # 주문에 실렸다(중고는 IN_STOCK 조건이 있었으나 신품은 아무 조건이 없었다).
     # 시뮬레이션이라도 팔 수 없는 물건을 주문에 넣으면 그 뒤 흐름 전체가 거짓이 된다.
-    from app.models.wms import Inventory as _Inventory
+    from app.domains.inventory.service import get_new_stock_map
 
-    stock_by_book: Dict[Any, int] = {}
-    for row in session.exec(select(_Inventory)).all():
-        if row.quantity and row.quantity > 0:
-            stock_by_book[row.book_id] = stock_by_book.get(row.book_id, 0) + row.quantity
-
+    stock_by_book = get_new_stock_map(session)
     new_books = [
         b for b in session.exec(select(Book).where(Book.is_active == True)).all()
-        if stock_by_book.get(b.id, 0) > 0 or (b.virtual_stock or 0) > 0
+        if stock_by_book.get(b.id, 0) > 0
     ]
     used_items = session.exec(
         select(InventoryUsedItem).where(InventoryUsedItem.item_status == ItemStatusEnum.IN_STOCK.value)
@@ -230,7 +224,7 @@ def simulate_b2b_order(session: Session = Depends(get_db)):
     if new_books:
         for b in random.sample(new_books, min(len(new_books), random.randint(1, 2))):
             # 보유 수량을 넘겨 주문하지 않는다.
-            available = max(stock_by_book.get(b.id, 0), b.virtual_stock or 0)
+            available = stock_by_book.get(b.id, 0)
             picks.append(OrderLineRequest(id=f"NEW-BOOK-{b.id}", quantity=random.randint(1, min(3, available))))
     if used_items:
         for u in random.sample(used_items, min(len(used_items), random.randint(1, 2))):
@@ -454,11 +448,11 @@ def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: S
                 inv.updated_at = now_kst()
                 session.add(inv)
                 remaining -= deduct
-            # 입고가 Inventory.quantity와 virtual_stock을 둘 다 올리므로 출고도 둘 다 내린다.
-            book = session.get(Book, it.book_id)
-            if book:
-                book.virtual_stock = max(0, (book.virtual_stock or 0) - it.quantity)
-                session.add(book)
+            if remaining > 0:
+                logger.warning(
+                    f"[출고] 재고 부족분 {remaining}권이 차감되지 않았습니다 "
+                    f"(book_id={it.book_id}, 지시수량={it.quantity})."
+                )
             session.add(InventoryLog(
                 transaction_type="OUTBOUND",
                 book_id=it.book_id,
@@ -780,17 +774,12 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
     now = now_kst()
 
     # 1. 신품 - 활성 도서 중 실보유 수량이 있는 것만. 카탈로그 전체가 아니다.
-    from app.models.wms import Inventory
+    from app.domains.inventory.service import get_new_stock_map
+
+    new_stock_map = get_new_stock_map(session)
     all_books = session.exec(select(Book).where(Book.is_active == True)).all()
     for idx, b in enumerate(all_books):
-        # Calculate 100% pure DB inventory quantity (sum of inventory.quantity or b.virtual_stock)
-        inv_rows = session.exec(select(Inventory).where(Inventory.book_id == b.id)).all()
-        real_inv_qty = sum(inv.quantity for inv in inv_rows) if inv_rows else 0
-        # [2026-08-10 수정] 재고가 0인 도서에 `else 1`로 **없는 재고를 지어내고 있었다.**
-        # 그 위조값 때문에 재고 0인 신품이 주문 라인에 할당됐고, 피킹 지시서는 실물이 없는
-        # 책을 집으러 가라고 지시했다(A-01-01 사건의 배경). 실제 값을 그대로 내려보내고
-        # 0이면 화면이 품절로 처리하게 한다.
-        pure_db_stock_qty = real_inv_qty if real_inv_qty > 0 else max(0, b.virtual_stock or 0)
+        pure_db_stock_qty = new_stock_map.get(b.id, 0)
         if pure_db_stock_qty <= 0:
             continue
 

@@ -105,7 +105,9 @@ def collect_restock_context(
             InventoryUsedItem.item_status == "IN_STOCK",
         )
     ).one()
-    new_stock = max(0, int(book.virtual_stock or 0))
+    from app.domains.inventory.service import get_new_stock_qty
+
+    new_stock = get_new_stock_qty(db, book.id)
     current_stock = new_stock + int(used_in_stock or 0)
 
     min_safety_stock = get_int_setting(db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD)

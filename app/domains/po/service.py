@@ -229,9 +229,15 @@ class POService:
             .group_by(InventoryUsedItem.book_id)
         ).all())
 
-        candidates = db.exec(
-            select(Book).where(Book.is_active == True).order_by(Book.virtual_stock.asc()).limit(60)
-        ).all()
+        # 저재고 우선 정렬은 실보유 수량(Inventory 합)으로 한다. 종전 기준이던
+        # Book.virtual_stock은 위치 없는 중복 기록이라 실재고를 반영하지 못했다.
+        from app.domains.inventory.service import get_new_stock_map
+
+        new_stock_map = get_new_stock_map(db)
+        candidates = sorted(
+            db.exec(select(Book).where(Book.is_active == True)).all(),
+            key=lambda b: new_stock_map.get(b.id, 0) + int(used_counts.get(b.id, 0)),
+        )[:60]
 
         safety_stock_threshold = get_int_setting(
             db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD
@@ -243,7 +249,7 @@ class POService:
                 break
             if book.id in pending_book_ids:
                 continue
-            available = max(0, int(book.virtual_stock or 0)) + int(used_counts.get(book.id, 0))
+            available = new_stock_map.get(book.id, 0) + int(used_counts.get(book.id, 0))
             if available >= safety_stock_threshold:
                 continue
             proposal = generate_and_store_proposal(
