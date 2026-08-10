@@ -70,6 +70,10 @@ class FasttrackRequest(BaseModel):
     title: Optional[str] = None
     imageUrl: Optional[str] = None
     qty: int = 1
+    # [2026-08-10] 입고를 수행한 작업자 사번. 신품은 ReturnJob(중고 검수 원장)을 타지 않아
+    # 종전에는 작업자가 어디에도 남지 않았고, 그 결과 "나의 검수 내역"이 신품 입고분을
+    # 걸러낼 기준값 자체를 갖지 못했다. InventoryLog(입고 1건 = 로그 1행)에 기록한다.
+    worker_id: Optional[str] = None
 
 
 @router.post("/fasttrack", summary="신품 도서 Fast-Track 0초 입고 (사진/UBCI 판정 스킵)")
@@ -119,7 +123,7 @@ async def fasttrack_inbound(request: FasttrackRequest, db: Session = Depends(get
     #    자동 발주(OrderProposal) 승인 입고와 동일한 공용 관문(fasttrack_new_stock_inbound)을 사용한다.
     from app.domains.inventory.service import fasttrack_new_stock_inbound
 
-    inv, location = fasttrack_new_stock_inbound(db, book, qty)
+    inv, location = fasttrack_new_stock_inbound(db, book, qty, worker_id=request.worker_id)
     db.commit()
     db.refresh(inv)
 
