@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from uuid import UUID
@@ -310,13 +310,21 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
     (`/inbound/fasttrack`이 이미 쓰는 것과 동일한 패턴)
     """
     from app.models.wms import Book
-    from app.domains.inbound.service import lookup_book_by_isbn
+    from app.domains.inbound.service import (
+        lookup_book_by_isbn,
+        book_row_to_lookup_payload,
+        is_placeholder_book,
+        UNKNOWN_BOOK_TITLE,
+    )
 
     isbn = (req.isbn or "").strip()
 
     if not req.book_id and isbn:
         book = db.exec(select(Book).where(Book.isbn == isbn)).first()
-        if not book:
+
+        # 신규 ISBN이거나 자리표시자("미확인 도서") 행이면 알라딘을 조회해 생성·보강한다.
+        # 자리표시자를 그대로 두면 한 번의 조회 실패가 그 ISBN에 영구히 남는다.
+        if book is None or is_placeholder_book(book):
             meta = await lookup_book_by_isbn(isbn) or {}
             category_name = meta.get("categoryName", "")
             parts = [p.strip() for p in category_name.split(">") if p.strip()]
@@ -324,7 +332,7 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
 
             book_kwargs: Dict[str, Any] = dict(
                 isbn=isbn,
-                title=meta.get("title") or "미확인 도서",
+                title=meta.get("title") or UNKNOWN_BOOK_TITLE,
                 author=meta.get("author"),
                 publisher=meta.get("publisher"),
                 published_date=meta.get("pubDate"),
@@ -337,21 +345,72 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
                 if meta.get(field) is not None:
                     book_kwargs[field] = meta[field]
 
-            db.add(Book(**book_kwargs))
-            db.commit()
+            if book is None:
+                db.add(Book(**book_kwargs))
+                db.commit()
+            elif meta:
+                # 조회가 또 실패했으면(meta 비어 있음) 기존 값을 지우지 않도록 건드리지 않는다.
+                for key, value in book_kwargs.items():
+                    if key != "isbn":
+                        setattr(book, key, value)
+                db.add(book)
+                db.commit()
 
     new_lpn, book = generate_lpn(db, book_id=req.book_id, isbn=req.isbn, zone=req.zone)
+
+    # 표지·정가·규격까지 포함한 전체 메타를 함께 내려, 프론트가 별도 도서 조회 없이
+    # 채번 응답만으로 화면을 채울 수 있게 한다.
     return {
-        "status": "success", 
+        "status": "success",
         "lpn_barcode": new_lpn.lpn_barcode,
-        "book": {
-            "title": book.title,
-            "author": book.author,
-            "isbn": book.isbn
-        },
+        "book": book_row_to_lookup_payload(book),
         "location_id": str(new_lpn.location_id),
         "worker_id": req.worker_id
     }
+
+
+@router.delete("/lpn/{lpn_barcode}")
+async def cancel_lpn(lpn_barcode: str, db: Session = Depends(get_db)):
+    """
+    라벨 인쇄 전에 되돌아간 미부착 LPN 채번을 취소(회수)한다. 유령 LPN 적재를 막는 경로다.
+
+    아래를 모두 만족할 때만 삭제하고, 하나라도 어긋나면 409로 거절한다.
+      - item_status == PENDING_INSPECTION  (검수·입고가 진행된 적 없음)
+      - source_job_id is None              (검수 원장에 연결된 적 없음)
+      - 해당 LPN으로 접수된 ReturnJob 없음 (촬영본이 큐에 들어가 있지 않음)
+
+    삭제분이 그날 마지막 번호였다면 다음 채번이 같은 번호를 재발급한다. 라벨이 인쇄되지
+    않은 경우로 한정되므로 안전하다. 채번 규칙(max+1) 자체는 바꾸지 않는다 - 인쇄·부착된
+    라벨의 결번을 재사용하면 서로 다른 실물이 같은 번호를 갖는다.
+    """
+    from app.models.wms import ReturnJob
+
+    item = db.exec(
+        select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode == lpn_barcode)
+    ).first()
+    if not item:
+        # 뒤로가기가 중복 호출될 수 있어 멱등 처리한다.
+        return {"status": "not_found", "lpn_barcode": lpn_barcode, "deleted": False}
+
+    if item.item_status != "PENDING_INSPECTION" or item.source_job_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"이미 처리된 LPN이라 취소할 수 없습니다 (상태: {item.item_status}).",
+        )
+
+    linked_job = db.exec(
+        select(ReturnJob).where(ReturnJob.agent_logs["lpn_barcode"].astext == lpn_barcode)
+    ).first()
+    if linked_job:
+        raise HTTPException(
+            status_code=409,
+            detail="이미 AI 검수 큐에 접수된 LPN이라 취소할 수 없습니다.",
+        )
+
+    db.delete(item)
+    db.commit()
+    print(f"[LPN] 미부착 채번 취소: {lpn_barcode}")
+    return {"status": "success", "lpn_barcode": lpn_barcode, "deleted": True}
 
 @router.get("/lpn")
 async def get_lpn_list(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
