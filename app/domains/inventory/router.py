@@ -77,12 +77,8 @@ def resolve_track(inspection_source: Optional[str]) -> str:
     return _TRACK_BY_SOURCE.get((inspection_source or "AI_AUTO").upper(), "AI")
 
 
-def format_worker_label(employee_id: Optional[str], name: Optional[str]) -> str:
-    """작업자 표기 정본: `WM2608002(신동준)`. 이름을 모르면 사번만, 사번도 없으면 미기록."""
-    emp = (employee_id or "").strip()
-    if not emp:
-        return "작업자 미기록"
-    return f"{emp}({name})" if name else emp
+# 작업자 표기 정본은 app/core/constants.py 한 곳에서만 만든다 (형식이 갈리는 것을 막는다).
+from app.core.constants import format_worker_label
 
 
 def resolve_inspector(item: Optional[Any], job: Optional[Any]) -> Dict[str, Any]:

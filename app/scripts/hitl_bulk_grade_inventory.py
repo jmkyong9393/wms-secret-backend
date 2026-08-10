@@ -33,6 +33,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
+from app.core.constants import format_worker_label
 from app.db.session import engine
 from app.models.wms import (
     ReturnJob,
@@ -58,7 +59,7 @@ def main() -> None:
         if not admin:
             print("관리자 계정을 찾지 못해 중단합니다.")
             return
-        hitl_inspector = f"{admin.employee_id} ({admin.name})"
+        hitl_inspector = format_worker_label(admin.employee_id, admin.name)
 
         jobs = db.exec(
             select(ReturnJob).where(

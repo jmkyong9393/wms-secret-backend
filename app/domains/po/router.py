@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from app.db.session import get_db
+from app.core.constants import format_worker_label
 from app.core.security import RoleChecker
 from app.models.wms import UserRoleEnum
 from app.domains.po.service import po_service
@@ -22,9 +23,9 @@ class ProposalDecisionRequest(BaseModel):
 def _inspector_label(current_admin) -> str:
     employee_id = str(getattr(current_admin, "employee_id", "") or "").strip()
     name = str(getattr(current_admin, "name", "") or "").strip()
-    if employee_id and name:
-        return f"{employee_id} ({name})"
-    return employee_id or name or "PO 관리자"
+    if not (employee_id or name):
+        return "PO 관리자"
+    return format_worker_label(employee_id, name)
 
 
 @router.get("/proposals")
@@ -51,7 +52,12 @@ def approve_proposals(
     virtual_stock 가산, LPN 미발급)까지 완료한다. LLM 제안은 이 관리자 승인 게이트를
     통과해야만 실제 발주가 된다.
     """
-    return po_service.approve_proposals(db, req.proposal_ids, decided_by=_inspector_label(current_admin))
+    return po_service.approve_proposals(
+        db,
+        req.proposal_ids,
+        decided_by=_inspector_label(current_admin),
+        worker_employee_id=str(getattr(current_admin, "employee_id", "") or "").strip(),
+    )
 
 
 @router.post("/proposals/dismiss")
