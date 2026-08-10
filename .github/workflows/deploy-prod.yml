@@ -6,6 +6,8 @@
 # kubectl apply(k8s/deployment.yml, service.yml)도 함께 제거했다 - 매니페스트의
 # <AWS_ACCOUNT_ID> 플레이스홀더가 미치환 상태라 그대로 apply하면 실패하고,
 # 최초 1회 적용은 이미 클러스터에 반영되어 있어 태그 교체만 있으면 된다.
+# [2026-08-10 추가 정정] KUBE_NAMESPACE도 wms -> default. 실측(kubectl get ns) 결과
+# wms 네임스페이스 자체가 클러스터에 존재하지 않고 전체 앱이 default에 떠 있음을 확인했다.
 name: Backend Prod Deploy (Manual Redeploy)
 
 on:
@@ -23,7 +25,7 @@ permissions:
 env:
   AWS_REGION: ap-northeast-2
   ECR_REPOSITORY: nexus-backend-repo
-  KUBE_NAMESPACE: wms
+  KUBE_NAMESPACE: default
 
 jobs:
   deploy:
