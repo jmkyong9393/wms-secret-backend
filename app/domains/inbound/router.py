@@ -9,7 +9,14 @@ import uuid
 import datetime
 from app.db.session import get_db
 from app.models.wms import now_kst, InboundJob, Book, ReturnJob, InventoryUsedItem, JobStatusEnum, ubci_grade_from_score
-from app.domains.inbound.service import generate_signed_cookie, lookup_book_by_isbn
+from app.domains.inbound.service import (
+    generate_signed_cookie,
+    lookup_book_by_isbn,
+    lookup_book_by_isbn_with_status,
+    book_row_to_lookup_payload,
+    is_placeholder_book,
+    LOOKUP_UNAVAILABLE,
+)
 import base64
 import os
 from app.core.stream_auth import require_stream_access
@@ -50,19 +57,38 @@ async def get_inbound_history(db: Session = Depends(get_db)) -> List[Dict[str, A
         })
     return result
 
-@router.get("/book-lookup", summary="ISBN 바코드 스캔 시 알라딘 API 도서 정보/택배 규격 조회")
-async def get_book_lookup(isbn: str) -> Dict[str, Any]:
+@router.get("/book-lookup", summary="ISBN 바코드 스캔 시 도서 정보/택배 규격 조회 (원장 우선)")
+async def get_book_lookup(isbn: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     프론트 입고 화면(ISBN 바코드 스캔)이 호출하는 도서 메타데이터 조회 API.
     제목/저자/출판사/표지/가격/설명뿐 아니라 택배 송장 산정용 가로/세로/두께/무게도 함께 반환한다.
+
+    조회 순서: ① 원장(books) → ② 알라딘 → ③ 원장 자리표시자 행.
+    원장을 먼저 보므로 이미 입고된 적 있는 도서는 알라딘 가용성과 무관하게 조회된다.
     """
     if not isbn:
         raise HTTPException(status_code=400, detail="ISBN이 필요합니다.")
 
-    result = await lookup_book_by_isbn(isbn)
-    if not result:
-        raise HTTPException(status_code=404, detail="알라딘 API에서 도서 정보를 찾을 수 없습니다.")
-    return result
+    book = db.exec(select(Book).where(Book.isbn == isbn)).first()
+    if book and not is_placeholder_book(book):
+        return book_row_to_lookup_payload(book)
+
+    result, error = await lookup_book_by_isbn_with_status(isbn)
+    if result:
+        return result
+
+    # 알라딘 실패 시 자리표시자 행이라도 내려준다. ISBN이 살아 있어야 이후 evaluate 요청이
+    # book_metadata.isbn 없이 나가 500이 나는 것을 막는다.
+    if book:
+        return book_row_to_lookup_payload(book)
+
+    # 조회 불가(503)와 없는 책(404)을 구분해 응답한다.
+    if error == LOOKUP_UNAVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="도서 정보 서버(알라딘)에 연결하지 못했습니다. 잠시 후 다시 스캔해주세요.",
+        )
+    raise HTTPException(status_code=404, detail="등록되지 않은 ISBN입니다. 도서 정보를 찾을 수 없습니다.")
 
 
 class FasttrackRequest(BaseModel):
