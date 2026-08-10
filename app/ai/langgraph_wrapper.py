@@ -198,14 +198,12 @@ class LangGraphInspectionWrapper:
                 "type": dtype,
                 "label": DEFECT_TRANSLATION_MAP.get(dtype, dtype or "상태 결함"),
                 "confidence": d.get("confidence"),
-                # 확신도의 출처. "yolo"면 탐지 모델의 실측값, "vlm"이면 VLM 자기 신고(추정치)다.
-                # 실측에서 VLM은 확신도를 전건 0.8로 평평하게 써 넣었으므로(실제 제보값은
-                # 0.437~0.795) 화면이 둘을 구분하지 못하면 근거 없는 수치를 근거처럼 보여준다.
+                # 확신도 출처. "yolo"=탐지 모델 실측값, "vlm"=VLM 자기 신고(추정치).
+                # 화면이 둘을 구분해 표기해야 근거 없는 수치가 근거처럼 보이지 않는다.
                 "conf_source": d.get("conf_source"),
                 "conf_flat_selfreported": d.get("conf_flat_selfreported"),
-                # Policy가 실제로 적용한 감점. preliminary_deduction(Vision 예비값)은 그룹
-                # 산정·Cap·오탐 제외를 반영하지 않아 화면에 표시하면 총점과 어긋난다.
-                # (실측: 마모 5건에 예비 -5점씩 표시 → -25점으로 읽혔으나 실제 감점은 -7점)
+                # Policy가 실제 적용한 감점. preliminary_deduction(Vision 예비값)은 그룹
+                # 산정·Cap·오탐 제외를 반영하지 않아 화면에 쓰면 총점과 어긋난다.
                 "deduction": d.get("applied_deduction", d.get("preliminary_deduction")),
                 "deduction_scope": d.get("deduction_scope"),
                 "deduction_note": d.get("deduction_note"),
