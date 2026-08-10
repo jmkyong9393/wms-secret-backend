@@ -71,6 +71,11 @@ jobs:
             template:
               spec:
                 restartPolicy: Never
+                # kubeadm+containerd는 노드 IAM 역할만으로 ECR을 당기지 못한다. Deployment는
+                # 이 시크릿을 patch로 받아두었으므로(블루프린트 §2-6) Job에도 동일하게 지정한다.
+                # 빠뜨리면 ImagePullBackOff로 마이그레이션이 시작조차 못 한다.
+                imagePullSecrets:
+                - name: ecr-secret
                 containers:
                 - name: migrate
                   image: $REG/nexus-backend-repo:$SHA
