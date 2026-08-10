@@ -191,6 +191,19 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
             # 신품은 Zone A 고정이지만 랙/선반은 카테고리·판형이 정한다. 재고 행이 없으면
             # (아직 입고 전) 같은 알고리즘으로 배정 예정 칸을 산출한다.
             loc = _location_of(session, inv.location_id if inv else None, book=book, grade="NEW")
+
+            # [2026-08-10 신설] 재고 부족 라인은 있는 척하지 않는다.
+            #
+            # 종전에는 재고가 0이어도 평범한 피킹 항목으로 발행돼, 작업자가 빈 칸으로 가서야
+            # 없다는 걸 알았다(화면상으로는 정상 지시서). 실물이 없다는 사실을 지시서에
+            # 명시하고, 동시에 발주 제안을 만들어 SCM 칸반에서 채울 수 있게 한다.
+            on_hand = sum(
+                (r.quantity or 0)
+                for r in session.exec(select(Inventory).where(Inventory.book_id == book.id)).all()
+            )
+            available = max(on_hand, int(book.virtual_stock or 0))
+            out_of_stock = available < remaining
+
             draft.append(PickingInstructionItem(
                 instruction_id=None,
                 order_item_id=oi.id,
@@ -201,7 +214,23 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
                 quantity=remaining,
                 zone=loc["zone"], rack=loc["rack"], shelf=loc["shelf"],
                 unit_price=oi.unit_price,
+                status="OUT_OF_STOCK" if out_of_stock else "PENDING",
             ))
+
+            if out_of_stock:
+                # 발주 제안 생성 실패가 지시서 발행을 막아서는 안 된다(같은 도서의 PENDING
+                # 카드가 있으면 restock 쪽이 중복 생성 대신 갱신한다).
+                try:
+                    from app.ai.agents.restock import generate_and_store_proposal
+
+                    generate_and_store_proposal(
+                        session,
+                        book,
+                        trigger_type="ORDER_SHORTAGE",
+                        rejected_quantity=max(0, remaining - available),
+                    )
+                except Exception as e:
+                    logger.warning(f"[Picking] 재고부족 발주 제안 생성 실패 (지시서는 정상 발행): {e}")
 
     # Zone A → B → C → D 동선 오름차순 정렬 후 피킹 순서 부여
     draft.sort(key=lambda it: (it.zone, it.rack, it.shelf, it.stock_type))
@@ -275,7 +304,10 @@ def create_picking_instruction(session: Session, order: Order, use_llm: bool = T
         order_id=order.id,
         instruction_no=generate_instruction_no(session),
         status="PENDING",
-        total_items=sum(it.quantity for it in items),
+        # 재고 부족(OUT_OF_STOCK) 라인은 스캔할 실물이 없으므로 목표 수량에서 뺀다.
+        # 포함하면 지시서가 영영 완료되지 않아 **집을 수 있는 나머지 품목의 출고까지 막힌다.**
+        # 부족분은 지시서에 항목으로 남아 사유가 보이고, 발주 제안으로 별도 보충된다.
+        total_items=sum(it.quantity for it in items if it.status != "OUT_OF_STOCK"),
         picked_items=0,
         route_summary=narrative["route_summary"],
         worker_note=narrative["worker_note"],
