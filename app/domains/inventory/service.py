@@ -278,8 +278,9 @@ def assign_rack_location_after_inspection(
             first_book = db.query(Book).first()
             book_id = first_book.id if first_book else None
 
-        cert_code = str(source_job_id)[:6].upper() if source_job_id else "32053B"
-        generated_cert_url = certificate_url or f"/certificate/CERT-20260728-{cert_code}"
+        # 보증서 링크는 LPN으로 만든다. 라우트가 /certificate/[lpn]이라 CERT-* 형식은
+        # 조회되지 않는다(404). 종전에는 날짜까지 하드코딩돼 실제 발급 ID와도 어긋났다.
+        generated_cert_url = certificate_url or f"/certificate/{lpn_barcode}"
 
         item = InventoryUsedItem(
             book_id=book_id,
@@ -314,9 +315,9 @@ def assign_rack_location_after_inspection(
         item.source_job_id = source_job_id
     if certificate_url:
         item.certificate_url = certificate_url
-    elif not item.certificate_url:
-        cert_code = str(item.source_job_id or '32053B')[:6].upper()
-        item.certificate_url = f"/certificate/CERT-20260728-{cert_code}" 
+    elif not item.certificate_url or "/certificate/CERT-" in (item.certificate_url or ""):
+        # CERT-* 형식은 라우트가 조회하지 못하므로(404) LPN 기반으로 교정한다.
+        item.certificate_url = f"/certificate/{item.lpn_barcode}"
 
     book = db.query(Book).filter(Book.id == item.book_id).first()
 
