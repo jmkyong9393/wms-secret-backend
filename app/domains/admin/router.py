@@ -64,6 +64,231 @@ class HitlTaskResponse(BaseModel):
     agent_logs: Optional[Dict[str, Any]] = None
     created_at: str
 
+def apply_bbox_edits(defects: List[Dict[str, Any]], candidates: List[Dict[str, Any]], item) -> List[Dict[str, Any]]:
+    """검수자의 BBox 채택/제외/좌표수정/신규추가를 결함 배열에 반영한 새 배열을 돌려준다.
+
+    제외는 삭제가 아니라 `hitl_excluded` 표식만 남긴다 - 감사 추적을 유지하고 재학습
+    라벨로 재사용할 수 있게 하기 위함이다. 결재 확정(/override)과 점수 미리보기
+    (/score-preview)가 같은 규칙을 쓰도록 이 함수 하나로 모았다.
+    """
+    out = list(defects)
+    cands = list(candidates or [])
+
+    for idx in (item.excludedDefectIndexes or []):
+        if 0 <= idx < len(out) and isinstance(out[idx], dict):
+            out[idx] = {**out[idx], "hitl_excluded": True}
+
+    for idx in (item.adoptedCandidateIndexes or []):
+        if not (0 <= idx < len(cands)) or not isinstance(cands[idx], dict):
+            continue
+        c = cands[idx]
+        # 후보에는 감점 산정에 필요한 필드가 없다. ratio는 좌표에서 유도되므로
+        # (policy의 _effective_ratio) 여기서 지어내지 않고 비워 둔다.
+        out.append({
+            "type": c.get("defect_type") or c.get("type") or "UNKNOWN",
+            "ratio": 0,
+            "confidence": c.get("confidence"),
+            "bbox": c.get("bbox"),
+            "image_index": c.get("image_index"),
+            "hitl_adopted": True,
+            "description": "관리자가 YOLO 후보에서 직접 채택",
+        })
+
+    # 드래그로 고친 좌표. 판정(type/confidence)은 AI 산출을 유지하고 좌표만 덮어쓴다.
+    for edit in (item.editedBboxes or []):
+        if not isinstance(edit, dict):
+            continue
+        idx = edit.get("index")
+        if not isinstance(idx, int) or not (0 <= idx < len(out)) or not isinstance(out[idx], dict):
+            continue
+        try:
+            new_bbox = {k: int(edit[k]) for k in ("xmin", "ymin", "xmax", "ymax")}
+        except (KeyError, TypeError, ValueError):
+            continue
+        out[idx] = {**out[idx], "bbox": new_bbox, "hitl_bbox_edited": True}
+
+    # AI가 놓친 것을 검수자가 직접 그린 신규 결함.
+    for added in (item.addedBboxes or []):
+        if not isinstance(added, dict):
+            continue
+        try:
+            new_bbox = {k: int(added[k]) for k in ("xmin", "ymin", "xmax", "ymax")}
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append({
+            "type": added.get("type") or "UNKNOWN",
+            "ratio": 0,
+            "bbox": new_bbox,
+            "image_index": added.get("imageIndex", 0),
+            "hitl_added": True,
+            "description": "관리자가 직접 추가",
+        })
+
+    return out
+
+
+class ScorePreviewRequest(BaseModel):
+    """BBox 편집분으로 점수만 미리 계산한다 (저장하지 않음)."""
+    excludedDefectIndexes: Optional[List[int]] = Field(default=None)
+    adoptedCandidateIndexes: Optional[List[int]] = Field(default=None)
+    editedBboxes: Optional[List[Dict[str, Any]]] = Field(default=None)
+    addedBboxes: Optional[List[Dict[str, Any]]] = Field(default=None)
+
+
+@router.post("/{job_id}/score-preview")
+def preview_score_with_edits(
+    job_id: str,
+    req: ScorePreviewRequest,
+    session: Session = Depends(get_db),
+    current_admin = Depends(admin_only),
+):
+    """편집한 BBox 기준의 UBCI 점수/등급을 결재 **전에** 돌려준다.
+
+    policy_agent는 LLM을 쓰지 않는 결정론적 산식이므로 이 미리보기는 API 호출 0회다.
+    보증서 문안(report_agent)은 결재가 확정된 뒤에만 생성한다 - 확정되지 않은 판정으로
+    고객 문서를 만들지 않기 위함이다.
+
+    아무것도 저장하지 않는다. 실제 반영은 /override 가 담당한다.
+    """
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
+        raise BadRequestException(f"Invalid job_id UUID: {job_id}")
+
+    job = session.get(ReturnJob, job_uuid)
+    if not job:
+        raise NotFoundException(f"ReturnJob with ID {job_id} not found")
+
+    logs = dict(job.agent_logs or {})
+    defects = apply_bbox_edits(
+        list(logs.get("defects") or []), list(logs.get("yolo_candidates") or []), req
+    )
+    scored = [d for d in defects if not d.get("hitl_excluded")]
+
+    from app.ai.agents import policy_agent, critic_stage_a_integrity_check
+
+    result = policy_agent({"defects": scored, "book_title": logs.get("book_title") or ""})
+    score = result.get("ubci_score")
+    grade = _grade_from_score(score)
+
+    issues = []
+    try:
+        issues = critic_stage_a_integrity_check(scored, len(job.image_urls or []), score)
+    except Exception as e:
+        logger.warning(f"미리보기 Critic Stage A 실패 (점수는 유효): {e}")
+
+    return {
+        "ubci_score": score,
+        "grade": grade,
+        "policy_text": result.get("policy_text"),
+        "score_unverified": bool(result.get("score_unverified")),
+        "defect_count": len(scored),
+        "excluded_count": len(defects) - len(scored),
+        "integrity_issues": issues,
+        "current_score": job.ubci_score,
+        "delta": (score - job.ubci_score) if (score is not None and job.ubci_score is not None) else None,
+    }
+
+
+def _grade_from_score(score: Optional[int]) -> Optional[str]:
+    """UBCI_Specification_v2.0.0.0 경계값. 점수가 없으면 등급도 없다(지어내지 않는다)."""
+    if score is None:
+        return None
+    return "MINT" if score >= 95 else "GOOD" if score >= 85 else "NORMAL" if score >= 65 else "REJECT"
+
+
+class RecallToHitlRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, description="회수 사유 (감사 추적에 남는다)")
+
+
+@router.post("/recall/{item_id}")
+def recall_inventory_to_hitl(
+    item_id: str,
+    req: RecallToHitlRequest,
+    session: Session = Depends(get_db),
+    current_admin = Depends(admin_only),
+):
+    """적재 완료된 재고를 관리자 판단으로 HITL 재검수 대기로 되돌린다.
+
+    Vision Agent의 판독 편차가 커서 자동 확정된 등급이 실제와 어긋나는 경우가 있다.
+    이미 재고에 들어간 뒤에도 사람이 되돌려 정답지를 만들 수 있어야 하며, 그렇게 쌓인
+    라벨이 탐지기 재학습의 입력이 된다.
+
+    되돌리는 것은 **판정 상태**뿐이다. 점수·결함·이미지는 그대로 두고 재검수 대기로만
+    표시한다 - 여기서 점수를 지우면 "무엇을 고쳤는지" 비교할 기준이 사라진다.
+    """
+    from app.models.wms import InventoryUsedItem, now_kst
+
+    try:
+        parsed = UUID(item_id)
+    except ValueError:
+        raise BadRequestException(f"Invalid item_id UUID: {item_id}")
+
+    used_item = session.get(InventoryUsedItem, parsed)
+    job = None
+    if used_item:
+        job = session.get(ReturnJob, used_item.source_job_id) if used_item.source_job_id else None
+    else:
+        # 재고 id가 아니라 검수 작업 id로 부르는 화면도 있으므로 함께 받아 준다.
+        job = session.get(ReturnJob, parsed)
+        if job:
+            used_item = session.exec(
+                select(InventoryUsedItem).where(InventoryUsedItem.source_job_id == job.id)
+            ).first()
+
+    if not job:
+        raise NotFoundException(f"검수 작업을 찾을 수 없습니다: {item_id}")
+    if not job.image_urls:
+        raise BadRequestException("검수 이미지가 없어 재검수할 수 없습니다.")
+
+    actor = getattr(current_admin, "employee_id", None) or str(getattr(current_admin, "id", "UNKNOWN"))
+    previous_status = str(job.status)
+
+    logs = dict(job.agent_logs or {})
+    history = list(logs.get("recall_history") or [])
+    history.append({
+        "recalled_by": actor,
+        "recalled_at": now_kst().isoformat(),
+        "reason": req.reason or "관리자 임의 회수",
+        "previous_status": previous_status,
+        "previous_score": job.ubci_score,
+        "previous_grade": used_item.condition_grade if used_item else None,
+    })
+    logs["recall_history"] = history
+    # 회수된 건은 사람이 확정해야 한다. 재검수를 돌려도 AI가 스스로 확정하지 못하게 잠근다.
+    logs["hitl_locked"] = True
+    job.agent_logs = logs
+    job.status = JobStatusEnum.HITL_REQUIRED.value
+    session.add(job)
+
+    if used_item:
+        # 판매 가능 재고에서 빠진다. 등급·점수는 비교 기준으로 남긴다.
+        used_item.item_status = "HITL_PENDING"
+        used_item.inspection_source = "PENDING_HITL"
+        session.add(used_item)
+
+    session.add(AdminAuditLog(
+        admin_id=actor,
+        action="RECALL_TO_HITL",
+        target_type="RETURN_JOB",
+        target_id=str(job.id),
+        previous_state=previous_status,
+        new_state=JobStatusEnum.HITL_REQUIRED.value,
+        primary_reason_code="ADMIN_RECALL",
+        target_grade=used_item.condition_grade if used_item else None,
+    ))
+    session.commit()
+
+    return {
+        "status": "recalled",
+        "job_id": str(job.id),
+        "item_id": str(used_item.id) if used_item else None,
+        "previous_status": previous_status,
+        "previous_score": job.ubci_score,
+        "message": "HITL 재검수 대기로 되돌렸습니다. 관리자 결재 전에는 재고에 편입되지 않습니다.",
+    }
+
+
 @router.get("/pending", response_model=List[HitlTaskResponse])
 def get_pending_hitl_tasks(
     session: Session = Depends(get_db),
@@ -152,70 +377,7 @@ def submit_hitl_override(
         )
 
         if has_bbox_ui_edits:
-            _cands = list(_logs.get("yolo_candidates") or [])
-
-            for idx in (item.excludedDefectIndexes or []):
-                if 0 <= idx < len(_defects) and isinstance(_defects[idx], dict):
-                    _defects[idx] = {**_defects[idx], "hitl_excluded": True}
-
-            for idx in (item.adoptedCandidateIndexes or []):
-                if not (0 <= idx < len(_cands)) or not isinstance(_cands[idx], dict):
-                    continue
-                c = _cands[idx]
-                # 후보에는 감점 산정에 필요한 필드가 없다. ratio는 좌표에서 유도되므로
-                # (policy의 _effective_ratio) 여기서 지어내지 않고 비워 둔다.
-                _defects.append({
-                    "type": c.get("defect_type") or c.get("type") or "UNKNOWN",
-                    "ratio": 0,
-                    "confidence": c.get("confidence"),
-                    "bbox": c.get("bbox"),
-                    "image_index": c.get("image_index"),
-                    "hitl_adopted": True,
-                    "description": "관리자가 YOLO 후보에서 직접 채택",
-                })
-
-            # 검수자가 드래그로 고친 좌표 반영. 판정(type/confidence)은 AI 산출을 유지하고
-            # 좌표만 덮어쓰며 hitl_bbox_edited 표식을 남긴다.
-            for edit in (item.editedBboxes or []):
-                if not isinstance(edit, dict):
-                    continue
-                idx = edit.get("index")
-                if not isinstance(idx, int) or not (0 <= idx < len(_defects)) or not isinstance(_defects[idx], dict):
-                    continue
-                try:
-                    new_bbox = {
-                        "xmin": int(edit["xmin"]),
-                        "ymin": int(edit["ymin"]),
-                        "xmax": int(edit["xmax"]),
-                        "ymax": int(edit["ymax"]),
-                    }
-                except (KeyError, TypeError, ValueError):
-                    continue
-                _defects[idx] = {**_defects[idx], "bbox": new_bbox, "hitl_bbox_edited": True}
-
-            # 검수자가 그린 신규 결함. AI가 놓친 것을 사람이 직접 채워 넣은 것이므로
-            # hitl_added 표식과 함께 defects에 새 항목으로 추가한다.
-            for added in (item.addedBboxes or []):
-                if not isinstance(added, dict):
-                    continue
-                try:
-                    new_bbox = {
-                        "xmin": int(added["xmin"]),
-                        "ymin": int(added["ymin"]),
-                        "xmax": int(added["xmax"]),
-                        "ymax": int(added["ymax"]),
-                    }
-                except (KeyError, TypeError, ValueError):
-                    continue
-                _defects.append({
-                    "type": added.get("type") or "UNKNOWN",
-                    "ratio": 0,
-                    "bbox": new_bbox,
-                    "image_index": added.get("imageIndex", 0),
-                    "hitl_added": True,
-                    "description": "관리자가 직접 추가",
-                })
-
+            _defects = apply_bbox_edits(_defects, list(_logs.get("yolo_candidates") or []), item)
             _logs["defects"] = _defects
             _logs["hitl_bbox_edit"] = {
                 "excluded": item.excludedDefectIndexes or [],
