@@ -454,13 +454,7 @@ def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: S
                 inv.updated_at = now_kst()
                 session.add(inv)
                 remaining -= deduct
-            # [2026-08-11 수정] 신품 입고(Fast-Track)는 Inventory.quantity와
-            # books.virtual_stock을 **둘 다** 올린다. 종전에는 출고가 Inventory 행이
-            # 모자랄 때(remaining > 0)만 virtual_stock을 깎아서, 정상 출고에서는
-            # virtual_stock이 한 번도 줄지 않고 입출고를 돌수록 부풀었다.
-            # available-books가 Inventory 0일 때 virtual_stock으로 폴백하므로,
-            # 출고를 끝낸 책이 계속 재고로 남아 다시 주문에 실렸다.
-            # 입고가 올린 만큼 출고도 같은 수량을 내린다 (양쪽 대칭).
+            # 입고가 Inventory.quantity와 virtual_stock을 둘 다 올리므로 출고도 둘 다 내린다.
             book = session.get(Book, it.book_id)
             if book:
                 book.virtual_stock = max(0, (book.virtual_stock or 0) - it.quantity)
@@ -785,11 +779,7 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
     output = []
     now = now_kst()
 
-    # 1. 신품 - books 테이블에서 **실제 보유 수량이 있는 것만** 내려보낸다.
-    #
-    # [2026-08-11 수정] 종전에는 select(Book)으로 카탈로그 전 권(626권)을 그대로 내려,
-    # 창고에 한 권도 없는 책까지 "출고 대상 도서"에 떴다. 출고 화면은 팔 수 있는 물건을
-    # 고르는 자리이므로 재고 0은 목록에서 빠져야 한다 (품절 표시가 아니라 제외).
+    # 1. 신품 - 활성 도서 중 실보유 수량이 있는 것만. 카탈로그 전체가 아니다.
     from app.models.wms import Inventory
     all_books = session.exec(select(Book).where(Book.is_active == True)).all()
     for idx, b in enumerate(all_books):
@@ -832,10 +822,7 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
     # 검수가 끝나 등급이 확정된 품목만 판매 가능 재고로 취급한다. 선부착 대기
     # (PENDING_INSPECTION)와 결재 대기(HITL_*)는 아직 팔 수 없고 등급·점수도 없으므로
     # 동적 가격 산정과 3D 적재 시뮬레이션 입력에서 제외한다.
-    # [2026-08-11 수정] 종전에는 거부 목록(HITL_*/PENDING_INSPECTION만 제외)이라
-    # SHIPPED·ALLOCATED가 걸러지지 않아 **이미 출고된 LPN이 계속 출고 대상 목록에 떴다.**
-    # 팔 수 있는 상태를 명시하는 허용 목록으로 뒤집는다 - 상태값이 새로 늘어도
-    # 자동으로 제외되므로 같은 누락이 재발하지 않는다.
+    # 판매 가능 상태만 허용 목록으로 명시한다 (거부 목록은 SHIPPED를 놓쳤다).
     from sqlalchemy import or_
 
     SELLABLE = [ItemStatusEnum.IN_STOCK.value]
