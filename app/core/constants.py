@@ -73,3 +73,28 @@ BOX_CATALOG = [
     {"id": "STD-07",   "category": "STANDARD",  "name": "일반택배 7호 (초대형 점포용)", "length": 600, "width": 450, "height": 450, "max_weight_kg": 30.0},
     {"id": "STD-08",   "category": "STANDARD",  "name": "일반택배 8호 (마스터 카톤)", "length": 650, "width": 500, "height": 500, "max_weight_kg": 35.0},
 ]
+
+
+# 작업자/검수자 표기 정본: `WM2608001(장문경)` — 사번과 이름 사이에 공백을 넣지 않는다.
+# 같은 사람이 화면마다 다른 형태로 보이면 동일인 판별이 어려워지므로 생성부를 한 곳으로 모은다.
+import re as _re
+
+_WORKER_LABEL_RE = _re.compile(r"^\s*([A-Za-z]{2}\d{6,})\s*\(\s*(.+?)\s*\)\s*$")
+
+
+def format_worker_label(employee_id: str = None, name: str = None) -> str:
+    """사번+이름을 정본 형식으로 만든다. 이름을 모르면 사번만, 사번도 없으면 미기록.
+
+    employee_id에 이미 `WM2608001 (장문경)` 같은 표시용 문자열이 들어와도 정본으로 되돌린다
+    (과거 발주 승인 경로가 표시용 라벨을 사번 컬럼에 저장한 이력이 있다).
+    """
+    emp = (employee_id or "").strip()
+    nm = (name or "").strip()
+
+    m = _WORKER_LABEL_RE.match(emp)
+    if m:
+        emp, nm = m.group(1), (nm or m.group(2))
+
+    if not emp:
+        return nm or "작업자 미기록"
+    return f"{emp}({nm})" if nm else emp

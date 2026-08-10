@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.db.session import get_db
 from app.models.wms import ReturnJob, AdminAuditLog, UserRoleEnum, JobStatusEnum
 from app.core.security import get_current_user, RoleChecker
+from app.core.constants import format_worker_label
 from app.core.exceptions import NotFoundException, BadRequestException
 
 router = APIRouter(prefix="/admin/hitl", tags=["Admin HITL"])
@@ -374,10 +375,10 @@ def submit_hitl_override(
     # 가리키게 한다 (기존에는 "HITL - WM2608001 (장문경)" 문자열이 라우터에 박혀 있었다).
     admin_employee_id = str(getattr(current_admin, "employee_id", "") or "").strip()
     admin_name = str(getattr(current_admin, "name", "") or "").strip()
-    if admin_employee_id and admin_name:
-        hitl_inspector = f"{admin_employee_id} ({admin_name})"
+    if admin_employee_id or admin_name:
+        hitl_inspector = format_worker_label(admin_employee_id, admin_name)
     else:
-        hitl_inspector = admin_employee_id or admin_name or "HITL 관리자"
+        hitl_inspector = "HITL 관리자"
 
     for item in payload.items:
         # Find ReturnJob (using ticketId as UUID string for now)

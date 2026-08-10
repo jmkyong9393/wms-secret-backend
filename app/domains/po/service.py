@@ -91,7 +91,9 @@ class POService:
     # 결재 (승인 / 기각)
     # ------------------------------------------------------------------
 
-    def approve_proposals(self, db: Session, proposal_ids: List[str], decided_by: str) -> Dict[str, Any]:
+    def approve_proposals(
+        self, db: Session, proposal_ids: List[str], decided_by: str, worker_employee_id: str = None
+    ) -> Dict[str, Any]:
         """
         제안 승인 집행: Order(AUTO_PO)+OrderItem 생성 → 신품 Fast-Track 입고.
         데모 환경에서는 도매 리드타임을 0으로 압축하므로 승인 즉시 입고까지 완료 처리한다.
@@ -130,7 +132,9 @@ class POService:
 
             # 신품 입고는 현장 스캔 입고와 동일한 Fast-Track 관문을 통과한다 (LPN 미발급).
             # 이 경로는 현장 촬영이 아니라 발주 결재로 들어오는 입고이므로 결재자를 기록한다.
-            fasttrack_new_stock_inbound(db, book, qty, worker_id=decided_by)
+            # worker_id는 사번만 넣는다 - 표시용 라벨(`WM2608001 (장문경)`)을 넣으면 사용자
+            # 조회가 실패해 화면에 그 문자열이 그대로 노출된다.
+            fasttrack_new_stock_inbound(db, book, qty, worker_id=worker_employee_id or None)
 
             proposal.status = "APPROVED"
             proposal.decided_by = decided_by

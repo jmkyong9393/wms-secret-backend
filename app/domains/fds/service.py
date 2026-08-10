@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select, func
 
+from app.core.constants import format_worker_label
 from app.models.wms import (
     AdminAuditLog, FdsReport, Order, OrderStatusEnum, User, now_kst,
 )
@@ -76,7 +77,7 @@ class FdsService:
             if avg_ms is None or avg_ms >= BLIND_APPROVAL_THRESHOLD_MS:
                 continue
             user = session.get(User, admin_id)
-            target = f"{user.employee_id} ({user.name})" if user else str(admin_id)
+            target = format_worker_label(user.employee_id, user.name) if user else str(admin_id)
             # 점수: 평균 결재시간이 짧을수록 위험 (1초=60점 기준 선형, 상한 95)
             score = min(95, 60 + int((BLIND_APPROVAL_THRESHOLD_MS - avg_ms) / BLIND_APPROVAL_THRESHOLD_MS * 35))
             detections.append({
@@ -123,7 +124,7 @@ class FdsService:
             if len(ups) < GRADE_OVERRIDE_MIN_COUNT:
                 continue
             user = session.get(User, admin_id)
-            target = f"{user.employee_id} ({user.name})" if user else str(admin_id)
+            target = format_worker_label(user.employee_id, user.name) if user else str(admin_id)
             score = min(95, 55 + len(ups) * 10 + max(ups) * 5)
             detections.append({
                 "rule_code": "R2_GRADE_OVERRIDE",
