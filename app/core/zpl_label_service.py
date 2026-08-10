@@ -1,8 +1,15 @@
 """
 50mm × 31mm LPN/UBCI 라벨 ZPL 생성 서비스 (다이컷 라벨 RS5031 규격).
 
-QR에는 LPN 원문 대신 공개 품질보증서 /certificate/{lpn} URL을 넣어
-작업자 스캔과 소비자 보증서 조회를 하나의 QR로 통합한다.
+QR에는 LPN 원문 대신 /lpn/{lpn} URL을 넣어 작업자 스캔과 소비자 보증서 조회를
+하나의 QR로 통합한다. /lpn/[lpn] 페이지 자체가 로그인 역할(WORKER/ADMIN/MASTER)이면
+내부 상세를, 아니면 /certificate/{lpn} 공개 보증서로 자동 전환해 보여준다 — 이 함수는
+그 진입점만 만든다.
+
+[2026-08-11] 예전에는 이 함수가 /certificate/{lpn}을 직접 가리켰다. 그런데
+/certificate/[lpn] 페이지는 (프론트 사이드 변경으로) role 분기 없는 순수 고객 화면으로
+분리되어, 로그인한 직원이 스캔해도 항상 고객 화면만 보고 내부 상세로 못 갔다.
+역할 분기는 /lpn/[lpn] 페이지에만 있으므로, QR 자체가 그 페이지를 가리키도록 정정한다.
 
 레이아웃은 제조사 인쇄 여백(왼쪽 1.5mm / 위쪽 1.44mm)에 미관용 여유 인셋을 더해
 ^LH로 원점을 밀어낸 뒤, 그 안에 액자형 테두리 + QR/텍스트 2단 구성을 그린다.
@@ -28,9 +35,9 @@ _KOREAN_FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" 
 
 
 def build_certificate_qr_url(lpn_barcode: str) -> str:
-    """라벨 QR에 넣을 공개 품질보증서 URL을 생성한다."""
+    """라벨 QR에 넣을 URL을 생성한다. /lpn/[lpn]이 로그인 역할에 따라 내부 상세/공개 보증서로 스스로 갈라진다."""
     base = settings.PUBLIC_WEB_BASE_URL.rstrip("/")
-    return f"{base}/certificate/{lpn_barcode}"
+    return f"{base}/lpn/{lpn_barcode}"
 
 
 def _mm_to_dots(length_mm: float) -> int:

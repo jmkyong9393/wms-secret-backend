@@ -9,11 +9,11 @@ from app.core.zpl_label_service import (
 )
 
 
-def test_certificate_qr_url_points_to_certificate_route():
+def test_certificate_qr_url_points_to_lpn_route():
     url = build_certificate_qr_url("LPN-20260805-0001")
     assert url == (
         f"{settings.PUBLIC_WEB_BASE_URL.rstrip('/')}"
-        "/certificate/LPN-20260805-0001"
+        "/lpn/LPN-20260805-0001"
     )
 
 
@@ -22,8 +22,8 @@ def test_lpn_label_contains_qr_and_barcode_text():
 
     assert zpl.startswith("^XA")
     assert zpl.endswith("^XZ")
-    # QR 목적지는 개인 트랙 체계인 /certificate/{lpn}
-    assert "/certificate/LPN-20260805-0001" in zpl
+    # QR 목적지는 /lpn/{lpn} — 로그인 역할에 따라 내부 상세/공개 보증서로 자동 분기된다
+    assert "/lpn/LPN-20260805-0001" in zpl
     assert "LPN-20260805-0001" in zpl
     # 검수 전 라벨에는 등급이 출력되면 안 된다
     assert "GRADE" not in zpl
