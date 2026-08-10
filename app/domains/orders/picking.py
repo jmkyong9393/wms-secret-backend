@@ -197,11 +197,9 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
             # 종전에는 재고가 0이어도 평범한 피킹 항목으로 발행돼, 작업자가 빈 칸으로 가서야
             # 없다는 걸 알았다(화면상으로는 정상 지시서). 실물이 없다는 사실을 지시서에
             # 명시하고, 동시에 발주 제안을 만들어 SCM 칸반에서 채울 수 있게 한다.
-            on_hand = sum(
-                (r.quantity or 0)
-                for r in session.exec(select(Inventory).where(Inventory.book_id == book.id)).all()
-            )
-            available = max(on_hand, int(book.virtual_stock or 0))
+            from app.domains.inventory.service import get_new_stock_qty
+
+            available = get_new_stock_qty(session, book.id)
             out_of_stock = available < remaining
 
             draft.append(PickingInstructionItem(

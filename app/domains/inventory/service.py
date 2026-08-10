@@ -1,4 +1,5 @@
 from sqlmodel import Session, select
+from typing import Any, Dict
 from app.models.wms import InventoryUsedItem, Book, Location
 from uuid import uuid4
 from datetime import datetime
@@ -75,10 +76,34 @@ def get_or_create_location(db: Session, zone: str = "A", rack: str = "1", shelf:
     return loc
 
 
+def get_new_stock_qty(db: Session, book_id) -> int:
+    """신품 보유 수량의 단일 진실 공급원(SSOT). Inventory 행 합계만 읽는다.
+
+    books.virtual_stock은 위치 없는 중복 기록이라 한쪽만 갱신되면 조용히 어긋난다.
+    신품 재고를 묻는 곳은 전부 이 함수를 쓴다 (배경: 33번 문서 2026-08-11 절).
+    """
+    from app.models.wms import Inventory
+
+    rows = db.exec(select(Inventory).where(Inventory.book_id == book_id)).all()
+    return sum(int(r.quantity or 0) for r in rows)
+
+
+def get_new_stock_map(db: Session) -> Dict[Any, int]:
+    """전 도서의 신품 보유 수량을 한 번에 집계한다 (목록 화면용 N+1 방지)."""
+    from app.models.wms import Inventory
+
+    out: Dict[Any, int] = {}
+    for r in db.exec(select(Inventory)).all():
+        qty = int(r.quantity or 0)
+        if qty:
+            out[r.book_id] = out.get(r.book_id, 0) + qty
+    return out
+
+
 def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int, worker_id: str = None):
     """
     신품 도서 Fast-Track 입고의 공용 집행 로직.
-    Zone A(신품존) 묶음 재고(Inventory) upsert + virtual_stock 가산 + INBOUND 원장 기록.
+    Zone A(신품존) 묶음 재고(Inventory) upsert + INBOUND 원장 기록.
 
     신품은 개별 LPN을 발급하지 않고 수량으로만 관리한다. 호출처는 두 곳:
     1) POST /inbound/fasttrack - 현장 ISBN 스캔 입고
@@ -110,7 +135,6 @@ def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int, worker_id: st
         inv = Inventory(book_id=book.id, location_id=location.id, quantity=qty)
     db.add(inv)
 
-    book.virtual_stock = (book.virtual_stock or 0) + qty
     book.updated_at = now_kst()
     db.add(book)
     db.add(InventoryLog(
