@@ -128,8 +128,9 @@ class POService:
                 condition_pref="NEW",
             ))
 
-            # 신품 입고는 현장 스캔 입고와 동일한 Fast-Track 관문을 통과한다 (LPN 미발급)
-            fasttrack_new_stock_inbound(db, book, qty)
+            # 신품 입고는 현장 스캔 입고와 동일한 Fast-Track 관문을 통과한다 (LPN 미발급).
+            # 이 경로는 현장 촬영이 아니라 발주 결재로 들어오는 입고이므로 결재자를 기록한다.
+            fasttrack_new_stock_inbound(db, book, qty, worker_id=decided_by)
 
             proposal.status = "APPROVED"
             proposal.decided_by = decided_by

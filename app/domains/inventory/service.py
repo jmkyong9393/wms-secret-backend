@@ -75,7 +75,7 @@ def get_or_create_location(db: Session, zone: str = "A", rack: str = "1", shelf:
     return loc
 
 
-def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int):
+def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int, worker_id: str = None):
     """
     신품 도서 Fast-Track 입고의 공용 집행 로직.
     Zone A(신품존) 묶음 재고(Inventory) upsert + virtual_stock 가산 + INBOUND 원장 기록.
@@ -119,6 +119,9 @@ def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int):
         condition_grade="NEW",
         quantity_change=qty,
         picked_location=f"{location.zone}-{location.rack}-{location.shelf}",
+        # 누가 이 입고를 했는가. 자동 발주(AUTO_PO) 승인 경로는 사람이 아니므로 결재자 사번이
+        # 들어오고, 현장 Fast-Track 입고는 촬영·스캔한 작업자 사번이 들어온다.
+        worker_id=(worker_id or "").strip() or None,
     ))
     return inv, location
 

@@ -423,6 +423,14 @@ class InventoryLog(SQLModel, table=True):
     quantity_change: int
     target_lpn: Optional[str] = Field(default=None, max_length=255)
     picked_location: Optional[str] = Field(default=None, max_length=50)
+    # [2026-08-10 신설] 이 입출고 건을 수행한 작업자 사번.
+    #
+    # 신품 Fast-Track 입고는 ReturnJob(중고 검수 원장)을 타지 않아 작업자를 기록할 곳이
+    # 아예 없었다. 그래서 "나의 검수 내역"에 신품 입고분이 뜨지 않았고(필터 기준값 부재),
+    # 재고 목록의 작업자 칸도 "신품 Fast-track (무검수 입고)" 상수로 채워졌다.
+    # Inventory(묶음 재고)는 같은 책·같은 칸에 여러 입고가 누적되는 행이라 작업자가 하나로
+    # 특정되지 않는다. 입고 1건 = 로그 1행인 이 감사 원장이 "누가 했는가"의 정본이다.
+    worker_id: Optional[str] = Field(default=None, max_length=50, index=True)
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
