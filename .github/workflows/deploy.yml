@@ -107,7 +107,13 @@ jobs:
             fi
             if [ "$(kubectl get job wms-migrate-$SHORT -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null)" = "True" ]; then
               echo "::error::DB 마이그레이션 실패 - 배포를 중단합니다"
-              kubectl logs job/wms-migrate-$SHORT --tail=50 --all-containers --ignore-errors 2>&1 || true
+              # [2026-08-10 사고 3] `kubectl logs job/...`은 파드를 하나만 골라 읽는데
+              # 그 파드가 종료 상태면 BadRequest로 아무것도 못 본다. 실제 alembic 오류가
+              # 가려져 원인 파악이 두 번이나 막혔다. 파드를 전부 순회해 로그를 긁는다.
+              for p in $(kubectl get pods -l job-name=wms-migrate-$SHORT -o name 2>/dev/null); do
+                echo "===== $p ====="
+                kubectl logs $p --tail=60 2>&1 || kubectl logs $p --previous --tail=60 2>&1 || true
+              done
               kubectl describe job/wms-migrate-$SHORT 2>&1 | tail -30 || true
               exit 1
             fi
