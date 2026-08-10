@@ -91,8 +91,12 @@ jobs:
           # 마이그레이션이 실패하면 여기서 배포를 멈춘다 (set -e). 깨진 스키마 위에
           # 새 코드를 올리는 것보다 구 버전이 계속 도는 편이 안전하다.
           kubectl wait --for=condition=complete job/wms-migrate-$SHORT --timeout=300s \
-            || { echo "::error::DB 마이그레이션 실패 - 배포를 중단합니다"; kubectl logs job/wms-migrate-$SHORT --tail=50; exit 1; }
-          kubectl logs job/wms-migrate-$SHORT --tail=20
+            || { echo "::error::DB 마이그레이션 실패 - 배포를 중단합니다"; kubectl logs job/wms-migrate-$SHORT --tail=50 --all-containers --ignore-errors 2>&1 || true; kubectl describe job/wms-migrate-$SHORT 2>&1 | tail -20 || true; exit 1; }
+          # 성공 로그는 어디까지나 참고용이므로 실패해도 배포를 막지 않는다(`|| true`).
+          # [2026-08-10 사고] 이 줄에 가드가 없어, 마이그레이션이 성공(condition met)한 뒤
+          # `kubectl logs job/...`이 BadRequest로 죽으면서 set -e가 배포 전체를 중단시켰다.
+          # Job 파드가 2개 이상이면(재시도 등) kubectl이 종료된 파드를 골라 이 오류를 낸다.
+          kubectl logs job/wms-migrate-$SHORT --tail=20 --all-containers --ignore-errors 2>&1 || true
 
           # --- 애플리케이션 롤링 업데이트 ---
           kubectl set image deployment/wms-api       api=$REG/nexus-backend-repo:$SHA
