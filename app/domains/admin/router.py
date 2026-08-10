@@ -17,6 +17,12 @@ router = APIRouter(prefix="/admin/hitl", tags=["Admin HITL"])
 admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 
 
+def _is_hitl_required(status) -> bool:
+    """status는 평문 str 컬럼이지만 같은 요청 안에서 Enum 멤버가 대입돼 있을 수 있다.
+    str(Enum멤버)는 "JobStatusEnum.HITL_REQUIRED"라 값 비교가 조용히 어긋난다 - 둘 다 받는다."""
+    return getattr(status, "value", status) == JobStatusEnum.HITL_REQUIRED.value
+
+
 def _resolve_admin_audit_id(current_admin, session: Session) -> UUID:
     """AdminAuditLog.admin_id는 users.id를 참조하는 UUID FK다. current_admin.id를
     신뢰하되 DB에 실제로 존재하는지 확인하고, 없으면 관리자 계정으로 폴백한다."""
@@ -536,7 +542,7 @@ def submit_hitl_override(
             # 상태만 PENDING으로 되돌리고 아무것도 재큐잉하지 않아 작업이 그대로 멈춰있던 문제도
             # 함께 수정 - /admin/hitl/{job_id}/re-inspect와 동일하게 Celery로 재큐잉한다.
             # was_hitl은 재큐잉 전 원래 상태(previous_state) 기준. 배경: 01-freeze-zones.md.
-            was_hitl = str(previous_state) == JobStatusEnum.HITL_REQUIRED.value
+            was_hitl = _is_hitl_required(previous_state)
             job.status = JobStatusEnum.PENDING
             job.retry_count += 1
             session.add(job)
