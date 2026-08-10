@@ -144,6 +144,34 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
         .outerjoin(Location, Inventory.location_id == Location.id)
     )
     new_results = db.exec(new_inv_stmt).all()
+
+    # 신품 입고 작업자. 신품은 ReturnJob을 타지 않으므로 입고 원장(InventoryLog)에서 읽는다.
+    # 같은 책이 여러 번 입고되면 가장 최근 입고를 그 재고 행의 작업자로 본다.
+    from app.models.wms import InventoryLog, User as _User
+
+    new_worker_by_book: Dict[Any, str] = {}
+    new_book_ids = [inv.book_id for inv, _b, _l in new_results if inv.book_id]
+    if new_book_ids:
+        log_rows = db.exec(
+            select(InventoryLog)
+            .where(
+                InventoryLog.transaction_type == "INBOUND",
+                InventoryLog.condition_grade == "NEW",
+                InventoryLog.book_id.in_(set(new_book_ids)),
+                InventoryLog.worker_id.is_not(None),
+            )
+            .order_by(InventoryLog.created_at.desc())
+        ).all()
+        for lg in log_rows:
+            new_worker_by_book.setdefault(lg.book_id, lg.worker_id)  # 최신순이라 첫 값이 최근
+
+    new_name_by_emp: Dict[str, str] = {}
+    if new_worker_by_book:
+        for u in db.exec(
+            select(_User).where(_User.employee_id.in_(set(new_worker_by_book.values())))
+        ).all():
+            new_name_by_emp[u.employee_id] = u.name
+
     for inv, book, loc in new_results:
         zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone-A-4-2 (신품존)"
         cover_url = book.cover_image_url if (book and book.cover_image_url) else ""
@@ -164,10 +192,12 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "zone": zone_str,
             "quantity": inv.quantity,
             # 신품 Fast-track은 AI 비전 검수를 타지 않는다(출판사 직송 무검수 입고).
-            # [2026-08-10] 작업자는 아직 저장되지 않는다 - Fast-Track 입고 API가 worker_id를
-            # 받지 않고 Inventory/InventoryLog에도 담을 칸이 없다(스키마 추가 필요).
-            # 없는 값을 지어내지 않고 미기록임을 그대로 드러낸다.
-            "worker_label": format_worker_label(None, None),
+            # 입고 원장(InventoryLog.worker_id)에서 읽은 실제 입고 작업자.
+            # 마이그레이션 이전에 입고된 행은 기록이 없어 미기록으로 표기된다.
+            "worker_label": format_worker_label(
+                new_worker_by_book.get(inv.book_id),
+                new_name_by_emp.get(new_worker_by_book.get(inv.book_id) or ""),
+            ),
             "track": "신품",
             "worker_id": "신품 Fast-track (무검수 입고)",
             "date": to_kst_str(inv.updated_at or inv.created_at)
