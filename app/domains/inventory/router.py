@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from uuid import UUID
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.domains.inventory.service import generate_lpn, get_all_lpn
@@ -58,6 +59,30 @@ def to_browser_image_urls(raw_urls: Optional[List[str]]) -> List[str]:
         else:
             normalized.append(f"{api_base}/{url}")
     return normalized
+
+
+# 등급 확정 경로(트랙) 표기. 목록에서는 이 짧은 값만 쓰고, 근거 서술은 상세 화면이 맡는다.
+# [2026-08-10 신설] 종전 목록은 "Nexus Vision AI (LangGraph 4-Agent)" 같은 긴 문자열 하나로
+# 작업자 칸을 채워, **실제 검수를 수행한 사람이 화면 어디에도 나오지 않았다**. 사람(작업자)과
+# 확정 경로(트랙)는 서로 다른 정보이므로 분리해 내려준다.
+_TRACK_BY_SOURCE = {
+    "HITL": "HITL",
+    "PENDING_HITL": "HITL 대기",
+    "MANUAL": "수기",
+    "AI_AUTO": "AI",
+}
+
+
+def resolve_track(inspection_source: Optional[str]) -> str:
+    return _TRACK_BY_SOURCE.get((inspection_source or "AI_AUTO").upper(), "AI")
+
+
+def format_worker_label(employee_id: Optional[str], name: Optional[str]) -> str:
+    """작업자 표기 정본: `WM2608002(신동준)`. 이름을 모르면 사번만, 사번도 없으면 미기록."""
+    emp = (employee_id or "").strip()
+    if not emp:
+        return "작업자 미기록"
+    return f"{emp}({name})" if name else emp
 
 
 def resolve_inspector(item: Optional[Any], job: Optional[Any]) -> Dict[str, Any]:
@@ -139,6 +164,11 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "zone": zone_str,
             "quantity": inv.quantity,
             # 신품 Fast-track은 AI 비전 검수를 타지 않는다(출판사 직송 무검수 입고).
+            # [2026-08-10] 작업자는 아직 저장되지 않는다 - Fast-Track 입고 API가 worker_id를
+            # 받지 않고 Inventory/InventoryLog에도 담을 칸이 없다(스키마 추가 필요).
+            # 없는 값을 지어내지 않고 미기록임을 그대로 드러낸다.
+            "worker_label": format_worker_label(None, None),
+            "track": "신품",
             "worker_id": "신품 Fast-track (무검수 입고)",
             "date": to_kst_str(inv.updated_at or inv.created_at)
         })
@@ -164,6 +194,35 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
         )
     )
     used_results = db.exec(used_stmt).all()
+
+    # 실제 검수를 수행한 작업자를 한 번에 모아 온다.
+    #
+    # 촬영 담당자 사번은 ReturnJob.agent_logs(JSONB)에 있어 재고 행만으로는 알 수 없다.
+    # 행마다 조회하면 N+1이 되므로 source_job_id를 모아 일괄 조회하고, 사번→이름도
+    # users를 한 번만 읽어 매핑한다.
+    from app.models.wms import ReturnJob, User
+
+    job_uuids = []
+    for it, _b, _l in used_results:
+        if not it.source_job_id:
+            continue
+        try:
+            job_uuids.append(UUID(str(it.source_job_id)))
+        except (ValueError, AttributeError, TypeError):
+            continue  # 레거시 행의 비UUID 값은 건너뛴다
+
+    worker_by_job: Dict[str, str] = {}
+    if job_uuids:
+        for j in db.exec(select(ReturnJob).where(ReturnJob.id.in_(job_uuids))).all():
+            emp = ((j.agent_logs or {}).get("inbound_worker_id") or "").strip()
+            if emp:
+                worker_by_job[str(j.id)] = emp
+
+    name_by_emp: Dict[str, str] = {}
+    if worker_by_job:
+        for u in db.exec(select(User).where(User.employee_id.in_(set(worker_by_job.values())))).all():
+            name_by_emp[u.employee_id] = u.name
+
     for item, book, loc in used_results:
         zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "검수대기 (미할당)"
         cover_url = book.cover_image_url if (book and book.cover_image_url) else ""
@@ -185,7 +244,15 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "ubci_score": item.ubci_score,
             "zone": zone_str,
             "quantity": 1,
-            # 하드코딩 상수 대신 실제 등급 확정 주체(AI 자동 판정 / HITL 결재자)를 내려준다.
+            # [2026-08-10] 작업자(사람)와 확정 트랙(AI/HITL)을 분리해 내려준다.
+            # 종전에는 "Nexus Vision AI (LangGraph 4-Agent)" 한 문자열이 작업자 칸을 채워
+            # 실제 검수를 수행한 사람이 화면에 전혀 나오지 않았다.
+            "worker_label": format_worker_label(
+                worker_by_job.get(str(item.source_job_id or "")),
+                name_by_emp.get(worker_by_job.get(str(item.source_job_id or "")) or ""),
+            ),
+            "track": resolve_track(getattr(item, "inspection_source", None)),
+            # 구 필드는 화면 호환을 위해 유지한다 (등급 확정 주체 서술).
             "worker_id": resolve_inspector(item, None)["label"],
             "date": to_kst_str(item.created_at)
         })
