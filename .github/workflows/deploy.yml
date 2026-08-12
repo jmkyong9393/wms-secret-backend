@@ -134,8 +134,24 @@ jobs:
           kubectl logs job/wms-migrate-$SHORT --tail=20 --all-containers --ignore-errors 2>&1 || true
 
           # --- 애플리케이션 롤링 업데이트 ---
+          # [2026-08-12] wms-beat이 이 목록에 없어 생성 당시 이미지에 영구 고정돼 있었다.
+          # beat은 worker와 같은 app.worker.tasks 모듈을 로드하므로, 새 주기 태스크를
+          # 추가해도 beat이 옛 코드면 스케줄 자체가 등록되지 않는다. 셋을 함께 올린다.
           kubectl set image deployment/wms-api       api=$REG/nexus-backend-repo:$SHA
           kubectl set image deployment/wms-ai-worker ai-worker=$REG/nexus-backend-repo:$SHA
+          kubectl set image deployment/wms-beat      beat=$REG/nexus-backend-repo:$SHA
+
+          # 노드 디스크가 20GB인데 이 이미지가 3.4GB라, 구·신 이미지가 함께 얹히면 pull 중
+          # ephemeral-storage 축출 임계선을 스치며 워커가 축출된다(2026-08-12 실측: 가용
+          # 2.98GB vs 임계 3.02GB). 셋을 같은 태그로 맞춰야 구 이미지를 회수할 수 있다.
           # 마이그레이션 Job이 같은 이미지를 이미 받아뒀다면 캐시가 살아 빠르지만, 다른
           # 노드에 스케줄되면 여기서 다시 pull 한다. 180초는 이 이미지 크기에 부족하다.
           kubectl rollout status deployment/wms-api --timeout=600s
+          kubectl rollout status deployment/wms-beat --timeout=600s || true
+
+          # --- 구 이미지 회수 ---
+          # 노드 디스크 회수는 kubelet imageGC(imageGCHighThreshold 70% / Low 55%)에 맡긴다.
+          # 여기서 노드로 직접 crictl을 쏘는 방법도 검토했으나, 배포 러너(마스터)에는 워커
+          # 노드로 가는 SSH 키가 없어(2026-08-12 실측: Permission denied) 동작하지 않는다.
+          # 세 디플로이가 같은 태그를 쓰면 노드에 백엔드 이미지는 최대 2세대만 남고,
+          # 다음 배포가 70%를 넘기는 시점에 GC가 구세대를 회수해 자연히 평형을 이룬다.
