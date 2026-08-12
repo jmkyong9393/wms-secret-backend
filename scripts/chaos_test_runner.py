@@ -34,7 +34,9 @@ API = "http://localhost:8000"
 DB_URL = "postgresql://admin:password@localhost:5432/wms_db"
 IMAGE_DIR = Path("app/experiment_data")
 TERMINAL = {"APPROVED", "REJECTED", "HITL_REQUIRED", "FAILED"}
-POLL_TIMEOUT_SEC = 420
+# 복구 경로 중 가장 느린 것이 PROCESSING 미아 스윕(8분 컷오프 + 60초 주기 + 처리시간)이다.
+# 폴링이 이보다 짧으면 시스템이 복구했는데도 하네스가 실패로 기록한다(v3에서 실측).
+POLL_TIMEOUT_SEC = 900
 engine = create_engine(DB_URL)
 
 

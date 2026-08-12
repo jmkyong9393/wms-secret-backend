@@ -109,6 +109,28 @@ services:
     # AI 검수 비동기 작업을 처리하는 Celery Worker
     command: ["celery", "-A", "app.worker.tasks", "worker", "-l", "info", "--pool=gevent", "-E"]
 
+  # 주기 스케줄러 — 원장 기반 미아 작업 스위퍼를 60초마다 큐잉한다.
+  # (worker_ready 시그널만으로는 재기동 직후 2분 미만 작업을 놓쳐 미아가 남았다)
+  beat:
+    build: .
+    container_name: wms-secret-beat
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://admin:password@db:5432/wms_db
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./app:/app/app
+    # 스케줄 파일은 /tmp에 둔다 — 컨테이너가 non-root(wms-user)라 /app 루트에
+    # celerybeat-schedule을 못 써서 기동 직후 크래시루프에 빠졌다(2026-08-12 실측).
+    command: ["celery", "-A", "app.worker.tasks", "beat", "-l", "info", "-s", "/tmp/celerybeat-schedule"]
+
   # flower 컨테이너 추가
   flower:
     image: mher/flower

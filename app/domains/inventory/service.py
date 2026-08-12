@@ -174,7 +174,10 @@ def generate_lpn(
     book_id: str = None,
     isbn: str = None,
     zone: str = None,
-    worker_id: str = "WM2608001",
+    # [2026-08-12] 종전 기본값 "WM2608001"은 실제 작업자와 무관한 하드코딩이었고,
+    # 심지어 INSERT에 쓰이지도 않아 선부착 작업자가 어디에도 남지 않았다.
+    # 미전달 시 None으로 정직하게 남긴다 (화면은 "작업자 미기록" 표기).
+    worker_id: str = None,
 ) -> tuple[InventoryUsedItem, Book]:
     """
     [1단계: 선부착 (Label First)]
@@ -245,7 +248,8 @@ def generate_lpn(
             lpn_barcode=lpn_code,
             ubci_score=None, # 검수 전 미측정
             condition_grade="PENDING", # 검수 전 미확정
-            item_status="PENDING_INSPECTION" # AI 검수 대기 상태
+            item_status="PENDING_INSPECTION", # AI 검수 대기 상태
+            prelabel_worker_id=(worker_id or "").strip() or None, # 선부착(라벨 발급) 작업자
         )
 
         try:

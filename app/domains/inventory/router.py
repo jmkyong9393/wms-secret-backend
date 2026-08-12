@@ -91,7 +91,10 @@ def resolve_inspector(item: Optional[Any], job: Optional[Any]) -> Dict[str, Any]
     """
     source = getattr(item, "inspection_source", None) or "AI_AUTO"
     inspected_by = getattr(item, "inspected_by", None)
-    inbound_worker = ((job.agent_logs or {}) if job else {}).get("inbound_worker_id")
+    # 검수 접수 기록(job)이 없거나 기록 도입 전 레거시면 선부착 작업자로 폴백한다.
+    inbound_worker = ((job.agent_logs or {}) if job else {}).get(
+        "inbound_worker_id"
+    ) or getattr(item, "prelabel_worker_id", None)
 
     if source == "HITL":
         label = f"HITL - {inspected_by}" if inspected_by else "HITL - 관리자 결재"
@@ -244,9 +247,14 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             if emp:
                 worker_by_job[str(j.id)] = emp
 
+    # 검수 접수 작업자 + 선부착 작업자 사번을 한 번에 모아 이름을 조회한다.
+    all_emp_ids = set(worker_by_job.values())
+    all_emp_ids.update(
+        it.prelabel_worker_id for it, _b, _l in used_results if getattr(it, "prelabel_worker_id", None)
+    )
     name_by_emp: Dict[str, str] = {}
-    if worker_by_job:
-        for u in db.exec(select(User).where(User.employee_id.in_(set(worker_by_job.values())))).all():
+    if all_emp_ids:
+        for u in db.exec(select(User).where(User.employee_id.in_(all_emp_ids))).all():
             name_by_emp[u.employee_id] = u.name
 
     for item, book, loc in used_results:
@@ -273,9 +281,15 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             # [2026-08-10] 작업자(사람)와 확정 트랙(AI/HITL)을 분리해 내려준다.
             # 종전에는 "Nexus Vision AI (LangGraph 4-Agent)" 한 문자열이 작업자 칸을 채워
             # 실제 검수를 수행한 사람이 화면에 전혀 나오지 않았다.
+            # [2026-08-12] 검수 기록이 없으면 선부착(라벨 발급) 작업자로 폴백.
             "worker_label": format_worker_label(
-                worker_by_job.get(str(item.source_job_id or "")),
-                name_by_emp.get(worker_by_job.get(str(item.source_job_id or "")) or ""),
+                worker_by_job.get(str(item.source_job_id or ""))
+                or getattr(item, "prelabel_worker_id", None),
+                name_by_emp.get(
+                    worker_by_job.get(str(item.source_job_id or ""))
+                    or getattr(item, "prelabel_worker_id", None)
+                    or ""
+                ),
             ),
             "track": resolve_track(getattr(item, "inspection_source", None)),
             # 구 필드는 화면 호환을 위해 유지한다 (등급 확정 주체 서술).
@@ -352,7 +366,11 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
                 db.add(book)
                 db.commit()
 
-    new_lpn, book = generate_lpn(db, book_id=req.book_id, isbn=req.isbn, zone=req.zone)
+    # [2026-08-12] 종전에는 req.worker_id를 응답으로 되돌려줄 뿐 저장하지 않아,
+    # 검수 전(PENDING_INSPECTION) 품목의 작업자가 어디에도 남지 않았다.
+    new_lpn, book = generate_lpn(
+        db, book_id=req.book_id, isbn=req.isbn, zone=req.zone, worker_id=req.worker_id
+    )
 
     # 표지·정가·규격까지 포함한 전체 메타를 함께 내려, 프론트가 별도 도서 조회 없이
     # 채번 응답만으로 화면을 채울 수 있게 한다.

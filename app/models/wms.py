@@ -248,6 +248,11 @@ class InventoryUsedItem(SQLModel, table=True):
     inspected_by: Optional[str] = Field(default=None, max_length=100)
     inspected_at: Optional[datetime] = Field(default=None)
 
+    # LPN 선부착(라벨 발급) 시점 작업자 사번. 검수 접수 전(PENDING_INSPECTION)에는
+    # ReturnJob이 없어 작업자를 알 길이 없으므로 발급 시점에 여기에 기록한다.
+    # 검수 후에는 ReturnJob.agent_logs.inbound_worker_id가 우선한다.
+    prelabel_worker_id: Optional[str] = Field(default=None, max_length=64)
+
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
