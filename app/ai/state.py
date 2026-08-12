@@ -39,6 +39,13 @@ class WMSInspectionState(TypedDict):
     # [수정 이력] 이 필드가 State에 선언되어 있지 않아 LangGraph가 값을 통째로 버렸고,
     # policy_agent의 state.get("book_title")이 항상 빈 문자열이라 Cap이 한 번도 발동하지 않았다.
     book_title: Optional[str]
+    # 도서 카테고리(예: "컴퓨터/모바일"). is_workbook 판정의 2차 신호.
+    # [수정 이력 2026-08-12] 제목 키워드만으로 문제집을 가려냈으나 "쉽게 풀어쓴 C언어
+    # Express", "Do it! 점프 투 파이썬"처럼 실습문제가 실린 도서 다수가 키워드에 안 걸려
+    # Cap 없이 낙서 건당 누적 감점됐다(실측: LPN 손글씨 12건 -10점씩 -17점, REJECT 40점 →
+    # 33점). category_type은 inbound/router.py가 이미 채워 agent_logs에 보존하고 있었지만
+    # 이 State에 선언되지 않아 book_title과 같은 이유로 버려지고 있었다.
+    book_category: Optional[str]
 
     # 1-0. Detector Node (WBF 3-YOLO 앙상블 사전탐지 - LLM 미사용)
     # [분리 배경] 예전에는 vision_agent 하나가 YOLO 앙상블 + GPT-4o VLM + GPT-4o-mini 검증
