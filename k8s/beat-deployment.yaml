@@ -1,0 +1,26 @@
+# Celery Beat — 원장 기반 미아 작업 스위퍼를 60초 주기로 큐잉한다.
+# 반드시 replicas: 1 — Beat는 자체 스케줄 상태를 갖는 단일 프로세스라
+# 2개 이상 뜨면 같은 스윕이 중복 실행된다 (docker-compose.yml의 beat 서비스와 동일 구성).
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: wms-beat }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # RollingUpdate 시 신·구 Beat가 잠시 동시 실행되는 것 방지
+  selector: { matchLabels: { app: wms-beat } }
+  template:
+    metadata: { labels: { app: wms-beat } }
+    spec:
+      imagePullSecrets: [{ name: ecr-secret }]   # §2-6 필수 (없으면 ImagePullBackOff)
+      containers:
+      - name: beat
+        image: <ACCOUNT>.dkr.ecr.ap-northeast-2.amazonaws.com/nexus-backend-repo:latest
+        # -s를 /tmp로 지정 — 컨테이너가 non-root(wms-user)라 /app 루트에 스케줄 파일을
+        # 못 써 기동 직후 크래시루프에 빠졌다 (2026-08-12 로컬 실측, docker-compose와 동일 원인).
+        command: ["celery", "-A", "app.worker.tasks", "beat", "-l", "info", "-s", "/tmp/celerybeat-schedule"]
+        envFrom: [{ secretRef: { name: wms-backend-secret } }]
+        env:
+        - { name: REDIS_URL, value: "redis://redis-service:6379/0" }
+        resources:
+          requests: { cpu: 50m, memory: 128Mi }   # 스케줄러만 상주, YOLO/torch 없음
+          limits: { memory: 256Mi }
