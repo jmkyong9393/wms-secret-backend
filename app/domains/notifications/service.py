@@ -38,6 +38,8 @@ _TYPE_PRESETS: Dict[str, Dict[str, str]] = {
     "PICKING_COMPLETED": {"category": "피킹 완료", "severity": "INFO", "link_url": "/admin/outbound"},
     "WAYBILL_ISSUED": {"category": "송장 발급", "severity": "INFO", "link_url": "/worker/outbound"},
     "OUTBOUND_SHIPPED": {"category": "출고 완료", "severity": "INFO", "link_url": "/admin/outbound"},
+    # [2026-08-12 신설] 주간 인사이트 배치(Celery Beat 00:05 KST)가 AI 서사와 함께 올린다.
+    "WEEKLY_INSIGHT": {"category": "주간 인사이트", "severity": "INFO", "link_url": "/admin/dashboard"},
 }
 
 
