@@ -237,99 +237,27 @@ def get_dashboard_logs(
 @router.get("/weekly-insights")
 def get_weekly_insights(session: Session = Depends(get_db)) -> Dict[str, Any]:
     """
-    주간 인사이트 스냅샷 (weekly_insights 테이블 - 지연 생성 배치).
+    주간 인사이트 스냅샷 조회 (weekly_insights 테이블).
 
-    [설계 2026-08-04] 별도 스케줄러(Celery Beat) 없이, 요청 시점에 이번 ISO 주차 row가 없으면
-    즉석에서 집계·생성해 저장한다(지연 물질화). 모든 수치는 결정론적 SQL 집계이고,
-    ai_narrative 서사 문장만 Insight Analyst(gpt-4o-mini)가 생성한다 (실패 시 템플릿 폴백).
+    [2026-08-12 리팩토링] 집계 로직은 weekly_insight_service로 분리했고, 정규 생성 주체는
+    Celery Beat(매일 00:05 KST)이다. 여기서는 조회만 하되, 크론이 아직 안 돌았거나 실패한
+    경우를 대비해 같은 함수로 폴백 생성한다(자기치유). 집계 창은 ISO 주 경계로 고정되므로
+    누가 언제 방문하든 같은 주차는 같은 값을 낸다.
     """
-    from datetime import timedelta
-    from app.models.wms import WeeklyInsight, Book
+    from app.domains.dashboard.weekly_insight_service import (
+        build_weekly_insight, iso_week_bounds, serialize_weekly_insight,
+    )
+    from app.models.wms import WeeklyInsight
 
-    now = now_kst()
-    iso = now.isocalendar()
-    report_week = f"{iso[0]}-W{iso[1]:02d}"
-
+    report_week, _, _ = iso_week_bounds(now_kst())
     existing = session.exec(
         select(WeeklyInsight).where(WeeklyInsight.report_week == report_week)
     ).first()
     if existing:
-        return _serialize_weekly_insight(existing, cached=True)
+        return serialize_weekly_insight(existing, cached=True)
 
-    week_start = now - timedelta(days=7)
-
-    # 1) 이번 주 검수 건수 -> 절감 인건비 추정 (검수 1건당 수작업 6분 vs AI 30초, 시급 12,000원 상수)
-    week_inspections = session.exec(
-        select(func.count(ReturnJob.id)).where(ReturnJob.created_at >= week_start)
-    ).one() or 0
-    saved_minutes_per_item = 6 - 0.5
-    saved_labor_cost = int(week_inspections * saved_minutes_per_item / 60 * 12000)
-
-    # 2) 결함 다발 출판사 Top 3 (반려 건 기준)
-    pub_rows = session.exec(
-        select(Book.publisher, func.count(ReturnJob.id))
-        .join(Book, ReturnJob.book_id == Book.id)
-        .where(ReturnJob.status == JobStatusEnum.REJECTED, ReturnJob.created_at >= week_start)
-        .group_by(Book.publisher)
-        .order_by(func.count(ReturnJob.id).desc())
-        .limit(3)
-    ).all()
-    top_publishers = {"items": [{"publisher": p or "미상", "reject_count": int(c)} for p, c in pub_rows]}
-
-    # 3) 창고 Zone 점유 핫스팟 (중고 재고 기준)
-    from app.models.wms import Location
-    zone_rows = session.exec(
-        select(Location.zone, func.count(InventoryUsedItem.id))
-        .join(Location, InventoryUsedItem.location_id == Location.id)
-        .group_by(Location.zone)
-        .order_by(func.count(InventoryUsedItem.id).desc())
-    ).all()
-    location_hotspots = {"zones": [{"zone": z, "count": int(c)} for z, c in zone_rows]}
-
-    # 4) 반품 예측 (최근 4주 반품 요청 단순 이동평균 - 결정론적)
-    four_weeks_ago = now - timedelta(days=28)
-    recent_returns = session.exec(
-        select(func.count(Order.id)).where(
-            Order.status == "RETURN_REQUESTED", Order.created_at >= four_weeks_ago
-        )
-    ).one() or 0
-    predicted_returns = round(recent_returns / 4)
-
-    # 5) 주간 물류 처리량 (입고/출고)
-    week_inbound = session.exec(
-        select(func.count(InventoryUsedItem.id)).where(InventoryUsedItem.created_at >= week_start)
-    ).one() or 0
-    week_orders = session.exec(
-        select(func.count(Order.id)).where(Order.created_at >= week_start, Order.type != "AUTO_PO")
-    ).one() or 0
-    logistics = {"week_inbound": int(week_inbound), "week_orders": int(week_orders),
-                 "week_inspections": int(week_inspections)}
-
-    stats_for_narrative = {
-        "report_week": report_week,
-        "week_inspections": int(week_inspections),
-        "saved_labor_cost_krw": saved_labor_cost,
-        "top_defective_publishers": top_publishers["items"],
-        "zone_hotspots": location_hotspots["zones"][:3],
-        "predicted_returns_next_week": predicted_returns,
-        "week_inbound": int(week_inbound),
-        "week_orders": int(week_orders),
-    }
-    narrative = _generate_insight_narrative(stats_for_narrative)
-
-    insight = WeeklyInsight(
-        report_week=report_week,
-        saved_labor_cost_krw=saved_labor_cost,
-        top_defective_publishers=top_publishers,
-        location_hotspots=location_hotspots,
-        logistics_hotspots=logistics,
-        predicted_returns=predicted_returns,
-        ai_narrative=narrative,
-    )
-    session.add(insight)
-    session.commit()
-    session.refresh(insight)
-    return _serialize_weekly_insight(insight, cached=False)
+    insight, created = build_weekly_insight(session)
+    return serialize_weekly_insight(insight, cached=not created)
 
 
 @router.get("/weekly-insights/history")
@@ -365,57 +293,10 @@ def get_weekly_insights_history(
     }
 
 
-def _serialize_weekly_insight(w, cached: bool) -> Dict[str, Any]:
-    return {
-        "report_week": w.report_week,
-        "saved_labor_cost_krw": w.saved_labor_cost_krw,
-        "top_defective_publishers": w.top_defective_publishers or {"items": []},
-        "location_hotspots": w.location_hotspots or {"zones": []},
-        "logistics": w.logistics_hotspots or {},
-        "predicted_returns": w.predicted_returns,
-        "ai_narrative": w.ai_narrative,
-        "generated_at": w.created_at.isoformat() if w.created_at else None,
-        "cached": cached,
-    }
-
-
-def _generate_insight_narrative(stats: Dict[str, Any]) -> str:
-    """집계 수치(결정론)를 입력으로 주간 경영 서사만 생성. LLM 장애 시 템플릿 폴백."""
-    fallback = (
-        f"{stats['report_week']} 주간: AI 검수 {stats['week_inspections']}건 처리로 "
-        f"약 {stats['saved_labor_cost_krw']:,}원의 검수 인건비를 절감했습니다. "
-        f"다음 주 반품은 약 {stats['predicted_returns_next_week']}건으로 예상됩니다."
-    )
-    try:
-        from langchain_openai import ChatOpenAI
-        from langchain_core.messages import HumanMessage
-        import json as _json
-
-        # [수정 이력] 수치를 raw 정수로 주면 LLM이 단위를 오해해 부풀리는 사고가 실제로
-        # 발생했다 (절감액 8,800원 -> "8,800,000원"으로 서술). 금액/수량을 단위까지 붙인
-        # 완성 문자열로 넘겨 인용만 하게 하고, 재구성 여지를 차단한다.
-        formatted = dict(stats)
-        formatted["saved_labor_cost_krw"] = f"{stats['saved_labor_cost_krw']:,}원"
-        formatted["week_inspections"] = f"{stats['week_inspections']}건"
-        formatted["predicted_returns_next_week"] = f"{stats['predicted_returns_next_week']}건"
-        formatted["week_inbound"] = f"{stats['week_inbound']}건"
-        formatted["week_orders"] = f"{stats['week_orders']}건"
-
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-        prompt = f"""당신은 B2B 도서 물류센터의 경영 분석 AI입니다. 아래 주간 집계 수치(이미 확정된
-사실)를 바탕으로, 경영진 대시보드에 띄울 3~4문장의 한국어 주간 인사이트 요약을 작성하세요.
-핵심 수치 인용 + 주목할 패턴 1가지 + 다음 주 관전 포인트 1가지 구성, 담백한 보고체.
-
-[절대 규칙] 아래 JSON의 수치 문자열(예: "8,800원", "12건")을 **한 글자도 바꾸지 말고 그대로
-인용**하세요. 단위를 바꾸거나(원->만원), 자릿수를 늘리거나, 새로운 숫자를 만들면 안 됩니다.
-
-주간 집계(JSON): {_json.dumps(formatted, ensure_ascii=False)}"""
-        result = llm.invoke([HumanMessage(content=prompt)])
-        text = (result.content or "").strip()
-        return text if text else fallback
-    except Exception as e:
-        print(f"[Weekly Insight] LLM 서사 생성 실패, 템플릿 폴백: {e}")
-        return fallback
+# 직렬화/서사 생성은 weekly_insight_service가 단일 정의를 갖는다 (크론과 공유).
+from app.domains.dashboard.weekly_insight_service import (  # noqa: E402
+    serialize_weekly_insight as _serialize_weekly_insight,
+)
 
 
 @router.get("/ai-quality")
