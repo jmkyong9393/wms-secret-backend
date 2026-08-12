@@ -30,6 +30,15 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # [2026-08-13 수정] 잡 레벨 env로 시크릿을 옮긴다.
+    # 종전에는 스텝 `if:`에서 `secrets.EC2_HOST`를 **직접** 참조했는데, GitHub Actions는
+    # `if:`에서 secrets 컨텍스트를 지원하지 않는다. 그 결과 이 파일이 **유효하지 않은
+    # 워크플로**로 판정되어, workflow_dispatch 전용인데도 **main에 푸시할 때마다 실패
+    # 실행이 하나씩 기록**됐다(실측: #24~#27 연속 실패). 배포 자체는 deploy.yml이 하므로
+    # 기능 장애는 아니었지만, 매 푸시마다 빨간 X가 찍혀 진짜 실패를 가리고 있었다.
+    # deploy.yml이 이미 쓰고 있는 해법과 동일하게 맞춘다.
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -42,10 +51,10 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Deploy via SSH (Manual Redeploy)
-        if: ${{ secrets.EC2_HOST != '' }}
+        if: ${{ env.EC2_HOST != '' }}
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ env.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
