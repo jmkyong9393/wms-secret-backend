@@ -9,6 +9,12 @@ from app.domains.inventory.service import generate_lpn, get_all_lpn
 # Inventory 도메인 라우터: 새 상품 및 중고/반품 도서들의 통합 재고 관리를 담당합니다.
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
+# 하드 삭제는 관리자 전용 (MASTER/ADMIN)
+from app.core.security import RoleChecker
+from app.models.wms import UserRoleEnum
+
+_admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
+
 
 from sqlmodel import select
 from app.models.wms import InventoryUsedItem, Book, Location
@@ -425,6 +431,98 @@ async def cancel_lpn(lpn_barcode: str, db: Session = Depends(get_db)):
     db.commit()
     print(f"[LPN] 미부착 채번 취소: {lpn_barcode}")
     return {"status": "success", "lpn_barcode": lpn_barcode, "deleted": True}
+
+
+@router.delete("/items/{row_id}")
+def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), current_admin=Depends(_admin_only)):
+    """
+    재고 행 하드 삭제 (관리자 전용) - 시연·오입고 건을 흔적 없이 리셋하는 캐스케이드.
+
+    검수 이력(ReturnJob)·원장(InventoryLog)·알림까지 함께 지운다. 테이블 4개를 순서 맞춰
+    지워야 해서 DBeaver 수작업이 고통스럽던 것을 API 한 번으로 대체한다 (조장 결정:
+    시연 리셋이 지배 시나리오이므로 소프트 삭제 대신 하드 삭제).
+
+    단 하나의 가드: 피킹·출고에 물린 건(ALLOCATED/SHIPPED)은 지시서 스냅샷이 깨지므로 409.
+
+    row_id는 재고 목록 행의 id를 그대로 받는다 - 중고는 InventoryUsedItem.id,
+    신품은 Inventory.id (프론트가 구분 없이 넘길 수 있게 양쪽을 순서대로 조회).
+    """
+    from app.models.wms import Inventory, InventoryLog, Notification, ReturnJob
+
+    deleted = {"used_item": 0, "new_inventory": 0, "jobs": 0, "logs": 0, "notifications": 0}
+
+    # 1) 중고 LPN 낱권
+    item = db.get(InventoryUsedItem, row_id)
+    if item:
+        if item.item_status in ("ALLOCATED", "SHIPPED"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"피킹/출고에 연결된 재고라 삭제할 수 없습니다 (상태: {item.item_status}). "
+                       f"해당 지시서를 먼저 취소해 주세요.",
+            )
+        lpn = item.lpn_barcode
+
+        jobs = db.exec(
+            select(ReturnJob).where(ReturnJob.agent_logs["lpn_barcode"].astext == lpn)
+        ).all()
+        if item.source_job_id:
+            src = db.get(ReturnJob, item.source_job_id)
+            if src and src not in jobs:
+                jobs.append(src)
+
+        job_ids = [str(j.id) for j in jobs]
+        if job_ids:
+            for n in db.exec(
+                select(Notification).where(
+                    Notification.ref_type == "RETURN_JOB", Notification.ref_id.in_(job_ids)
+                )
+            ).all():
+                db.delete(n)
+                deleted["notifications"] += 1
+
+        for lg in db.exec(select(InventoryLog).where(InventoryLog.target_lpn == lpn)).all():
+            db.delete(lg)
+            deleted["logs"] += 1
+
+        db.delete(item)  # source_job_id FK 때문에 job보다 먼저 지운다
+        deleted["used_item"] = 1
+        for j in jobs:
+            db.delete(j)
+            deleted["jobs"] += 1
+
+        db.commit()
+        print(f"[재고 하드삭제] {lpn}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})")
+        return {"status": "success", "lpn_barcode": lpn, "deleted": deleted}
+
+    # 2) 신품 Fast-track 묶음 재고
+    inv = db.get(Inventory, row_id)
+    if inv:
+        book_id = inv.book_id
+        db.delete(inv)
+        deleted["new_inventory"] = 1
+
+        # 이 책의 신품 재고가 0이 되면 입고 원장도 함께 지워 검수 내역 목록에서 사라지게 한다.
+        # 다른 위치에 재고가 남아 있으면 원장은 이력이므로 보존한다.
+        remaining = db.exec(
+            select(Inventory).where(Inventory.book_id == book_id, Inventory.id != row_id)
+        ).all()
+        if not remaining:
+            for lg in db.exec(
+                select(InventoryLog).where(
+                    InventoryLog.book_id == book_id,
+                    InventoryLog.transaction_type == "INBOUND",
+                    InventoryLog.condition_grade == "NEW",
+                )
+            ).all():
+                db.delete(lg)
+                deleted["logs"] += 1
+
+        db.commit()
+        print(f"[재고 하드삭제] 신품 book={book_id}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})")
+        return {"status": "success", "book_id": str(book_id), "deleted": deleted}
+
+    raise HTTPException(status_code=404, detail=f"재고 행을 찾을 수 없습니다: {row_id}")
+
 
 @router.get("/lpn")
 async def get_lpn_list(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
