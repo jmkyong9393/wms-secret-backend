@@ -88,6 +88,25 @@ class HitlTaskResponse(BaseModel):
     ubci_score: Optional[int] = None
     agent_logs: Optional[Dict[str, Any]] = None
     created_at: str
+    # 처리(상태 변경) 시각. 목록 정렬 기준이자 "언제 회수/이관됐는가" 표시용.
+    updated_at: Optional[str] = None
+    # 관리자가 남긴 최신 메모. 프론트가 이 필드를 읽는데 종전에는 서버가 채우지 않아
+    # 회수 사유·결재 코멘트가 DB에 있어도 화면에는 고정 문구만 떴다 (2026-08-13 실사고).
+    human_issue_notes: Optional[str] = None
+
+
+def _latest_admin_memo(agent_logs: Optional[Dict[str, Any]], *, prefer_recall: bool) -> Optional[str]:
+    """agent_logs에서 관리자가 남긴 최신 메모를 꺼낸다.
+
+    메모는 두 곳에 저장된다: 결재 코멘트(human_feedback.admin_comment)와
+    회수 사유(recall_history[-1].reason). 결재 대기 목록은 "왜 다시 대기로 왔는가"가
+    관심사라 회수 사유를 우선하고, 완료 목록은 결재 코멘트를 우선한다.
+    """
+    logs = agent_logs or {}
+    comment = ((logs.get("human_feedback") or {}).get("admin_comment") or "").strip() or None
+    recalls = logs.get("recall_history") or []
+    recall_reason = ((recalls[-1].get("reason") or "").strip() or None) if recalls else None
+    return (recall_reason or comment) if prefer_recall else (comment or recall_reason)
 
 def apply_bbox_edits(defects: List[Dict[str, Any]], candidates: List[Dict[str, Any]], item) -> List[Dict[str, Any]]:
     """검수자의 BBox 채택/제외/좌표수정/신규추가를 결함 배열에 반영한 새 배열을 돌려준다.
@@ -328,9 +347,12 @@ def get_pending_hitl_tasks(
         select(ReturnJob, Book)
         .where(ReturnJob.status.in_([JobStatusEnum.HITL_REQUIRED, JobStatusEnum.PENDING]))
         .outerjoin(Book, ReturnJob.book_id == Book.id)
+        # 처리(이관/회수) 시간 역순. 종전에는 order_by가 없어 DB 임의 순서(조인 특성상
+        # 사실상 도서명 비슷한 순)로 나왔다 - 방금 회수한 건이 목록 중간에 파묻혔다.
+        .order_by(ReturnJob.updated_at.desc())
     )
     results = session.exec(statement).all()
-    
+
     output = []
     for job, book in results:
         output.append(
@@ -345,6 +367,9 @@ def get_pending_hitl_tasks(
                 ubci_score=job.ubci_score,
                 agent_logs=job.agent_logs,
                 created_at=job.created_at.isoformat() if job.created_at else "",
+                updated_at=job.updated_at.isoformat() if job.updated_at else None,
+                # 결재 대기 화면이므로 회수 사유 우선 ("왜 다시 대기로 왔는가")
+                human_issue_notes=_latest_admin_memo(job.agent_logs, prefer_recall=True),
             )
         )
     return output
@@ -799,9 +824,10 @@ def get_completed_hitl_tasks(
         select(ReturnJob, Book)
         .where(ReturnJob.status.in_([JobStatusEnum.APPROVED, JobStatusEnum.REJECTED]))
         .outerjoin(Book, ReturnJob.book_id == Book.id)
+        .order_by(ReturnJob.updated_at.desc())  # 처리(결재) 시간 역순
     )
     results = session.exec(statement).all()
-    
+
     output = []
     for job, book in results:
         output.append(
@@ -816,6 +842,9 @@ def get_completed_hitl_tasks(
                 ubci_score=job.ubci_score,
                 agent_logs=job.agent_logs,
                 created_at=job.created_at.isoformat() if job.created_at else "",
+                updated_at=job.updated_at.isoformat() if job.updated_at else None,
+                # 완료 화면이므로 결재 코멘트 우선
+                human_issue_notes=_latest_admin_memo(job.agent_logs, prefer_recall=False),
             )
         )
     return output

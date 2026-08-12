@@ -585,6 +585,23 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # agent_logs["book_category"]에 심어둔 값을 읽어 2차 신호로 함께 넘긴다.
         book_category = (agent_logs_in or {}).get("book_category") or ""
 
+        # [수정 이력 2026-08-13] book_metadata/book_category는 **입고 시점**에만 agent_logs에
+        # 심긴다. 그 이전에 만들어진 job을 재검수하면 둘 다 비어서 ① is_workbook Cap이
+        # 미발동해 낙서가 건당 누적되고(실측: C언어 Express 재검수 -100점 -> UBCI 0점 REJECT),
+        # ② 완료 알림 도서명이 '도서'로 표기됐다. books 테이블에는 항상 있으므로 DB에서
+        # 폴백한다 - book_id는 prepare_processing_job이 이미 돌려준 값이다.
+        if not book_title or not book_category:
+            try:
+                from app.db.session import engine as _engine
+                from app.models.wms import Book as _Book
+                with Session(_engine) as _s:
+                    _book = _s.get(_Book, book_id) if book_id else None
+                    if _book:
+                        book_title = book_title or (_book.title or "")
+                        book_category = book_category or (_book.category_type or "")
+            except Exception as _meta_err:
+                logger.warning(f"[BookContext] 도서 메타 DB 폴백 실패(검수는 계속): {_meta_err}")
+
         publish_processing_event(
             return_job_id=parsed_return_job_id,
             celery_task_id=celery_task_id,
@@ -658,19 +675,22 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
             from app.domains.notifications.service import notify_hitl_required, notify_inspection_done
 
             job_logs = job.agent_logs or {}
-            book_title = (job_logs.get("book_metadata") or {}).get("title") or "도서"
+            # 도서명은 위에서 DB 폴백까지 끝낸 book_title을 재사용한다.
+            # [수정 이력 2026-08-13] 여기서 agent_logs.book_metadata를 다시 읽었는데, 입고
+            # 시점 이전의 구 job(재검수)은 그 키가 없어 알림이 전부 '도서'로 표기됐다.
+            notify_book_title = book_title or "도서"
 
             if job.status == "HITL_REQUIRED":
                 notify_hitl_required(
                     job_id=str(job.id),
-                    book_title=book_title,
+                    book_title=notify_book_title,
                     ubci_score=job.ubci_score,
                     reason=job_logs.get("supervisor_rationale") or job_logs.get("critic_text") or "",
                 )
             elif job.status == "APPROVED":
                 notify_inspection_done(
                     lpn=job_logs.get("lpn_barcode") or "-",
-                    book_title=book_title,
+                    book_title=notify_book_title,
                     grade=ai_result.get("final_grade", "-"),
                     ubci_score=job.ubci_score,
                 )
