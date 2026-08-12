@@ -580,6 +580,10 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # state["book_title"]을 읽는데, 이 키를 아무도 채워준 적이 없어 항상 빈 문자열이었다.
         # 즉 수험서 Cap이 한 번도 발동하지 않고 낙서가 건당 누적 감점되고 있었다.
         book_title = ((agent_logs_in or {}).get("book_metadata") or {}).get("title") or ""
+        # [수정 이력 2026-08-12] is_workbook이 제목 키워드에만 의존해 "쉽게 풀어쓴 C언어
+        # Express"처럼 실습문제가 실린 도서 다수가 안 걸렸다. inbound/router.py가 이미
+        # agent_logs["book_category"]에 심어둔 값을 읽어 2차 신호로 함께 넘긴다.
+        book_category = (agent_logs_in or {}).get("book_category") or ""
 
         publish_processing_event(
             return_job_id=parsed_return_job_id,
@@ -594,6 +598,7 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
             image_urls = inference_images,
             display_image_urls = image_urls,
             book_title = book_title,
+            book_category = book_category,
         )
 
         # 4. AI decision에 따라 창고 랙 위치 확정
@@ -741,3 +746,66 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
     
 
 
+
+
+@celery_app.task(name="app.worker.tasks.generate_weekly_insight")
+def generate_weekly_insight() -> Dict[str, Any]:
+    """
+    주간 인사이트 정규 생성 배치 (Celery Beat 매일 00:05 KST).
+
+    [2026-08-12 신설] 종전에는 대시보드 첫 방문 시 즉석 생성하는 지연 물질화였다. 집계 창이
+    "방문 시점 기준 과거 7일"이라 ISO 주차 라벨과 어긋났고, 생성 시각이 방문자에 좌우돼
+    같은 주차가 언제 조회됐느냐에 따라 다른 값으로 굳었다(실측: 2026-W33이 월요일 00:01
+    방문으로 거의 빈 데이터에 고정). 집계 창을 ISO 주 경계로 못박고 여기서 매일 갱신한다.
+
+    매일 도는 이유: 진행 중인 주의 러닝 스냅샷을 최신으로 유지하기 위해서다. 월요일 실행분은
+    직전 주가 막 닫힌 시점이므로 그 주를 확정(force 재집계)하고, 새 주를 새로 연다.
+    """
+    from datetime import timedelta
+
+    from app.db.session import engine
+    from app.domains.dashboard.weekly_insight_service import (
+        build_weekly_insight, iso_week_bounds,
+    )
+    from app.models.wms import now_kst
+
+    now = now_kst()
+    result: Dict[str, Any] = {"finalized": None, "refreshed": None}
+
+    try:
+        with Session(engine) as session:
+            # 1) 직전 주 확정. 매일 force 재집계하지 않고 행이 없을 때만 만들면, 크론이
+            #    하루 걸러도 빈 주차가 생기지 않는다(백필 성격).
+            prev_ref = now - timedelta(days=7)
+            prev_week, _, _ = iso_week_bounds(prev_ref)
+            prev_insight, prev_created = build_weekly_insight(session, prev_ref)
+            result["finalized"] = {"week": prev_week, "created": prev_created}
+
+            # 2) 진행 중인 주는 매일 재집계해 러닝 값을 갱신한다.
+            cur_insight, _ = build_weekly_insight(session, now, force=True)
+            result["refreshed"] = {
+                "week": cur_insight.report_week,
+                "saved_labor_cost_krw": cur_insight.saved_labor_cost_krw,
+            }
+
+            # 3) AI가 만든 서사를 알림으로 결합해 관제 콘솔에 띄운다.
+            #    수치는 결정론적 SQL 집계이고 문장만 LLM 생성이라는 원칙은 그대로다.
+            try:
+                from app.domains.notifications.service import emit
+
+                emit(
+                    type="WEEKLY_INSIGHT",
+                    title=f"{cur_insight.report_week} 주간 인사이트 갱신",
+                    description=(cur_insight.ai_narrative or "")[:500],
+                    ref_type="WEEKLY_INSIGHT",
+                    ref_id=cur_insight.report_week,
+                    target_role="ADMIN",
+                )
+            except Exception as notify_err:
+                logger.warning(f"[WeeklyInsight] 알림 발행 실패(집계는 완료됨): {notify_err}")
+
+    except Exception as e:
+        logger.error(f"[WeeklyInsight] 주간 인사이트 생성 실패: {e}")
+        result["error"] = str(e)
+
+    return result

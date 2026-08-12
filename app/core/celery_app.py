@@ -1,5 +1,6 @@
 import os
 from celery import Celery
+from celery.schedules import crontab
 
 # celery 설정 담당
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -56,6 +57,14 @@ celery_app.conf.update(
         "requeue-stale-pending-inspections": {
             "task": "app.worker.tasks.sweep_stale_pending_inspections",
             "schedule": 60.0,  # 초. 스위퍼 자체가 멱등(터미널 검사+Redlock)이라 짧아도 안전
+        },
+        # 주간 인사이트 정규 생성. timezone="Asia/Seoul" + enable_utc=False라 crontab도 KST다.
+        # 00:00이 아니라 00:05인 이유: 자정 정각은 다른 일배치와 겹치기 쉽고, 주 경계 직후
+        # 몇 분은 직전 주 마지막 트랜잭션이 아직 커밋 중일 수 있어 여유를 둔다.
+        # 태스크가 멱등(직전 주는 없을 때만 생성, 현재 주는 force 재집계)이라 중복 실행도 안전하다.
+        "generate-weekly-insight": {
+            "task": "app.worker.tasks.generate_weekly_insight",
+            "schedule": crontab(hour=0, minute=5),
         },
     },
 )
