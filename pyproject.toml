@@ -32,9 +32,34 @@ dependencies = [
     "Pillow>=10.2.0",
     "pottery>=3.0.1",
     "ultralytics>=8.4.115",
+    # torch/torchvision은 ultralytics의 전이 의존성이지만 여기에 직접 명시한다.
+    # uv의 [tool.uv.sources]는 **직접 의존성에만** 적용되므로, 전이 상태로 두면 아래
+    # CPU 전용 인덱스 지정이 조용히 무시된다(2026-08-12 실측: 지정 후에도 pypi.org에서
+    # CUDA 동봉 휠을 그대로 해석했다).
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
     "numpy>=2.4.6",
     "chromadb-client>=1.0.0",
 ]
+
+# --- torch를 CPU 전용 휠로 고정 (2026-08-12) ---
+# ultralytics가 끌어오는 PyPI 기본 torch 휠은 NVIDIA CUDA 런타임을 통째로 동봉한다.
+# 실측(운영 컨테이너 내부): venv 5.5GB 중 nvidia 2.7GB + triton 691MB = 3.4GB가 GPU 전용이다.
+# 배포 노드는 t3.medium이고 /dev/nvidia* 가 없어(실측) 이 3.4GB는 단 한 줄도 실행되지 않는다.
+#
+# 그런데 이 죽은 무게가 실제 장애를 일으켰다: 노드 디스크가 20GB인데 이미지가 3.43GB라
+# 배포 때 구·신 이미지가 겹치면 pull 도중 ephemeral-storage 축출 임계선을 스치고,
+# 워커 파드가 축출되며 AI 검수 큐가 통째로 멈췄다(2026-08-12 실측: 가용 2.98GB vs 임계 3.02GB).
+# CPU 휠로 바꾸면 이미지가 3.4GB -> 1GB대로 줄어 이 실패 경로 자체가 닫힌다.
+# GPU 노드로 옮길 일이 생기면 이 두 블록만 지우면 원래 동작으로 돌아간다.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [build-system]
 requires = ["hatchling"]
