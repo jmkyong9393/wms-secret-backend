@@ -44,8 +44,19 @@ celery_app.conf.update(
 
     # 장시간 실행 task 보호를 위한 실행 시간 제한
     task_soft_time_limit = 300, # 5분 넘으면 Celery가 부드럽게 중단 신호 줌
-    task_time_limit = 360 # 6분이 넘으면 강제 종료
-    
+    task_time_limit = 360, # 6분이 넘으면 강제 종료
 
+    # 원장 기반 미아 작업 스위퍼 주기 실행.
+    # 종전에는 worker_ready 시그널(기동 시 1회)에만 걸려 있었는데, 스위퍼의 대상 조건이
+    # "2분 이상 방치된 PENDING"이라 워커 재기동 직후에는 방금 유실된 작업이 아직 2분이
+    # 안 돼 걸리지 않았다. 결과적으로 두 조건이 서로를 무력화해, 브로커에서 소실된 작업이
+    # 다음 재기동 때까지 무기한 방치됐다(2026-08-12 카오스 재실행에서 25분 방치 실측).
+    # 주기 실행으로 바꿔 재기동 없이도 복구되게 한다.
+    beat_schedule={
+        "requeue-stale-pending-inspections": {
+            "task": "app.worker.tasks.sweep_stale_pending_inspections",
+            "schedule": 60.0,  # 초. 스위퍼 자체가 멱등(터미널 검사+Redlock)이라 짧아도 안전
+        },
+    },
 )
 

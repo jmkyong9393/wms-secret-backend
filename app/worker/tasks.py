@@ -414,37 +414,71 @@ def enqueue_hitl_certificate(return_job_id: str, hitl_inspector: str) -> None:
 from celery.signals import worker_ready
 
 
-@worker_ready.connect
-def requeue_stale_pending_inspections(**_kwargs) -> None:
+def _requeue_stale_pending_inspections() -> int:
     """
-    워커 기동 시 원장(return_jobs) 기반 미아 작업 복구 스위퍼.
+    원장(return_jobs) 기반 미아 작업 복구 스위퍼의 실제 구현.
 
     2026-08-05 카오스 테스트에서 발견: Redis 전송 계층은 메시지 수신과 unacked 등록
     사이가 비원자적이라, 하드킬 타이밍에 따라 브로커 메시지가 소실될 수 있다.
-    브로커는 잃어도 DB 원장에는 작업이 남으므로, 워커가 살아날 때마다
-    2분 이상 방치된 PENDING 작업을 재큐잉해 유실을 원천 봉쇄한다.
+    브로커는 잃어도 DB 원장에는 작업이 남으므로, 2분 이상 방치된 PENDING 작업을
+    재큐잉해 유실을 원천 봉쇄한다.
     (중복 전달은 Redlock과 태스크 내 터미널 상태 검사가 차단한다.)
+
+    반환값은 재큐잉한 건수다.
     """
     from datetime import timedelta
     from app.db.session import engine
     from sqlmodel import Session, select
 
     try:
-        cutoff = now_kst() - timedelta(minutes=2)
+        pending_cutoff = now_kst() - timedelta(minutes=2)
+        # PROCESSING은 정상 실행일 수 있으므로 task_time_limit(360초)을 확실히 넘긴
+        # 것만 미아로 본다. 처리 중 하드킬 + 브로커 재전달까지 소실된 조합(2026-08-12
+        # 카오스 v3에서 확인)은 PENDING 스윕만으로는 영원히 복구되지 않는다.
+        processing_cutoff = now_kst() - timedelta(minutes=8)
         with Session(engine) as session:
             stale = session.exec(
                 select(ReturnJob).where(
-                    ReturnJob.status == "PENDING",
-                    ReturnJob.created_at < cutoff,
+                    (
+                        (ReturnJob.status == "PENDING")
+                        & (ReturnJob.created_at < pending_cutoff)
+                    )
+                    | (
+                        (ReturnJob.status == "PROCESSING")
+                        & (ReturnJob.updated_at < processing_cutoff)
+                    )
                 )
             ).all()
         for job in stale:
             process_inspection.delay(str(job.id))
-            logger.warning(f"[Sweeper] 미아 PENDING 작업 재큐잉: return_job_id={job.id}")
+            logger.warning(
+                f"[Sweeper] 미아 {job.status} 작업 재큐잉: return_job_id={job.id}"
+            )
         if stale:
             logger.warning(f"[Sweeper] 총 {len(stale)}건 재큐잉 완료")
+        return len(stale)
     except Exception as e:
-        logger.error(f"[Sweeper] 미아 작업 스캔 실패 (기동은 계속): {e}")
+        logger.error(f"[Sweeper] 미아 작업 스캔 실패: {e}")
+        return 0
+
+
+@worker_ready.connect
+def requeue_stale_pending_inspections(**_kwargs) -> None:
+    """워커 기동 시 1회 즉시 스윕 (주기 실행과 별개로 초기 복구를 앞당긴다)."""
+    _requeue_stale_pending_inspections()
+
+
+@celery_app.task(name="app.worker.tasks.sweep_stale_pending_inspections")
+def sweep_stale_pending_inspections() -> int:
+    """
+    Celery Beat가 60초마다 호출하는 주기 스위퍼 (celery_app.beat_schedule 등록).
+
+    기동 시그널만으로는 부족하다 — 스위퍼 조건이 "2분 이상 방치"인데 워커가 막 재기동한
+    시점에는 방금 유실된 작업이 아직 2분 미만이라 걸리지 않는다. 두 조건이 서로를
+    무력화해 미아 작업이 다음 재기동 때까지 남는 문제를 2026-08-12 카오스 재실행에서
+    실측(25분 방치)했고, 그 대응으로 주기 실행을 추가했다.
+    """
+    return _requeue_stale_pending_inspections()
 
 
 @celery_app.task(
@@ -504,7 +538,21 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         if not lock.acquire(blocking=False):
             logger.warning(f"Task {celery_task_id} skipped. Job {return_job_id} is already locked by another worker.")
             return {"status": "SKIPPED", "reason": "LOCKED"}
-            
+
+        # 터미널 상태 가드 — Redlock은 '동시' 중복만 막는다. visibility_timeout 재전달이나
+        # 스위퍼 재큐잉으로 이미 완결된 건이 '순차적으로' 다시 도착하면 락은 비어 있으므로
+        # 그대로 재검수(이중 LLM 비용 + 랙 재배정)가 돌게 된다. 여기서 차단한다.
+        # (HITL_REQUIRED는 제외 — 관리자 결재 후 재검수 경로가 정상적으로 재진입한다.)
+        from app.db.session import engine
+        with Session(engine) as _s:
+            _job = _s.get(ReturnJob, parsed_return_job_id)
+            if _job is not None and _job.status in ("APPROVED", "REJECTED") and not was_hitl:
+                logger.warning(
+                    f"Task {celery_task_id} skipped. Job {return_job_id} already terminal "
+                    f"({_job.status}) - duplicate delivery or sweeper requeue."
+                )
+                return {"status": "SKIPPED", "reason": f"ALREADY_{_job.status}"}
+
         logger.info(f"process_inspection started. task_id={celery_task_id} return_job_id={return_job_id}")
 
         # 2. ReturnJob 조회 및 PROCESSING 상태 변경
