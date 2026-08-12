@@ -11,6 +11,7 @@ class LangGraphInspectionWrapper:
         image_urls: List[str],
         display_image_urls: List[str] = None,
         book_title: str = "",
+        book_category: str = "",
     ) -> Dict[str, Any]:
         # 실제 값들은 각 Agent가 실행되면서 채워짐.
         # 이미지 자체는 messages 텍스트에 URL 문자열로 embed하지 않는다 - Vision Agent가
@@ -26,6 +27,8 @@ class LangGraphInspectionWrapper:
             "display_image_urls": display_image_urls or image_urls,
             # Policy Agent의 수험서 -15점 단일 Cap 판정에 실제로 쓰이는 값 (기존에는 미전달로 항상 빈 문자열)
             "book_title": book_title,
+            # is_workbook 판정의 2차 신호 (book_title과 같은 이유로 State 미선언이라 버려지고 있었음)
+            "book_category": book_category,
 
             #Vision Agent가 채울 값
             "is_mint": None,
@@ -229,6 +232,7 @@ class LangGraphInspectionWrapper:
         image_urls: List[str],
         display_image_urls: List[str] = None,
         book_title: str = "",
+        book_category: str = "",
     ) -> Dict[str, Any]:
         from app.ai.supervisor import app_graph, build_supervisor_graph
 
@@ -239,6 +243,7 @@ class LangGraphInspectionWrapper:
             image_urls = image_urls,
             display_image_urls = display_image_urls,
             book_title = book_title,
+            book_category = book_category,
         )
         config = {
             "configurable" : {

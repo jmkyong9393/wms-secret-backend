@@ -1275,7 +1275,27 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
 
     defects = state.get("defects") or []
     book_title = str(state.get("book_title") or state.get("title") or "")
-    is_workbook = any(k in book_title for k in ["수험서", "문제집", "기출", "자격검정", "실전문제", "학습", "교재", "AIVLE", "SQL"])
+    book_category = str(state.get("book_category") or "")
+
+    # [수정 이력 2026-08-12] 제목 키워드 목록이 "수험서/문제집/기출/자격검정/실전문제/학습/
+    # 교재/AIVLE/SQL" 9개뿐이라, 실습문제가 실린 프로그래밍 입문서 다수가 걸리지 않았다
+    # (실측: "쉽게 풀어쓴 C언어 Express" - 손글씨 문제풀이 12건이 Cap 없이 건당 -10점씩
+    # 누적되어 REJECT 40점까지 떨어짐). 카탈로그 전수 조사 결과 "Do it!", "혼자 공부하는",
+    # "이것이 취업을 위한 코딩 테스트다" 등도 동일하게 누락돼 있었다.
+    # 키워드를 넓히고, category_type("컴퓨터/모바일" 등)을 2차 신호로 추가한다.
+    # 이 Cap은 DMG_INT_DOODLE(낙서)에만 적용되므로 오탐(비문제집을 문제집으로 오판)의
+    # 대가는 "낙서 감점이 15점에서 멈춘다" 정도이고, 누락의 대가(매입가 부당 하락)보다
+    # 훨씬 가볍다 - 넓게 잡는 쪽이 안전하다.
+    _WORKBOOK_TITLE_KEYWORDS = [
+        "수험서", "문제집", "기출", "자격검정", "실전문제", "학습", "교재", "AIVLE", "SQL",
+        "입문", "실습", "자습서", "코딩", "프로그래밍", "알고리즘", "예제", "테스트", "인터뷰",
+        "워크북", "연습", "풀이", "Do it", "혼자 공부하는", "풀어쓴", "with 클로드", "with 코드",
+    ]
+    _WORKBOOK_CATEGORY_KEYWORDS = ["컴퓨터", "IT", "프로그래밍", "자격증", "수험서"]
+    is_workbook = (
+        any(k in book_title for k in _WORKBOOK_TITLE_KEYWORDS)
+        or any(k in book_category for k in _WORKBOOK_CATEGORY_KEYWORDS)
+    )
 
     # 모서리 마모는 건수가 아니라 "책의 서로 다른 모서리 몇 곳이 닳았는가"로 센다.
     # (같은 구석이 앞표지·뒤표지·책등 컷에 모두 잡히면 물리적으로는 한 곳이다)
