@@ -75,42 +75,67 @@ def generate_fds_report(
     current_admin = Depends(master_only)
 ):
     """
-    작업자 신뢰성 및 모럴 해저드 방어를 위한 FDS (Fraud Detection System) 레포트
-    각 관리자(admin_id)별 평균 reviewDurationMs를 분석하여,
-    비정상적으로 빠르게 승인하는(Abuse) 패턴을 감지합니다.
+    작업자 신뢰성 및 모럴 해저드 방어를 위한 FDS 리포트 (관리자별 결재 행태 분석).
+
+    [수정 이력 2026-08-13] 종전에는 **전 기간 누적 평균 < 1초**로 판정했다. FDS 룰 엔진
+    R1과 같은 결함이 있었다: ① 과거 신중한 결재가 현재의 블라인드 결재를 영구히 희석하고,
+    ② 평균은 이상치 한 건에 무너진다(200초 결재 1건이 0.5초 결재 12건을 덮는다).
+    판정 기준을 `app/domains/fds/service.py`의 R1과 **동일한 정의**로 통일한다 —
+    같은 현상을 두 화면이 다르게 판정하면 어느 쪽도 신뢰할 수 없기 때문이다.
     """
-    # 1. 관리자별 통계 집계
-    statement = select(
-        AdminAuditLog.admin_id,
-        func.count(AdminAuditLog.id).label("total_reviews"),
-        func.avg(AdminAuditLog.review_duration_ms).label("avg_duration_ms"),
-        func.min(AdminAuditLog.review_duration_ms).label("min_duration_ms"),
-        func.max(AdminAuditLog.review_duration_ms).label("max_duration_ms")
-    ).where(
-        AdminAuditLog.review_duration_ms != None
-    ).group_by(AdminAuditLog.admin_id)
-    
-    stats = session.exec(statement).all()
-    
+    from app.domains.fds.service import (
+        BLIND_APPROVAL_MIN_FAST_RATIO,
+        BLIND_APPROVAL_MIN_SAMPLES,
+        BLIND_APPROVAL_THRESHOLD_MS,
+        BLIND_APPROVAL_WINDOW_DAYS,
+    )
+    from app.models.wms import now_kst
+    from datetime import timedelta
+
+    since = now_kst() - timedelta(days=BLIND_APPROVAL_WINDOW_DAYS)
+    rows = session.exec(
+        select(AdminAuditLog).where(
+            AdminAuditLog.review_duration_ms != None,
+            AdminAuditLog.created_at >= since,
+        )
+    ).all()
+
+    per_admin: Dict[Any, List[int]] = {}
+    for log in rows:
+        per_admin.setdefault(log.admin_id, []).append(int(log.review_duration_ms))
+
     report = []
-    SUSPICIOUS_THRESHOLD_MS = 1000 # 1초 미만의 평균 검수 시간은 비정상으로 간주
-    
-    for row in stats:
-        admin_id, total, avg_ms, min_ms, max_ms = row
-        is_suspicious = avg_ms < SUSPICIOUS_THRESHOLD_MS
-        
+    for admin_id, durations in per_admin.items():
+        total = len(durations)
+        fast = [d for d in durations if d < BLIND_APPROVAL_THRESHOLD_MS]
+        fast_ratio = len(fast) / total
+        # 표본이 적으면 판정하지 않는다 (우연히 빠른 1~2건으로 사람을 지목하지 않음)
+        is_suspicious = (
+            total >= BLIND_APPROVAL_MIN_SAMPLES
+            and fast_ratio >= BLIND_APPROVAL_MIN_FAST_RATIO
+        )
+
         report.append({
             "admin_id": str(admin_id),
             "total_reviews": total,
-            "avg_duration_ms": round(avg_ms, 2) if avg_ms else 0,
-            "min_duration_ms": min_ms,
-            "max_duration_ms": max_ms,
+            "fast_reviews": len(fast),
+            "fast_ratio_pct": round(fast_ratio * 100, 1),
+            "median_duration_ms": sorted(durations)[total // 2],
+            "min_duration_ms": min(durations),
+            "max_duration_ms": max(durations),
             "is_suspicious": is_suspicious,
-            "alert_message": "Warning: Average review time is below 1 second. High risk of blind approval." if is_suspicious else "Normal"
+            "alert_message": (
+                f"Warning: {len(fast)}/{total} reviews under "
+                f"{BLIND_APPROVAL_THRESHOLD_MS}ms. High risk of blind approval."
+                if is_suspicious else "Normal"
+            ),
         })
-        
+
     return {
         "status": "success",
-        "threshold_ms": SUSPICIOUS_THRESHOLD_MS,
-        "worker_stats": report
+        "window_days": BLIND_APPROVAL_WINDOW_DAYS,
+        "threshold_ms": BLIND_APPROVAL_THRESHOLD_MS,
+        "required_ratio_pct": round(BLIND_APPROVAL_MIN_FAST_RATIO * 100),
+        "min_samples": BLIND_APPROVAL_MIN_SAMPLES,
+        "worker_stats": report,
     }
