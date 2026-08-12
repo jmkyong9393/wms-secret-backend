@@ -146,8 +146,43 @@ jobs:
           # 2.98GB vs 임계 3.02GB). 셋을 같은 태그로 맞춰야 구 이미지를 회수할 수 있다.
           # 마이그레이션 Job이 같은 이미지를 이미 받아뒀다면 캐시가 살아 빠르지만, 다른
           # 노드에 스케줄되면 여기서 다시 pull 한다. 180초는 이 이미지 크기에 부족하다.
-          kubectl rollout status deployment/wms-api --timeout=600s
-          kubectl rollout status deployment/wms-beat --timeout=600s || true
+          # [2026-08-13] wms-ai-worker가 이 목록에서 빠져 있었다. set image는 하면서
+          # 롤아웃 확인은 안 해, **하루 종일 교착에 빠졌던 바로 그 디플로이**가 못 떠도
+          # 워크플로는 초록불이었다. beat만 `|| true`로 두는 이유는 Recreate 전략이라
+          # 짧은 다운타임이 정상이기 때문이고, api·worker는 실패를 실패로 드러낸다.
+          kubectl rollout status deployment/wms-api       --timeout=600s
+          kubectl rollout status deployment/wms-ai-worker --timeout=600s
+          kubectl rollout status deployment/wms-beat      --timeout=600s || true
+
+          # --- 배포 검증 (실제로 반영됐는가) ---
+          #
+          # [2026-08-13 신설] 오늘 배포 3건이 "조용히" 실패했다. 빌드·ECR 푸시는 성공했는데
+          # 클러스터는 옛 커밋에 멈춰 있었고, 그 사실을 사람이 "수정이 반영 안 된 느낌"으로
+          # 알아챘다. set image를 쏘는 것과 그것이 실제로 반영되는 것은 다른 사건인데,
+          # 파이프라인은 앞의 것만 하고 끝냈다.
+          #
+          # 실행 중인 파드의 이미지가 이번 SHA와 다르면 배포 실패로 확정한다.
+          # spec이 아니라 **status(실제 구동 중인 컨테이너)**를 보는 것이 핵심이다 -
+          # spec은 set image 직후 바뀌지만 파드는 안 떴을 수 있다.
+          echo "--- 배포 검증: 실행 중 이미지가 $SHORT 인가 ---"
+          VERIFY_FAILED=0
+          for D in wms-api wms-ai-worker wms-beat; do
+            RUNNING=$(kubectl get pods -l app=$D \
+              -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.status.containerStatuses[0].image}{"\n"}{end}' 2>/dev/null \
+              | sed 's|.*:||' | sort -u | tr '\n' ' ')
+            if echo "$RUNNING" | grep -q "$SHA"; then
+              echo "  OK   $D -> $SHORT"
+            else
+              echo "::error::$D 가 새 이미지로 뜨지 않았습니다 (실행 중: ${RUNNING:-없음} / 기대: $SHORT)"
+              kubectl get pods -l app=$D 2>&1 | tail -5
+              VERIFY_FAILED=1
+            fi
+          done
+          if [ "$VERIFY_FAILED" != "0" ]; then
+            echo "::error::배포 검증 실패 - 일부 구성요소가 구버전으로 남아 있습니다"
+            exit 1
+          fi
+          echo "배포 검증 통과: api/worker/beat 모두 $SHORT"
 
           # --- 구 이미지 회수 ---
           # 노드 디스크 회수는 kubelet imageGC(imageGCHighThreshold 70% / Low 55%)에 맡긴다.
@@ -155,3 +190,58 @@ jobs:
           # 노드로 가는 SSH 키가 없어(2026-08-12 실측: Permission denied) 동작하지 않는다.
           # 세 디플로이가 같은 태그를 쓰면 노드에 백엔드 이미지는 최대 2세대만 남고,
           # 다음 배포가 70%를 넘기는 시점에 GC가 구세대를 회수해 자연히 평형을 이룬다.
+
+    # --- 배포 실패 진단 (③ 실패 알림) ---
+    #
+    # [2026-08-13 신설] 오늘 배포 3건이 조용히 실패했고, 사람이 "수정이 반영 안 된 느낌"으로
+    # 알아챘다. 실패 자체보다 **실패가 눈에 띄지 않은 것**이 문제였다.
+    #
+    # 두 갈래로 접근한다.
+    #   (1) 노이즈 제거 — deploy-prod.yml이 매 푸시마다 찍어내던 실패 실행을 없앴다(ad4d0ca).
+    #       이제 빨간 X는 진짜 실패만 뜻하므로 GitHub 기본 실패 알림이 신호로 기능한다.
+    #   (2) 원인 즉시 노출 — 실패 시 로그를 파고들지 않아도 되도록, 클러스터 상태를
+    #       실행 요약(Job Summary) 화면에 바로 적는다. 오늘 원인 규명에 실제로 필요했던
+    #       것들(파드 상태/이미지 태그/최근 이벤트/노드 압박)을 그대로 담는다.
+    - name: 배포 실패 진단 요약
+      if: failure()
+      continue-on-error: true
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ env.EC2_HOST }}
+        username: ubuntu
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          echo "=== 파드 상태 ==="
+          kubectl get pods -o wide 2>&1 | head -20
+          echo ""
+          echo "=== 디플로이별 목표 이미지 vs 실행 이미지 ==="
+          for D in wms-api wms-ai-worker wms-beat; do
+            SPEC=$(kubectl get deploy $D -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | sed 's|.*:||' | cut -c1-12)
+            RUN=$(kubectl get pods -l app=$D -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.status.containerStatuses[0].image}{"\n"}{end}' 2>/dev/null | sed 's|.*:||' | cut -c1-12 | sort -u | tr '\n' ' ')
+            echo "$D: 목표=$SPEC 실행=${RUN:-없음}"
+          done
+          echo ""
+          echo "=== 노드 압박 (디스크/메모리) ==="
+          kubectl get nodes -o custom-columns='NODE:.metadata.name,DISK:.status.conditions[?(@.type=="DiskPressure")].status,MEM:.status.conditions[?(@.type=="MemoryPressure")].status' 2>&1
+          echo ""
+          echo "=== 최근 경고 이벤트 ==="
+          kubectl get events --sort-by=.lastTimestamp --field-selector type=Warning 2>/dev/null | tail -10
+
+    - name: 진단 결과를 실행 요약에 기록
+      if: failure()
+      continue-on-error: true
+      run: |
+        {
+          echo "## 배포 실패"
+          echo ""
+          echo "커밋: \`${{ github.sha }}\`"
+          echo ""
+          echo "위 **배포 실패 진단 요약** 스텝의 출력에 파드 상태·이미지 태그·노드 압박·경고 이벤트가 있습니다."
+          echo ""
+          echo "### 자주 나온 원인 (40번 블루프린트 트러블슈팅 표 참조)"
+          echo "- 노드 디스크 압박으로 마이그레이션 Job 파드가 축출 → Job Failed → 배포 중단"
+          echo "- 롤링 교체 중 메모리 부족 교착 (단일 replica + maxSurge>0)"
+          echo "- ECR 토큰 12시간 만료 → ImagePullBackOff"
+          echo ""
+          echo "빌드는 성공했는데 배포만 실패했는지 확인하려면 ECR에 태그가 있는지 보면 됩니다."
+        } >> "$GITHUB_STEP_SUMMARY"
