@@ -150,12 +150,25 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
 
         used_rows = []
         if pref in ("USED", "AUTO"):
-            used_rows = session.exec(
-                select(InventoryUsedItem)
-                .where(InventoryUsedItem.book_id == book.id)
-                .where(InventoryUsedItem.item_status == ItemStatusEnum.IN_STOCK.value)
-                .order_by(InventoryUsedItem.created_at.asc())
-            ).all()
+            # 주문이 특정 LPN을 지목했으면 그 개체를 그대로 집는다. 중고는 LPN마다
+            # 실물·등급·가격이 다르므로 같은 책의 다른 개체로 바꿔치면 안 된다
+            # (주문 화면에서 고른 책과 지시서에 찍힌 바코드가 어긋나 스캔이 실패한다).
+            pinned = session.get(InventoryUsedItem, oi.used_item_id) if oi.used_item_id else None
+            if pinned is not None and pinned.item_status == ItemStatusEnum.IN_STOCK.value:
+                used_rows = [pinned]
+            else:
+                if oi.used_item_id and pinned is not None:
+                    logger.warning(
+                        "주문이 지목한 LPN을 쓸 수 없어 FIFO로 대체한다 "
+                        f"(order_item={oi.id}, lpn={pinned.lpn_barcode}, status={pinned.item_status})"
+                    )
+                # 지목이 없는 주문(구 데이터)이나 그 사이 팔린 경우에만 FIFO로 대체한다.
+                used_rows = session.exec(
+                    select(InventoryUsedItem)
+                    .where(InventoryUsedItem.book_id == book.id)
+                    .where(InventoryUsedItem.item_status == ItemStatusEnum.IN_STOCK.value)
+                    .order_by(InventoryUsedItem.created_at.asc())
+                ).all()
 
         for used in used_rows:
             if remaining <= 0:

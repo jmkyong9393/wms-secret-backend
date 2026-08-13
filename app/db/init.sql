@@ -110,6 +110,9 @@ CREATE TABLE order_items (
     unit_price DECIMAL NOT NULL DEFAULT 0,
     -- 주문 시점 재고 유형 선호: "NEW" | "USED" | NULL(중고 우선 자동 할당)
     condition_pref VARCHAR(10),
+    -- 주문 시 지정된 중고 개체(LPN). 없으면 할당 엔진이 같은 책의 다른 LPN을 FIFO로 고른다.
+    -- FK는 inventory_used_items가 아래에서 생성된 뒤 ALTER로 건다 (생성 순서 때문).
+    used_item_id UUID,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -150,9 +153,16 @@ CREATE TABLE inventory_used_items (
     inspection_source VARCHAR(20) DEFAULT 'AI_AUTO',
     inspected_by VARCHAR(100),
     inspected_at TIMESTAMP,
+    -- LPN 선부착(라벨 발급) 시점 작업자 사번. 검수 접수 전 품목의 작업자 표시용.
+    prelabel_worker_id VARCHAR(64),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+-- order_items.used_item_id FK — order_items가 먼저 생성되므로 여기서 건다.
+ALTER TABLE order_items
+    ADD CONSTRAINT fk_order_items_used_item_id
+    FOREIGN KEY (used_item_id) REFERENCES inventory_used_items(id) ON DELETE SET NULL;
 
 -- 10. 통합 재고 원장 (inventory_logs)
 CREATE TABLE inventory_logs (
