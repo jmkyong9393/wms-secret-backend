@@ -1,0 +1,66 @@
+# RAG 지식베이스 인덱스 빌드 Job (→ ChromaDB 컬렉션 wms_policy_kb)
+#
+# 지식베이스는 두 축이다.
+#   ① policy_data_master.yaml     외부 법령·약관·플랫폼 운영정책  71청크
+#   ② WMS_표준_운영_정책서.md      내부 실행 기준 (조 단위)        39청크
+# 인덱스는 chroma-pvc에 영속되므로 최초 1회 + 규정 개정 시에만 돌리면 된다.
+#
+# [ConfigMap으로 넣는 이유]
+# 런타임 이미지는 /app/app, /app/alembic만 복사하고 docs/는 포함하지 않는다
+# (Dockerfile 최종 스테이지). 이미지를 재빌드하지 않고 규정집을 주입하기 위해
+# ConfigMap을 rag_builder가 기대하는 경로에 그대로 마운트한다.
+#
+# ConfigMap 생성 (YAML 63KB + 정책서 108KB — 1MB 한도 내):
+#   kubectl create configmap rag-policy-kb \
+#     --from-file=policy_data_master.yaml=docs/ai_knowledge_base/policy_data_master.yaml \
+#     --from-file=WMS_표준_운영_정책서.md=docs/ai_knowledge_base/WMS_표준_운영_정책서.md \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# 실행:
+#   kubectl delete job rag-index-build --ignore-not-found
+#   kubectl apply -f k8s/rag-index-job.yaml
+#
+# 규정집을 고쳤으면 args를 ["--rebuild"]로 바꿔 컬렉션을 지우고 다시 만든다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rag-index-build
+  namespace: default
+spec:
+  # 임베딩 API 호출이라 실패 시 무한 재시도하면 과금이 샌다.
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: builder
+        image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-2.amazonaws.com/nexus-backend-repo:latest
+        command: ["python", "-m", "app.core.rag_builder"]
+        # 증분 모드 — 컬렉션이 이미 있으면 스킵한다. 재빌드는 ["--rebuild"].
+        args: []
+        env:
+        - name: CHROMA_SERVER_HOST
+          value: "chroma-server.default.svc.cluster.local"
+        - name: CHROMA_SERVER_PORT
+          value: "8000"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: wms-backend-secret
+              key: OPENAI_API_KEY
+        volumeMounts:
+        - name: policy-kb
+          mountPath: /app/docs/ai_knowledge_base
+          readOnly: true
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: policy-kb
+        configMap:
+          name: rag-policy-kb

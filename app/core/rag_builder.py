@@ -24,12 +24,28 @@ try:
 except Exception:
     pass
 
+import re
+
 import yaml
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-YAML_PATH = BASE_DIR / "docs" / "ai_knowledge_base" / "policy_data_master.yaml"
+KB_DIR = BASE_DIR / "docs" / "ai_knowledge_base"
+YAML_PATH = KB_DIR / "policy_data_master.yaml"
+# ConfigMap 키는 ASCII만 허용되므로(k8s 제약) 배포 환경에서는 wms_sop.md로 마운트된다.
+SOP_CANDIDATES = ["WMS_표준_운영_정책서.md", "wms_sop.md"]
 
 EMBED_BATCH = 64
+
+# 정책 권위 레벨 -> authority_rank (WMS 표준 운영 정책서 제0조의2 ①).
+# 숫자가 낮을수록 규범적 우선순위가 높다. 충돌 조정용 값이며 검색 정렬 키가 아니다
+# (검색은 의미 유사도로 하고, rank는 판정 로그에 남겨 근거의 강제성을 밝힌다).
+AUTHORITY_RANK = {
+    "Statute": 1,
+    "Contract": 2,
+    "Policy": 3,
+    "Guideline": 4,
+    "Internal": 5,
+}
 
 
 def load_yaml_knowledge() -> List[Dict[str, Any]]:
@@ -55,10 +71,12 @@ def to_documents(data: List[Dict[str, Any]]):
         )
 
         # Chroma 메타데이터는 스칼라만 허용하므로 리스트(category)는 쉼표로 조인
+        level = item.get("authority_level") or ""
         metadata = {
             "chunk_id": chunk_id,
             "platform": item.get("platform") or "",
-            "authority_level": item.get("authority_level") or "",
+            "authority_level": level,
+            "authority_rank": AUTHORITY_RANK.get(level, 9),
             "category": ",".join(item.get("category") or []),
             "doc_title": item.get("doc_title") or "",
             "clause_ref": item.get("clause_ref") or "",
@@ -67,6 +85,86 @@ def to_documents(data: List[Dict[str, Any]]):
         ids.append(chunk_id)
         texts.append(content)
         metadatas.append(metadata)
+
+    return ids, texts, metadatas
+
+
+# 조문 제목 예: "### 제 3조. REJECT 하드 리미트" / "### 제 0조의2. 정책 권위 레벨 및 RAG 정렬 기준"
+_SOP_ARTICLE_RE = re.compile(r"^###\s+(제\s*\d+조(?:의\d+)?\.?\s*[^\n]*)$", re.MULTILINE)
+_SOP_CHAPTER_RE = re.compile(r"^##\s+(제\s*\d+\s*장(?:의\d+)?\.?\s*[^\n]*)$", re.MULTILINE)
+
+
+def load_sop_documents():
+    """
+    WMS 표준 운영 정책서(Markdown)를 조(條) 단위로 잘라 임베딩 대상으로 변환한다.
+
+    [왜 조 단위인가] 정책서는 1100줄 단문서라 통째로 임베딩하면 어떤 질의든 같은 벡터
+    하나에 걸려 조항을 특정할 수 없다. 반대로 문단 단위로 더 쪼개면 표(表)로 된 판정
+    기준이 행 단위로 흩어져 "제3조 REJECT 하드 리미트" 전체를 못 본다. 조가 판정 근거를
+    인용하는 최소 단위이므로 조 경계로 자른다.
+
+    [왜 authority_level=Internal인가] 이 문서는 정책서 제0조의1의 "내부 실행 기준"에
+    해당한다. 규범적 우선순위는 법령·약관보다 낮지만(rank 5), AI 임계값과 상태 전이를
+    실제로 규정하는 문서라 감점 근거 인용에서는 가장 자주 인용된다.
+    """
+    sop_path = next((KB_DIR / n for n in SOP_CANDIDATES if (KB_DIR / n).exists()), None)
+    if sop_path is None:
+        print(f"[RAG] 표준 운영 정책서를 찾을 수 없어 건너뜁니다: {KB_DIR}")
+        return [], [], []
+
+    text = sop_path.read_text(encoding="utf-8")
+
+    # 조문 시작 위치마다 소속 장(章)을 기록해 parent_context로 쓴다.
+    chapters = [(m.start(), m.group(1).strip()) for m in _SOP_CHAPTER_RE.finditer(text)]
+
+    def chapter_of(pos: int) -> str:
+        current = ""
+        for start, title in chapters:
+            if start < pos:
+                current = title
+            else:
+                break
+        return current
+
+    matches = list(_SOP_ARTICLE_RE.finditer(text))
+    ids, texts, metadatas = [], [], []
+
+    for i, m in enumerate(matches):
+        heading = m.group(1).strip().rstrip(".")
+        body_start = m.end()
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[body_start:body_end].strip()
+        if not body:
+            continue
+
+        # "제 3조. REJECT 하드 리미트" -> clause_ref "제3조", 제목은 별도 보관
+        num_match = re.match(r"제\s*(\d+)조(?:의(\d+))?\.?\s*(.*)", heading)
+        if num_match:
+            art, sub, title = num_match.group(1), num_match.group(2), num_match.group(3).strip()
+            clause_ref = f"제{art}조" + (f"의{sub}" if sub else "")
+            chunk_id = f"wms_sop_art{art}" + (f"_{sub}" if sub else "")
+        else:
+            clause_ref, title, chunk_id = heading, heading, f"wms_sop_{i}"
+
+        chapter = chapter_of(m.start())
+
+        content = (
+            f"[WMS 표준 운영 정책서 - {clause_ref} {title}]\n"
+            f"배경 문맥: {chapter}\n"
+            f"상세 내용: {body}"
+        )
+
+        ids.append(chunk_id)
+        texts.append(content)
+        metadatas.append({
+            "chunk_id": chunk_id,
+            "platform": "Common",
+            "authority_level": "Internal",
+            "authority_rank": AUTHORITY_RANK["Internal"],
+            "category": chapter,
+            "doc_title": "WMS 표준 운영 정책서",
+            "clause_ref": f"{clause_ref} {title}".strip(),
+        })
 
     return ids, texts, metadatas
 
@@ -98,8 +196,21 @@ def build_vector_db(rebuild: bool = False):
         metadata={"hnsw:space": "cosine"},
     )
 
+    # 지식베이스는 두 축이다.
+    #   ① policy_data_master.yaml - 외부 법령·약관·플랫폼 운영정책 (규범적 근거)
+    #   ② WMS_표준_운영_정책서.md  - 내부 실행 기준 (AI 임계값·상태 전이·SLA)
+    # 감점 근거 인용은 대부분 ②를 가리키고, ①은 반품 가능 여부·비용 부담 같은
+    # 거래 조건을 다룰 때 인용된다.
     data = load_yaml_knowledge()
     ids, texts, metadatas = to_documents(data)
+
+    sop_ids, sop_texts, sop_metas = load_sop_documents()
+    if sop_ids:
+        print(f"표준 운영 정책서 {len(sop_ids)}개 조문을 인덱스에 포함합니다.")
+        ids += sop_ids
+        texts += sop_texts
+        metadatas += sop_metas
+
     existing = collection.count()
 
     if existing >= len(ids) and not rebuild:

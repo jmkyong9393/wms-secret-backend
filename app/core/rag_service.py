@@ -139,6 +139,9 @@ def search_policy(query: str, k: int = 3, where: Optional[Dict[str, Any]] = None
             "doc_title": md.get("doc_title"),
             "clause_ref": md.get("clause_ref"),
             "authority_level": md.get("authority_level"),
+            # 규범적 강제성 순위 (1=법령 ... 5=내부 실행 기준). 정책서 제0조의2 ①.
+            # 검색 정렬에는 쓰지 않는다 - 조항 간 충돌 조정과 판정 로그 기록용이다.
+            "authority_rank": md.get("authority_rank"),
             "category": md.get("category"),
             "content": doc,
             "similarity": round(similarity, 4),
@@ -188,6 +191,7 @@ def cite_deduction_basis(defect_type: str, label: str = "", min_similarity: floa
         "doc_title": top["doc_title"],
         "clause_ref": top["clause_ref"],
         "authority_level": top["authority_level"],
+        "authority_rank": top.get("authority_rank"),
         # 상세화면/보증서에 그대로 노출되는 근거 문구
         "excerpt": (top["content"] or "").split("상세 내용:")[-1].strip()[:220],
         "similarity": top["similarity"],
