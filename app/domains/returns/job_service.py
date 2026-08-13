@@ -87,6 +87,7 @@ def save_inspection_result(
         ai_result: Dict[str,Any],
         final_status: str,
         extra_logs: Dict[str, Any],
+        latency_ms: Optional[int] = None,
 ) -> ReturnJob:
     
     with Session(engine) as session:
@@ -119,7 +120,13 @@ def save_inspection_result(
         else:
             job.status = final_status
         job.updated_at = now_kst()
-     
+
+        # 워커가 이 건을 집어 판정을 저장하기까지 걸린 시간. 큐 대기는 포함하지 않는다.
+        # 종전에는 컬럼만 선언돼 있고 채우는 코드가 없어 전 건이 NULL이었고, 검수 소요를
+        # created_at~updated_at 차이로 추정할 수밖에 없었다(HITL 대기까지 섞이는 값).
+        if latency_ms is not None:
+            job.latency_ms = latency_ms
+
         # 최종 DB 저장
         session.add(job)
         session.commit()

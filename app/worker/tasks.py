@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from app.models.wms import now_kst
@@ -526,7 +527,11 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
     """
     celery_task_id = self.request.id
     parsed_return_job_id = uuid.UUID(return_job_id)
-    
+
+    # 검수 소요 계측 시작. 워커가 이 건을 집은 시점부터 재므로 큐 대기는 빠진다
+    # (큐 대기까지 넣으면 부하에 따라 값이 요동쳐 "권당 검수 시간"의 의미가 사라진다).
+    _t0 = time.perf_counter()
+
     # 1. 분산 락(Distributed Lock) 획득
     # 동일한 return_job_id 에 대한 작업을 다른 워커 파드가 동시에 가져가지 못하도록 락을 확보함.
     # auto_release_time 을 300초(5분)로 두어 워커가 크래시 나더라도 락이 자연 해제되게 방어 설계.
@@ -659,6 +664,7 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
             ai_result=ai_result,
             final_status=final_status,
             extra_logs=extra_logs,
+            latency_ms=int((time.perf_counter() - _t0) * 1000),
         )
 
         # Redis Pub/Sub에 최종 상태 이벤트 발행
