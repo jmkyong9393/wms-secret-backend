@@ -4,6 +4,7 @@ Detector 노드 - WBF 3-YOLO 앙상블 사전탐지.
 LLM을 쓰지 않는 결정론적 노드다. 결함 후보를 좌표와 함께 뽑아 Vision Agent에게
 제보로 넘긴다. 판정 권한은 없다 (프리즈 규정: Detector = 결정론적, VLM = 의미 판독).
 """
+import json
 import os
 from typing import Any, Dict, List
 

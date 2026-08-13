@@ -9,7 +9,7 @@ Stage B는 부가 검증이므로 fail-open이다. LLM 장애 시 Stage A 결과
 import json
 from typing import Any, Dict, List, Optional
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.ai.state import WMSInspectionState
 from app.ai.agents.common import DEFECT_TRANSLATION_MAP
