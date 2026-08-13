@@ -77,6 +77,15 @@ class WMSInspectionState(TypedDict):
     # "흠이 없다"가 아니라 "판독하지 못했다"이므로 무결점 등급을 주지 않는 근거로 쓴다.
     score_unverified: Optional[bool]
 
+    # 2-B. Policy Agent Stage B (거래 처분 판단 - LLM + RAG)
+    # [경계 규정 - CRITICAL] Stage B는 위의 ubci_score / suggested_grade에 절대 쓰지 않는다.
+    # 점수는 Stage A의 결정론적 매트릭스가 확정한 뒤이며, Stage B는 "반품을 받아줄 것인가,
+    # 배송비는 누가 무는가" 같은 거래 처분만 판단한다. 두 판단이 섞이면 매입가가
+    # 비결정적으로 변해 감사 추적성이 깨진다.
+    # {return_accepted, shipping_fee_bearer, liability, refund_ratio,
+    #  cited_clauses[], requires_human, rationale}
+    return_policy: Optional[dict]
+
     # 3. Critic Agent (교차 검증 및 환각 방어)
     reason_code: Optional[ReasonCode] # 검증 결과 코드 (OK면 통과)
     repair_directive: Optional[str]   # Policy가 다시 계산해야 할 때 주는 수정 지시서
