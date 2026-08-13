@@ -21,6 +21,7 @@ from app.domains.orders.service import (
 )
 from app.domains.orders.picking import (
     create_picking_instruction,
+    cancel_picking_instruction,
     serialize_instruction,
     publish_outbound_notification,
 )
@@ -292,6 +293,18 @@ def accept_picking_instruction(instruction_id: UUID, req: AcceptInstructionReque
     instruction.updated_at = now_kst()
     session.add(instruction)
     session.commit()
+    return serialize_instruction(session, instruction)
+
+@router.post("/picking-instructions/{instruction_id}/cancel")
+def cancel_instruction(instruction_id: UUID, session: Session = Depends(get_db)):
+    """admin의 수락 대기(PENDING) 지시서 취소. 주문 상태·중고 재고 할당을 되돌린 뒤 CANCELLED로 전환."""
+    instruction = session.get(PickingInstruction, instruction_id)
+    if not instruction:
+        raise HTTPException(404, "피킹 지시서를 찾을 수 없습니다.")
+    if instruction.status != "PENDING":
+        raise HTTPException(409, f"수락 대기 상태만 취소할 수 있습니다. (현재: {instruction.status})")
+
+    instruction = cancel_picking_instruction(session, instruction)
     return serialize_instruction(session, instruction)
 
 class PickingScanRequest(BaseModel):
