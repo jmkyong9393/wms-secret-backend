@@ -788,7 +788,11 @@ def fetch_aladin_real_packing_spec(isbn: str) -> dict:
     return {}
 
 @router.get("/available-books")
-def get_available_books(response: Response, session: Session = Depends(get_db)):
+def get_available_books(
+    response: Response,
+    instruction_id: Optional[UUID] = Query(None, description="이 지시서에 할당된 중고 LPN도 후보에 포함"),
+    session: Session = Depends(get_db),
+):
     """
     3D Bin Packing 및 Dynamic Pricing 시뮬레이션용 DB 실재고 도서
     - 1순위: DB books 테이블의 신품 도서 44권 (LPN 미발급, Zone A)
@@ -844,15 +848,31 @@ def get_available_books(response: Response, session: Session = Depends(get_db)):
     from sqlalchemy import or_
 
     SELLABLE = [ItemStatusEnum.IN_STOCK.value]
+    conditions = [
+        InventoryUsedItem.item_status.is_(None),
+        InventoryUsedItem.item_status.in_(SELLABLE),
+    ]
+
+    # 지시서 발행 시 중고 LPN은 ALLOCATED로 잠기므로 판매 가능 목록에서 빠진다.
+    # 출고 화면이 그 지시서를 열 때는 잠긴 개체도 후보에 넣어야 한다 -
+    # 아니면 중고 라인이 조용히 누락된 채 신품만으로 가격이 산정된다.
+    if instruction_id:
+        allocated_ids = {
+            row.used_item_id
+            for row in session.exec(
+                select(PickingInstructionItem).where(
+                    PickingInstructionItem.instruction_id == instruction_id
+                )
+            ).all()
+            if row.used_item_id
+        }
+        if allocated_ids:
+            conditions.append(InventoryUsedItem.id.in_(allocated_ids))
+
     used_stmt = (
         select(InventoryUsedItem, Book)
         .join(Book, InventoryUsedItem.book_id == Book.id)
-        .where(
-            or_(
-                InventoryUsedItem.item_status.is_(None),
-                InventoryUsedItem.item_status.in_(SELLABLE),
-            )
-        )
+        .where(or_(*conditions))
     )
     used_results = session.exec(used_stmt).all()
     
