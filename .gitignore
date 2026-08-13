@@ -75,3 +75,13 @@ ai_knowledge_base/chroma_db/
 .claude
 # VLM 크롭 디버그 산출물 (WMS_SAVE_VLM_CROPS)
 app/ai/_vlm_crops/
+
+# 프린트 브리지 로컬 설정 (백엔드 계정 비밀번호 포함 - 커밋 금지)
+scripts/bridge_config.json
+
+# 라이브 DB 읽기전용 조회용 접속 문자열 (비밀번호 포함 - 커밋 금지)
+.env.readonly
+
+# PyInstaller 빌드 산출물 (print_bridge.exe 등 - 20MB, 커밋 금지)
+scripts/_build/
+scripts/_dist/
