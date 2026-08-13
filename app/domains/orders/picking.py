@@ -334,6 +334,37 @@ def create_picking_instruction(session: Session, order: Order, use_llm: bool = T
     return instruction
 
 
+def cancel_picking_instruction(session: Session, instruction: PickingInstruction) -> PickingInstruction:
+    """
+    PENDING(수락 대기) 지시서 취소. 행을 지우지 않고 CANCELLED로 소프트 취소한다 —
+    하드 삭제하면 create_picking_instruction이 걸어둔 부수 효과(주문 상태 PICKING,
+    중고 라인 재고 ALLOCATED 마킹)가 되돌아오지 않아 주문이 붕 뜨고 책이 영구 잠긴다.
+    """
+    items = session.exec(
+        select(PickingInstructionItem).where(PickingInstructionItem.instruction_id == instruction.id)
+    ).all()
+    for it in items:
+        if it.stock_type == "USED" and it.used_item_id:
+            used = session.get(InventoryUsedItem, it.used_item_id)
+            if used:
+                used.item_status = ItemStatusEnum.IN_STOCK.value
+                used.updated_at = now_kst()
+                session.add(used)
+
+    order = session.get(Order, instruction.order_id)
+    if order:
+        order.status = "PENDING"
+        order.updated_at = now_kst()
+        session.add(order)
+
+    instruction.status = "CANCELLED"
+    instruction.updated_at = now_kst()
+    session.add(instruction)
+    session.commit()
+    session.refresh(instruction)
+    return instruction
+
+
 def serialize_instruction(session: Session, instruction: PickingInstruction) -> Dict[str, Any]:
     """지시서 헤더 + 라인 아이템 직렬화 (프론트 공용 응답 포맷)"""
     items = session.exec(
