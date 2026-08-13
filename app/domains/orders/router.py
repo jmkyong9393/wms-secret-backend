@@ -18,6 +18,21 @@ from app.domains.orders.service import (
     calculate_price_elasticity_revenue_optimization,
     calculate_line_price,
     calculate_order_pricing,
+    # [2026-08-14] 라우터에 있던 업무 규칙을 service로 이관. 라우터는 HTTP 입출력만 맡는다.
+    fetch_aladin_real_packing_spec,
+    _issue_waybill_no,
+    _resolve_order_lines,
+)
+from app.domains.orders.schemas import (
+    AcceptInstructionRequest,
+    CompletePackingRequest,
+    ConfirmPackingRequest,
+    CreateOrderRequest,
+    DynamicPriceRequest,
+    MultiDynamicPriceRequest,
+    OrderLineRequest,
+    OutboundCompleteRequest,
+    PickingScanRequest,
 )
 from app.domains.orders.picking import (
     create_picking_instruction,
@@ -81,67 +96,6 @@ def create_order(
 # ==========================================
 # Order → AI 피킹 지시서 → 출고 파이프라인
 # ==========================================
-
-class OrderLineRequest(BaseModel):
-    # available-books 응답의 id 체계 그대로 수신: "NEW-BOOK-<uuid>"(신품) 또는 중고 item uuid
-    id: str
-    quantity: int = 1
-
-class CreateOrderRequest(BaseModel):
-    customer_name: str = "교보문고 B2B 지점"
-    order_type: str = "B2B_ORDER"
-    items: List[OrderLineRequest]
-    auto_picking_instruction: bool = True  # 주문 즉시 AI 피킹지시서 발행 여부
-
-def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> List[Dict[str, Any]]:
-    """
-    프론트 선택 항목을 (book, is_new, quantity, ubci, days) 라인으로 해석.
-    같은 book의 중고 LPN 여러 개는 개별 라인(각 1권)으로 유지해 LPN별 UBCI 가격을 보존한다.
-    """
-    lines: List[Dict[str, Any]] = []
-    now = now_kst()
-    for line in items:
-        qty = max(1, line.quantity)
-        if line.id.startswith("NEW-BOOK-"):
-            book = session.get(Book, UUID(line.id.replace("NEW-BOOK-", "")))
-            if not book:
-                raise HTTPException(404, f"신품 도서를 찾을 수 없습니다: {line.id}")
-
-            # [2026-08-10 신설] 신품 재고 검증. 중고는 아래 분기에서 IN_STOCK을 확인하는데
-            # 신품에는 검증이 전혀 없어, 재고 0인 책도 주문에 실리고 피킹 지시서까지 발행됐다.
-            # 신품은 발주로 채울 수 있으므로 주문 자체를 막지는 않되(발주 제안이 자동 생성된다),
-            # 보유 수량을 넘는 요청은 여기서 거절한다 - 없는 물건을 팔기로 확정할 수는 없다.
-            from app.domains.inventory.service import get_new_stock_qty
-
-            available = get_new_stock_qty(session, book.id)
-            if qty > available:
-                raise HTTPException(
-                    409,
-                    f"'{book.title}' 재고 부족: 요청 {qty}권 / 가용 {available}권. "
-                    f"발주(SCM) 승인으로 재고를 채운 뒤 주문해 주세요.",
-                )
-
-            lines.append({
-                "book": book, "is_new": True, "quantity": qty,
-                "ubci_score": None, "days_in_inventory": 1,
-                "used_item": None,
-            })
-        else:
-            used = session.get(InventoryUsedItem, UUID(line.id))
-            if not used:
-                raise HTTPException(404, f"중고 재고(LPN)를 찾을 수 없습니다: {line.id}")
-            if used.item_status != ItemStatusEnum.IN_STOCK.value:
-                raise HTTPException(409, f"이미 할당/출고된 LPN입니다: {used.lpn_barcode}")
-            book = session.get(Book, used.book_id)
-            days = max(1, (now - used.created_at).days) if used.created_at else 120
-            lines.append({
-                "book": book, "is_new": False, "quantity": 1,
-                "ubci_score": used.ubci_score, "days_in_inventory": days,
-                # 고른 LPN을 그대로 들고 간다. 여기서 흘리면 할당 엔진이 같은 책의
-                # 다른 개체를 FIFO로 다시 골라, 주문한 책과 다른 책이 출고된다.
-                "used_item": used,
-            })
-    return lines
 
 @router.post("/create-with-items", status_code=status.HTTP_201_CREATED)
 def create_order_with_items(req: CreateOrderRequest, session: Session = Depends(get_db)):
@@ -286,9 +240,6 @@ def issue_picking_instruction(order_id: UUID, session: Session = Depends(get_db)
         raise HTTPException(409, str(e))
     return serialize_instruction(session, instruction)
 
-class AcceptInstructionRequest(BaseModel):
-    worker_id: str = "WM2608001"
-
 @router.post("/picking-instructions/{instruction_id}/accept")
 def accept_picking_instruction(instruction_id: UUID, req: AcceptInstructionRequest, session: Session = Depends(get_db)):
     """worker의 피킹 지시서 수락 (PENDING → ACCEPTED). 작업 배정 기록을 남긴다."""
@@ -322,11 +273,6 @@ def delete_instruction(instruction_id: UUID, session: Session = Depends(get_db))
     instruction_no = instruction.instruction_no
     purged_order = delete_picking_instruction(session, instruction)
     return {"deleted": True, "instruction_no": instruction_no, "order_purged": purged_order}
-
-class PickingScanRequest(BaseModel):
-    barcode: str                      # LPN(중고) 또는 13자리 ISBN(신품)
-    worker_id: str = "WM2608001"
-    instruction_id: Optional[UUID] = None  # 미지정 시 활성 지시서 전체에서 매칭
 
 @router.post("/picking-scan")
 def picking_scan(req: PickingScanRequest, session: Session = Depends(get_db)):
@@ -411,17 +357,6 @@ def picking_scan(req: PickingScanRequest, session: Session = Depends(get_db)):
         "all_picked": instruction.status == "PICKED",
         "message": f"[{target.title}] 피킹 검증 완료 ({instruction.picked_items}/{instruction.total_items}권)",
     }
-
-class ConfirmPackingRequest(BaseModel):
-    box_id: str
-    cushion_name: Optional[str] = None
-    force: bool = False  # True면 전량 피킹 전에도 확정 허용 (데모 유연성)
-
-def _issue_waybill_no(session: Session) -> str:
-    issued = session.exec(
-        select(PickingInstruction).where(PickingInstruction.cj_waybill_no.is_not(None))
-    ).all()
-    return f"CJ-2026-{datetime.now().strftime('%m%d')}-{len(issued) + 1:04d}"
 
 @router.post("/picking-instructions/{instruction_id}/confirm-packing")
 def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: Session = Depends(get_db)):
@@ -521,9 +456,6 @@ def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: S
         "message": f"패킹 확정 및 CJ 송장 [{waybill}] 발급, DB 재고 차감 완료 - worker 포장 대기",
     }
 
-class CompletePackingRequest(BaseModel):
-    worker_id: str = "WM2608001"
-
 @router.post("/picking-instructions/{instruction_id}/complete-packing")
 def complete_packing(instruction_id: UUID, req: CompletePackingRequest, session: Session = Depends(get_db)):
     """
@@ -616,11 +548,6 @@ def ship_outbound_cj_waybill(order_id: str, session: Session = Depends(get_db)):
         "message": f"CJ대한통운 송장 [{cj_waybill_no}] 발급 완료 및 DB 재고 출고 차감 처리 완공"
     }
 
-class OutboundCompleteRequest(BaseModel):
-    lpn_barcode: str
-    box_type: str
-    worker_id: Optional[str] = "WM2608001"
-
 @router.post("/outbound/complete")
 def complete_outbound(req: OutboundCompleteRequest, session: Session = Depends(get_db)):
     """
@@ -662,17 +589,6 @@ def process_order_picking(
         "message": f"주문건 {order_id}의 피킹 작업이 완료되었습니다.",
         "updated_at": now_kst().isoformat()
     }
-
-class DynamicPriceRequest(BaseModel):
-    list_price: float = 35000
-    ubci_score: float = 78
-    days_in_inventory: int = 120
-    category: str = "Novel"
-    title: Optional[str] = None
-    isbn: Optional[str] = None
-
-class MultiDynamicPriceRequest(BaseModel):
-    items: List[DynamicPriceRequest]
 
 @router.post("/calculate-dynamic-price")
 def calculate_dynamic_price(req: Dict[str, Any]):
@@ -743,50 +659,6 @@ from functools import lru_cache
 from app.models.wms import now_kst
 
 @lru_cache(maxsize=512)
-def fetch_aladin_real_packing_spec(isbn: str) -> dict:
-    """
-    1순위: 알라딘 TTB Open API에서 실제 물리 규격(가로, 세로, 두께, 무게, 페이지) 최우선 조회 (0ms 메모리 캐시 파이프라인)
-    """
-    import urllib.request
-    import json
-    from app.core.config import settings
-
-    # [수정 이력] 이 키는 설정값(settings.ALADIN_TTB_KEY)과 다른 하드코딩된 키를 쓰고 있어
-    # 알라딘 API 호출이 조용히 실패(빈 dict 폴백)하고 있었다 - 실제 발급된 키로 교정.
-    ttb_key = settings.ALADIN_TTB_KEY
-    # http는 알라딘 서버가 https로 301 리다이렉트한다 - 리다이렉트 왕복 지연(0.8s 타임아웃 내
-    # 예산 초과 위험)을 피하기 위해 https를 직접 호출한다.
-    url = f"https://www.aladin.co.kr/ttb/api/ItemLookUp.aspx?ttbkey={ttb_key}&itemIdType=ISBN13&ItemId={isbn}&output=js&Version=20130701&OptResult=packing"
-    
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=0.8) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            items = data.get("item", [])
-            if items:
-                item = items[0]
-                sub_info = item.get("subInfo", {})
-                packing = sub_info.get("packing", {})
-                
-                size_w = packing.get("sizeWidth")
-                size_d = packing.get("sizeHeight")
-                size_h = packing.get("sizeDepth")
-                weight = packing.get("weight")
-                item_page = sub_info.get("itemPage") or item.get("itemPage")
-                
-                res = {}
-                if size_w and int(size_w) > 0: res["width_mm"] = float(size_w)
-                if size_d and int(size_d) > 0: res["depth_mm"] = float(size_d)
-                if size_h and int(size_h) > 0: res["thickness_mm"] = float(size_h)
-                if weight and int(weight) > 0: res["weight_g"] = float(weight)
-                if item_page and int(item_page) > 0: res["page_count"] = int(item_page)
-                if res:
-                    res["source"] = "ALADIN_API_1ST_PRIORITY"
-                    return res
-    except Exception:
-        pass
-    return {}
-
 @router.get("/available-books")
 def get_available_books(
     response: Response,
