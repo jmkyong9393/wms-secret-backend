@@ -300,7 +300,10 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "track": resolve_track(getattr(item, "inspection_source", None)),
             # 구 필드는 화면 호환을 위해 유지한다 (등급 확정 주체 서술).
             "worker_id": resolve_inspector(item, None)["label"],
-            "date": to_kst_str(item.created_at)
+            # 입고 일시 = 최종 검수 확정 시각. HITL 결재·재검수로 등급이 바뀌면 이 값도 갱신된다
+            # (row 생성 시각인 created_at은 AI 판정 시점에 고정되어 결재 시각을 반영하지 못한다).
+            # 상세 응답과 동일한 기준을 쓴다 - 목록과 상세가 다른 시각을 보이면 안 된다.
+            "date": to_kst_str(item.inspected_at or item.created_at)
         })
 
     return output

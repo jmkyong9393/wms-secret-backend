@@ -347,9 +347,9 @@ def get_pending_hitl_tasks(
         select(ReturnJob, Book)
         .where(ReturnJob.status.in_([JobStatusEnum.HITL_REQUIRED, JobStatusEnum.PENDING]))
         .outerjoin(Book, ReturnJob.book_id == Book.id)
-        # 처리(이관/회수) 시간 역순. 종전에는 order_by가 없어 DB 임의 순서(조인 특성상
-        # 사실상 도서명 비슷한 순)로 나왔다 - 방금 회수한 건이 목록 중간에 파묻혔다.
-        .order_by(ReturnJob.updated_at.desc())
+        # 이관/회수 시각 역순 - 방금 올라온 건이 맨 위. created_at을 보조 키로 둬서
+        # 같은 시각에 일괄 생성된 건들도 순서가 흔들리지 않게 한다(동률이면 DB 임의 순서가 된다).
+        .order_by(ReturnJob.updated_at.desc(), ReturnJob.created_at.desc())
     )
     results = session.exec(statement).all()
 
