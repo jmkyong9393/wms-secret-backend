@@ -2,20 +2,13 @@
 ====================================================================
 [Nexus AI Engine] Restock 판정 그래프 (AI 자동 대체 발주 제안)
 
-입고 검수 반려(매입 불가)로 판매 기회가 소실되거나 저재고가 감지되면,
-3단계 판정 그래프를 거쳐 order_proposals 테이블에 PENDING 제안 카드를 적재한다.
+입고 검수 반려(매입 불가)로 판매 기회가 소실되거나 저재고가 감지되면, 3단계 판정 그래프를 거쳐 order_proposals 테이블에 PENDING 제안 카드를 적재한다.
 
-  ① Collector (결정론적): 30일 출고량(InventoryLog OUTBOUND), 가용 재고
-     (신품 virtual_stock + 중고 IN_STOCK), 반려 수량을 수집하고 안전재고
-     산식으로 기준 수량(baseline)을 계산한다.
-  ② Restock Agent (gpt-4o-mini): 수집 데이터와 baseline을 앵커로 받아
-     최적 수량·긴급도·사유를 구조화 출력(with_structured_output)으로 제안한다.
-  ③ Validator (결정론적 게이트): 제안 수량을 baseline 기준 상한으로 클램프.
-     LLM 장애 시 baseline 그대로 fail-open (ai_source=FALLBACK_RULE).
+  ① Collector (결정론적): 30일 출고량(InventoryLog OUTBOUND), 가용 재고(신품 virtual_stock + 중고 IN_STOCK), 반려 수량을 수집하고 안전재고 산식으로 기준 수량(baseline)을 계산한다.
+  ② Restock Agent (gpt-4o-mini): 수집 데이터와 baseline을 앵커로 받아 최적 수량·긴급도·사유를 구조화 출력(with_structured_output)으로 제안한다.
+  ③ Validator (결정론적 게이트): 제안 수량을 baseline 기준 상한으로 클램프. LLM 장애 시 baseline 그대로 fail-open (ai_source=FALLBACK_RULE).
 
-[아키텍처 원칙] LLM은 "제안"까지만 한다. 실제 발주(Order AUTO_PO)와 신품
-재고 편입은 관리자가 SCM 칸반에서 승인하는 시점에 POService가 집행한다 -
-검수 파이프라인의 판정(Agent)/집행(Worker) 분리 문법과 동일하다.
+[아키텍처 원칙] LLM은 "제안"까지만 한다. 실제 발주(Order AUTO_PO)와 신품 재고 편입은 관리자가 SCM 칸반에서 승인하는 시점에 POService가 집행한다. 검수 파이프라인의 판정(Agent)/집행(Worker) 분리 문법과 동일하다.
 ====================================================================
 """
 
@@ -49,16 +42,10 @@ logger = logging.getLogger(__name__)
 LEAD_TIME_DAYS = 7      # 도매처 발주 → 입고 리드타임 가정
 SAFETY_DAYS = 7         # 리드타임 외 추가 안전 버퍼 (일 단위)
 WHOLESALE_RATE = 0.6    # 도매 매입가 = 정가의 60%
-# 판매 이력이 없어도 유지할 최소 안전 재고선(min_safety_stock)은 더 이상 여기 상수가 아니다.
-# [2026-08-09 리팩토링] 조장 지시로 15 → 3까지는 코드 상수로 고쳤으나(카탈로그 424종 실측
-# 기준 재고 중앙값 5권, 15는 97.6%를 미달 판정해 alert fatigue 유발 - 3이면 하위 20%만
-# 걸림), po/service.py의 저재고 스캔 대상 선정 기준(SAFETY_STOCK_THRESHOLD, 당시 5)과
-# 서로 다른 값으로 따로 노는 걸 뒤늦게 발견했다. 둘 다 "안전재고"라는 같은 개념을 가리켜야
-# 하므로 system_settings 테이블의 단일 값(safety_stock_threshold)으로 통합했다 -
-# collect_restock_context()가 매 호출마다 조회한다. GET/PUT /api/v1/admin/settings로 조회/변경.
+# po/service.py의 저재고 스캔 대상 선정 기준(SAFETY_STOCK_THRESHOLD, 당시 5)과 서로 다른 값으로 따로 노는 걸 뒤늦게 발견했다.
+# 둘 다 "안전재고"라는 같은 개념을 가리켜야 하므로 system_settings 테이블의 단일 값(safety_stock_threshold)으로 통합했다 - collect_restock_context()가 매 호출마다 조회한다. GET/PUT /api/v1/admin/settings로 조회/변경.
 
-# 사유 문장 생성+수량 제안 전용 LLM. 비용 최적화 원칙에 따라 gpt-4o-mini 고정
-# (프리즈 규정 대상인 검수 파이프라인 밖의 도메인 로직이지만 동일 원칙을 따른다).
+# 사유 문장 생성+수량 제안 전용 LLM. 비용 최적화 원칙에 따라 gpt-4o-mini 고정 사용
 try:
     _restock_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 except Exception:
@@ -112,8 +99,7 @@ def collect_restock_context(
 
     min_safety_stock = get_int_setting(db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD)
 
-    # 안전재고 산식: (리드타임+버퍼) 기간의 예상 수요를 커버할 목표 재고를 잡고,
-    # 부족분 + 이번 반려로 소실된 수량을 기준 발주량으로 삼는다.
+    # 안전재고 산식: (리드타임+버퍼) 기간의 예상 수요를 커버할 목표 재고를 잡고, 부족분 + 이번 반려로 소실된 수량을 기준 발주량으로 삼는다.
     daily_velocity = sales_30d / 30.0
     demand_cover = max(math.ceil(daily_velocity * (LEAD_TIME_DAYS + SAFETY_DAYS)), min_safety_stock)
     baseline = max(demand_cover - current_stock, 0) + max(0, int(rejected_quantity))
@@ -152,8 +138,7 @@ def collect_restock_context(
 def run_restock_agent(context: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
     """
     LLM에게 수집 데이터를 주고 발주 제안을 받는다. 반환: (제안 dict, ai_source).
-    LLM 불가/실패 시 Collector의 결정론적 산식으로 fail-open 한다 - 부가 지능이
-    죽어도 발주 제안 자체는 반드시 생성되어야 하기 때문(Critic Stage B와 동일 원칙).
+    LLM 불가/실패 시 Collector의 결정론적 산식으로 fail-open 한다 - 서브모델이 죽어도 발주 제안 자체는 반드시 생성되어야 하기 때문이다.
     """
     fallback = _rule_based_decision(context)
     if not _restock_llm:
@@ -216,7 +201,7 @@ def _rule_based_decision(context: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ==========================================
-# ③ Validator - 결정론적 클램프 게이트
+# ③ Validator
 # ==========================================
 
 def validate_decision(decision: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -320,7 +305,7 @@ def generate_and_store_proposal(
     db.commit()
     db.refresh(proposal)
 
-    # 새로 생성된 제안만 알림으로 올린다 (기존 카드 갱신은 소음이 되므로 제외).
+    # 새로 생성된 제안만 알림으로 올린다.(기존 카드 갱신은 소음이 되므로 제외)
     # 알림 실패가 제안 적재를 무효화해서는 안 되므로 예외는 삼킨다.
     if not existing:
         try:
