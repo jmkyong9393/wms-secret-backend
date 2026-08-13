@@ -19,10 +19,13 @@ from app.models.wms import (
     InventoryUsedItem,
     ItemStatusEnum,
     Location,
+    Notification,
     Order,
     OrderItem,
+    OrderProposal,
     PickingInstruction,
     PickingInstructionItem,
+    ReturnJob,
     now_kst,
 )
 
@@ -64,12 +67,23 @@ def publish_outbound_notification(event_type: str, category: str, title: str, de
 
 
 def generate_instruction_no(session: Session) -> str:
-    """PICK-YYMMDD-#### 일련번호 생성 (당일 발행 건수 기반)"""
+    """
+    PICK-YYMMDD-#### 일련번호 생성 (당일 최대 번호 + 1).
+
+    건수를 세면 삭제로 생긴 빈자리 때문에 이미 쓰인 번호가 재발급되어
+    instruction_no unique 제약에 걸린다 (0001·0002 중 0001 삭제 시 다음이 0002).
+    """
     prefix = f"PICK-{datetime.now().strftime('%y%m%d')}"
     todays = session.exec(
         select(PickingInstruction).where(PickingInstruction.instruction_no.startswith(prefix))
     ).all()
-    return f"{prefix}-{len(todays) + 1:04d}"
+    max_seq = 0
+    for ins in todays:
+        try:
+            max_seq = max(max_seq, int(ins.instruction_no.rsplit("-", 1)[-1]))
+        except (ValueError, AttributeError):
+            continue
+    return f"{prefix}-{max_seq + 1:04d}"
 
 
 def _unpad(value: Optional[str], default: str) -> str:
@@ -347,35 +361,77 @@ def create_picking_instruction(session: Session, order: Order, use_llm: bool = T
     return instruction
 
 
-def cancel_picking_instruction(session: Session, instruction: PickingInstruction) -> PickingInstruction:
+def _purge_order_if_orphaned(session: Session, order_id: UUID) -> bool:
     """
-    PENDING(수락 대기) 지시서 취소. 행을 지우지 않고 CANCELLED로 소프트 취소한다 —
-    하드 삭제하면 create_picking_instruction이 걸어둔 부수 효과(주문 상태 PICKING,
-    중고 라인 재고 ALLOCATED 마킹)가 되돌아오지 않아 주문이 붕 뜨고 책이 영구 잠긴다.
+    지시서가 사라진 뒤 남는 주문 껍데기를 정리한다 (order_items는 FK CASCADE).
+
+    주문이 이 지시서 때문에만 존재했을 때에만 지운다. 출고 이력이 있거나 반품·발주가
+    걸려 있으면 주문 자체가 독립된 사업 기록이므로 남긴다 — 그쪽 FK는 SET NULL이라
+    지워도 에러는 안 나지만 반품 건의 출처가 조용히 끊긴다.
+
+    현 단계 정책은 '발행 이전으로 완전 복원'이다. 주문 취소를 감사 기록으로 남기는
+    요건이 생기면 이 함수 대신 취소 이력 테이블로 대체한다.
     """
-    items = session.exec(
-        select(PickingInstructionItem).where(PickingInstructionItem.instruction_id == instruction.id)
+    order = session.get(Order, order_id)
+    if order is None or order.status == "SHIPPED":
+        return False
+    if session.exec(select(PickingInstruction).where(PickingInstruction.order_id == order_id)).first():
+        return False
+    if session.exec(select(ReturnJob).where(ReturnJob.order_id == order_id)).first():
+        return False
+    if session.exec(select(OrderProposal).where(OrderProposal.order_id == order_id)).first():
+        return False
+
+    session.delete(order)
+    return True
+
+
+def delete_picking_instruction(session: Session, instruction: PickingInstruction) -> bool:
+    """
+    수락 전 지시서를 흔적 없이 제거한다 (라인 아이템은 FK CASCADE로 함께 삭제).
+    주문까지 지웠으면 True를 돌려준다.
+
+    행만 지우면 create_picking_instruction이 걸어둔 부수 효과가 남는다 —
+    주문이 PICKING 상태로 붕 뜨고 중고 재고가 ALLOCATED로 영구 잠긴다.
+    이미 CANCELLED된 건은 취소 시점에 되돌렸으므로 다시 만지지 않는다
+    (그 사이 같은 주문에 새 지시서가 발행됐다면 그쪽 상태를 깨뜨린다).
+    """
+    order_id = instruction.order_id
+
+    if instruction.status == "PENDING":
+        items = session.exec(
+            select(PickingInstructionItem).where(PickingInstructionItem.instruction_id == instruction.id)
+        ).all()
+        for it in items:
+            if it.stock_type == "USED" and it.used_item_id:
+                used = session.get(InventoryUsedItem, it.used_item_id)
+                if used:
+                    used.item_status = ItemStatusEnum.IN_STOCK.value
+                    used.updated_at = now_kst()
+                    session.add(used)
+
+        order = session.get(Order, instruction.order_id)
+        if order:
+            order.status = "PENDING"
+            order.updated_at = now_kst()
+            session.add(order)
+
+    # 발행 알림도 함께 지운다. notifications.ref_id는 FK가 아닌 문자열이라
+    # 지시서를 지워도 알림 벨에 "신규 지시서 발행"이 그대로 남는다.
+    stale_notes = session.exec(
+        select(Notification)
+        .where(Notification.ref_type == "PICKING_INSTRUCTION")
+        .where(Notification.ref_id == str(instruction.id))
     ).all()
-    for it in items:
-        if it.stock_type == "USED" and it.used_item_id:
-            used = session.get(InventoryUsedItem, it.used_item_id)
-            if used:
-                used.item_status = ItemStatusEnum.IN_STOCK.value
-                used.updated_at = now_kst()
-                session.add(used)
+    for note in stale_notes:
+        session.delete(note)
 
-    order = session.get(Order, instruction.order_id)
-    if order:
-        order.status = "PENDING"
-        order.updated_at = now_kst()
-        session.add(order)
+    session.delete(instruction)
+    session.flush()  # 삭제를 반영해야 아래 '남은 지시서 0건' 판정이 성립한다
 
-    instruction.status = "CANCELLED"
-    instruction.updated_at = now_kst()
-    session.add(instruction)
+    purged_order = _purge_order_if_orphaned(session, order_id)
     session.commit()
-    session.refresh(instruction)
-    return instruction
+    return purged_order
 
 
 def serialize_instruction(session: Session, instruction: PickingInstruction) -> Dict[str, Any]:

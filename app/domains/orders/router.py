@@ -21,7 +21,7 @@ from app.domains.orders.service import (
 )
 from app.domains.orders.picking import (
     create_picking_instruction,
-    cancel_picking_instruction,
+    delete_picking_instruction,
     serialize_instruction,
     publish_outbound_notification,
 )
@@ -306,17 +306,22 @@ def accept_picking_instruction(instruction_id: UUID, req: AcceptInstructionReque
     session.commit()
     return serialize_instruction(session, instruction)
 
-@router.post("/picking-instructions/{instruction_id}/cancel")
-def cancel_instruction(instruction_id: UUID, session: Session = Depends(get_db)):
-    """admin의 수락 대기(PENDING) 지시서 취소. 주문 상태·중고 재고 할당을 되돌린 뒤 CANCELLED로 전환."""
+@router.delete("/picking-instructions/{instruction_id}")
+def delete_instruction(instruction_id: UUID, session: Session = Depends(get_db)):
+    """
+    수락 전 지시서 삭제 — 발행 이전 상태로 되돌린다.
+    중고 재고 할당 해제 + 주문 상태 복구 + 발행 알림 제거까지 한 트랜잭션에서 처리하고,
+    이 지시서 때문에만 존재하던 주문이면 주문 껍데기도 함께 정리한다.
+    """
     instruction = session.get(PickingInstruction, instruction_id)
     if not instruction:
         raise HTTPException(404, "피킹 지시서를 찾을 수 없습니다.")
-    if instruction.status != "PENDING":
-        raise HTTPException(409, f"수락 대기 상태만 취소할 수 있습니다. (현재: {instruction.status})")
+    if instruction.status not in ("PENDING", "CANCELLED"):
+        raise HTTPException(409, f"수락 전 지시서만 삭제할 수 있습니다. (현재: {instruction.status})")
 
-    instruction = cancel_picking_instruction(session, instruction)
-    return serialize_instruction(session, instruction)
+    instruction_no = instruction.instruction_no
+    purged_order = delete_picking_instruction(session, instruction)
+    return {"deleted": True, "instruction_no": instruction_no, "order_purged": purged_order}
 
 class PickingScanRequest(BaseModel):
     barcode: str                      # LPN(중고) 또는 13자리 ISBN(신품)
