@@ -124,6 +124,7 @@ def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> Lis
             lines.append({
                 "book": book, "is_new": True, "quantity": qty,
                 "ubci_score": None, "days_in_inventory": 1,
+                "used_item": None,
             })
         else:
             used = session.get(InventoryUsedItem, UUID(line.id))
@@ -136,6 +137,9 @@ def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> Lis
             lines.append({
                 "book": book, "is_new": False, "quantity": 1,
                 "ubci_score": used.ubci_score, "days_in_inventory": days,
+                # 고른 LPN을 그대로 들고 간다. 여기서 흘리면 할당 엔진이 같은 책의
+                # 다른 개체를 FIFO로 다시 골라, 주문한 책과 다른 책이 출고된다.
+                "used_item": used,
             })
     return lines
 
@@ -180,6 +184,7 @@ def create_order_with_items(req: CreateOrderRequest, session: Session = Depends(
             quantity=ln["quantity"],
             unit_price=priced["unit_price"],
             condition_pref="NEW" if ln["is_new"] else "USED",
+            used_item_id=ln["used_item"].id if ln.get("used_item") else None,
         ))
     session.commit()
     session.refresh(order)
@@ -228,8 +233,14 @@ def simulate_b2b_order(session: Session = Depends(get_db)):
             available = stock_by_book.get(b.id, 0)
             picks.append(OrderLineRequest(id=f"NEW-BOOK-{b.id}", quantity=random.randint(1, min(3, available))))
     if used_items:
-        for u in random.sample(used_items, min(len(used_items), random.randint(1, 2))):
-            picks.append(OrderLineRequest(id=str(u.id), quantity=1))
+        # 도서 단위로 뽑는다. LPN 행 단위로 뽑으면 재고가 많은 책이 보유 수량에 비례해
+        # 당첨돼(20권 보유 = 1권 보유의 20배 확률) 시뮬레이션이 매번 같은 책을 낸다.
+        by_book: Dict[UUID, List[InventoryUsedItem]] = {}
+        for u in used_items:
+            by_book.setdefault(u.book_id, []).append(u)
+        for book_id in random.sample(list(by_book), min(len(by_book), random.randint(1, 2))):
+            chosen = random.choice(by_book[book_id])
+            picks.append(OrderLineRequest(id=str(chosen.id), quantity=1))
     if not picks:
         raise HTTPException(409, "시뮬레이션에 사용할 재고가 없습니다.")
 

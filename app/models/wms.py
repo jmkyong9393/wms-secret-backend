@@ -277,6 +277,15 @@ class OrderItem(SQLModel, table=True):
     unit_price: float = Field(default=0.0)
     # 주문 시점 재고 유형 선호: "NEW" | "USED" | None(중고 우선 자동 할당)
     condition_pref: Optional[str] = Field(default=None, max_length=10)
+
+    # 주문 시 지정된 중고 개체(LPN). 중고는 LPN 하나하나가 서로 다른 물건이라
+    # book_id만으로는 "어느 책을 팔기로 했는가"가 특정되지 않는다. 이 값이 없으면
+    # 할당 엔진이 같은 책의 다른 LPN을 FIFO로 다시 골라, 주문한 개체와 지시서에
+    # 실리는 개체가 어긋난다(신품은 book 단위라 이 문제가 없다).
+    used_item_id: Optional[UUID] = Field(
+        default=None, foreign_key="inventory_used_items.id", ondelete="SET NULL"
+    )
+
     created_at: datetime = Field(default_factory=now_kst)
     updated_at: datetime = Field(default_factory=now_kst)
 
