@@ -7,8 +7,7 @@ from typing import Optional, Literal
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# LangChain 등 파이썬 내장 os.environ을 직접 참조하는 외부 라이브러리를 위해 
-# .env 파일의 내용을 OS 환경변수로 강제 주입(Load)합니다.
+# LangChain 등 파이썬 내장 os.environ을 직접 참조하는 외부 라이브러리를 위해 .env 파일의 내용을 OS 환경변수로 강제 주입합니다.
 load_dotenv()
 
 
@@ -34,14 +33,13 @@ class Settings(BaseSettings):
     PUBLIC_WEB_BASE_URL: str = "http://localhost:3000"
 
     # 네트워크 라벨 프린터 (Xprinter XP-423B, LAN Raw TCP)
-    # 개발·테스트 환경에서는 False로 두어 프린터 연결 실패가
-    # 입고·검수 처리 실패로 이어지지 않게 한다. 실제 장비 IP는 .env에서 주입.
+    # 개발·테스트 환경에서는 False로 두어 프린터 연결 실패가 입고·검수 처리 실패로 이어지지 않게 한다. 실제 장비 IP는 .env에서 주입.
     LABEL_PRINTER_ENABLED: bool = False
     LABEL_PRINTER_HOST: str = ""
     LABEL_PRINTER_PORT: int = 9100
     LABEL_PRINTER_TIMEOUT_SECONDS: float = 5.0
 
-    # XP-423B: 203 DPI(약 8 dots/mm), 라벨 50mm × 31mm (다이컷 라벨 RS5031 실측 규격)
+    # XP-423B: 203 DPI(약 8 dots/mm), 라벨 50mm * 31mm (다이컷 라벨 RS5031 실측 규격)
     LABEL_PRINTER_DPI: int = 203
     LABEL_PRINTER_LABEL_WIDTH_MM: int = 50
     LABEL_PRINTER_LABEL_HEIGHT_MM: int = 31
@@ -70,21 +68,15 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: Optional[str] = None
 
     # --- Rate Limiting / 브루트포스 방어 ---
-    #
-    # [배경] API는 Next.js 프록시(rewrites) 뒤에 있어, 컨테이너가 관찰하는 peer IP가
-    # 항상 도커 게이트웨이(172.20.0.1) 하나로 수렴한다. 그 상태로 IP 기준 리밋을 걸면
-    # 접속자 전원이 단일 버킷을 공유해 서로를 잠근다(터널 시연에서 실측 확인).
-    # 아래 대역에서 들어온 요청에 한해 X-Forwarded-For의 원 클라이언트 IP를 채택한다.
-    # 신뢰 대역 밖에서 온 XFF는 위조 가능하므로 무시한다.
+    # API는 Next.js 프록시(rewrites) 뒤에 있어, 컨테이너가 관찰하는 peer IP가 항상 도커 게이트웨이 하나로 수렴한다. 그 상태로 IP 기준 리밋을 걸면 접속자 전원이 단일 버킷을 공유해 서로를 잠근다.
+    # 아래 대역에서 들어온 요청에 한해 X-Forwarded-For의 원 클라이언트 IP를 채택한다. 신뢰 대역 밖에서 온 XFF는 위조 가능하므로 무시한다.
     TRUSTED_PROXY_CIDRS: str = "127.0.0.0/8,::1/128,172.16.0.0/12,10.0.0.0/8"
 
     # IP 기준 리밋은 봇의 대량 시도를 거르는 광역 그물 역할만 한다.
     # 계정 단위 브루트포스 방어는 아래 실패 카운터가 담당한다.
     LOGIN_IP_RATE_LIMIT: str = "30/minute"
 
-    # 사번 단위 로그인 실패 스로틀 (성공하면 즉시 리셋된다).
-    # 계정을 영구 잠그지 않는 이유: 남의 사번으로 일부러 실패시켜 잠그는 DoS를 막기 위해
-    # 짧은 TTL 스로틀로만 제한한다.
+    # 사번 단위 로그인 실패 스로틀 (성공하면 즉시 리셋된다). 계정을 영구 잠그지 않는 이유는 남의 사번으로 일부러 실패시켜 잠그는 DoS를 막기 위해 짧은 TTL 스로틀로만 제한한다.
     LOGIN_FAIL_MAX_ATTEMPTS: int = 10
     LOGIN_FAIL_WINDOW_SECONDS: int = 300
 

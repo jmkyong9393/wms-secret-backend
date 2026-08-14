@@ -97,10 +97,8 @@ class HitlTaskResponse(BaseModel):
 
 def _latest_admin_memo(agent_logs: Optional[Dict[str, Any]], *, prefer_recall: bool) -> Optional[str]:
     """agent_logs에서 관리자가 남긴 최신 메모를 꺼낸다.
-
-    메모는 두 곳에 저장된다: 결재 코멘트(human_feedback.admin_comment)와
-    회수 사유(recall_history[-1].reason). 결재 대기 목록은 "왜 다시 대기로 왔는가"가
-    관심사라 회수 사유를 우선하고, 완료 목록은 결재 코멘트를 우선한다.
+    메모는 두 곳에 저장된다: 결재 코멘트(human_feedback.admin_comment)와 회수 사유(recall_history[-1].reason).
+    결재 대기 목록은 "왜 다시 대기로 왔는가"가 관심사라 회수 사유를 우선하고, 완료 목록은 결재 코멘트를 우선한다.
     """
     logs = agent_logs or {}
     comment = ((logs.get("human_feedback") or {}).get("admin_comment") or "").strip() or None
@@ -111,9 +109,8 @@ def _latest_admin_memo(agent_logs: Optional[Dict[str, Any]], *, prefer_recall: b
 def apply_bbox_edits(defects: List[Dict[str, Any]], candidates: List[Dict[str, Any]], item) -> List[Dict[str, Any]]:
     """검수자의 BBox 채택/제외/좌표수정/신규추가를 결함 배열에 반영한 새 배열을 돌려준다.
 
-    제외는 삭제가 아니라 `hitl_excluded` 표식만 남긴다 - 감사 추적을 유지하고 재학습
-    라벨로 재사용할 수 있게 하기 위함이다. 결재 확정(/override)과 점수 미리보기
-    (/score-preview)가 같은 규칙을 쓰도록 이 함수 하나로 모았다.
+    제외는 삭제가 아니라 `hitl_excluded` 표식만 남긴다 - 감사 추적을 유지하고 재학습 라벨로 재사용할 수 있게 하기 위함이다. 
+    결재 확정(/override)과 점수 미리보기(/score-preview)가 같은 규칙을 쓰도록 이 함수 하나로 모았다.
     """
     out = list(defects)
     cands = list(candidates or [])
@@ -189,8 +186,7 @@ def preview_score_with_edits(
     """편집한 BBox 기준의 UBCI 점수/등급을 결재 **전에** 돌려준다.
 
     policy_agent는 LLM을 쓰지 않는 결정론적 산식이므로 이 미리보기는 API 호출 0회다.
-    보증서 문안(report_agent)은 결재가 확정된 뒤에만 생성한다 - 확정되지 않은 판정으로
-    고객 문서를 만들지 않기 위함이다.
+    보증서 문안(report_agent)은 결재가 확정된 뒤에만 생성한다 - 확정되지 않은 판정으로 고객 문서를 만들지 않기 위함이다.
 
     아무것도 저장하지 않는다. 실제 반영은 /override 가 담당한다.
     """
@@ -253,13 +249,9 @@ def recall_inventory_to_hitl(
     current_admin = Depends(admin_only),
 ):
     """적재 완료된 재고를 관리자 판단으로 HITL 재검수 대기로 되돌린다.
-
     Vision Agent의 판독 편차가 커서 자동 확정된 등급이 실제와 어긋나는 경우가 있다.
-    이미 재고에 들어간 뒤에도 사람이 되돌려 정답지를 만들 수 있어야 하며, 그렇게 쌓인
-    라벨이 탐지기 재학습의 입력이 된다.
-
-    되돌리는 것은 **판정 상태**뿐이다. 점수·결함·이미지는 그대로 두고 재검수 대기로만
-    표시한다 - 여기서 점수를 지우면 "무엇을 고쳤는지" 비교할 기준이 사라진다.
+    이미 재고에 들어간 뒤에도 사람이 되돌려 정답지를 만들 수 있어야 하며, 그렇게 쌓인 라벨이 탐지기 재학습의 입력이 된다.
+    되돌리는 것은 판정 상태뿐이다. 점수·결함·이미지는 그대로 두고 재검수 대기로만 표시한다 - 여기서 점수를 지우면 "무엇을 고쳤는지" 비교할 기준이 사라진다.
     """
     from app.models.wms import InventoryUsedItem, now_kst
 
@@ -300,8 +292,7 @@ def recall_inventory_to_hitl(
     })
     logs["recall_history"] = history
     job.agent_logs = logs
-    # 상태를 HITL_REQUIRED로 되돌려 두면, 이후 "AI 재검수"를 눌러도 트리거 시점 상태를 읽어
-    # was_hitl=True가 넘어가므로 AI 단독 확정이 막힌다 (배경: 01-freeze-zones.md).
+    # 상태를 HITL_REQUIRED로 되돌려 두면, 이후 "AI 재검수"를 눌러도 트리거 시점 상태를 읽어 was_hitl=True가 넘어가므로 AI 단독 확정이 막힌다 (배경: 01-freeze-zones.md).
     job.status = JobStatusEnum.HITL_REQUIRED.value
     session.add(job)
 
@@ -347,8 +338,7 @@ def get_pending_hitl_tasks(
         select(ReturnJob, Book)
         .where(ReturnJob.status.in_([JobStatusEnum.HITL_REQUIRED, JobStatusEnum.PENDING]))
         .outerjoin(Book, ReturnJob.book_id == Book.id)
-        # 이관/회수 시각 역순 - 방금 올라온 건이 맨 위. created_at을 보조 키로 둬서
-        # 같은 시각에 일괄 생성된 건들도 순서가 흔들리지 않게 한다(동률이면 DB 임의 순서가 된다).
+        # 이관/회수 시각 역순 - 방금 올라온 건이 맨 위. created_at을 보조 키로 둬서 같은 시각에 일괄 생성된 건들도 순서가 흔들리지 않게 한다(동률이면 DB 임의 순서가 된다).
         .order_by(ReturnJob.updated_at.desc(), ReturnJob.created_at.desc())
     )
     results = session.exec(statement).all()
@@ -387,17 +377,12 @@ def submit_hitl_override(
     audit_logs = []
     processed_count = 0
     rejected_job_ids = []  # 커밋 후 Restock 판정 그래프(자동 발주 제안)를 태울 반려 확정 건
-    # [2026-08-08] 커밋 후 보증서 생성(GPT-4o-mini)을 워커로 태울 승인 확정 건.
+    # 커밋 후 보증서 생성(GPT-4o-mini)을 워커로 태울 승인 확정 건.
     # 종전에는 이 루프 안에서 build_certificate_document()를 건별로 동기 호출했는데,
-    # 합성 시드 데이터 다건을 한 번에 승인하는 요청에서 순차 LLM 호출이 쌓여
-    # wms-secret-api 컨테이너가 OOM(exit 137)으로 죽었다. 반려 확정 건의 Restock 제안
-    # 큐잉과 동일한 원리로, 등급 확정·랙 배정·재고 편입은 이 요청 안에서 동기로 끝내고
-    # 보증서 문서화만 워커로 분리한다 (app/worker/tasks.py generate_hitl_certificate 참조).
+    # 합성 시드 데이터 다건을 한 번에 승인하는 요청에서 순차 LLM 호출이 쌓여 wms-secret-api 컨테이너가 OOM(exit 137)으로 죽었다. 반려 확정 건의 Restock 제안 큐잉과 동일한 원리로, 등급 확정·랙 배정·재고 편입은 이 요청 안에서 동기로 끝내고 보증서 문서화만 워커로 분리한다 (app/worker/tasks.py generate_hitl_certificate 참조).
     approved_job_ids_for_cert = []
 
-    # 이 오버라이드를 실제로 결재한 관리자. InventoryUsedItem.inspected_by에 그대로 기록해
-    # 재고 상세/보증서 화면의 "입고 처리 담당자"가 하드코딩 상수가 아니라 실제 결재자를
-    # 가리키게 한다 (기존에는 "HITL - WM2608001 (장문경)" 문자열이 라우터에 박혀 있었다).
+    # 이 오버라이드를 실제로 결재한 관리자. InventoryUsedItem.inspected_by에 그대로 기록해 재고 상세/보증서 화면의 "입고 처리 담당자"가 하드코딩 상수가 아니라 실제 결재자를 가리키게 한다 (기존에는 "HITL - WM2608001 (장문경)" 문자열이 라우터에 박혀 있었다).
     admin_employee_id = str(getattr(current_admin, "employee_id", "") or "").strip()
     admin_name = str(getattr(current_admin, "name", "") or "").strip()
     if admin_employee_id or admin_name:
@@ -418,8 +403,7 @@ def submit_hitl_override(
             
         previous_state = job.status
 
-        # 검수자의 BBox 채택/제외/좌표수정/신규추가 반영. 제외는 삭제가 아니라 표식만
-        # 남긴다(감사 추적 유지, 재학습 라벨 재사용 가능성 보존).
+        # 검수자의 BBox 채택/제외/좌표수정/신규추가 반영. 제외는 삭제가 아니라 표식만 남긴다(감사 추적 유지, 재학습 라벨 재사용 가능성 보존).
         _logs = dict(job.agent_logs or {})
         _defects = list(_logs.get("defects") or [])
         has_bbox_ui_edits = bool(
@@ -439,8 +423,7 @@ def submit_hitl_override(
             }
             job.agent_logs = _logs
 
-            # BBox 편집분으로 점수를 재산정한다. 재산정 결과와 Critic Stage A 재검증은
-            # _logs["hitl_revalidation"]에 1차 판독과 분리해 기록한다 (배경: 33번 문서).
+            # BBox 편집분으로 점수를 재산정한다. 재산정 결과와 Critic Stage A 재검증은 _logs["hitl_revalidation"]에 1차 판독과 분리해 기록한다 (배경: 33번 문서).
             from app.models.wms import now_kst
             scored = [d for d in _defects if not d.get("hitl_excluded")]
             hitl_revalidation: Dict[str, Any] = {
@@ -476,12 +459,7 @@ def submit_hitl_override(
             _logs["hitl_revalidation"] = hitl_revalidation
             job.agent_logs = _logs
 
-        # [2026-08-08 신설] AuditLog(및 그 소스를 읽는 research/export-dataset 재학습
-        # 파이프라인)에 남길 최종 BBox 좌표를 여기서 다시 조립한다. 프론트가 보내는
-        # item.defectCoordinates는 모달을 연 시점의 agent_logs.defect_coordinates 스냅샷이라
-        # 위 exclude/adopt/edit 결과를 반영하지 못한다 - 그 값을 그대로 감사 로그에 남기면
-        # 관리자가 오탐이라고 제외한 BBox까지 "검증 완료" 라벨로 재학습 데이터에 흘러간다.
-        # build_defect_coordinates는 파이프라인 완료 시점에도 쓰는 동일 함수라 포맷이 항상 일치한다.
+        # AuditLog(및 그 소스를 읽는 research/export-dataset 재학습 파이프라인)에 남길 최종 BBox 좌표를 여기서 다시 조립한다. 프론트가 보내는 item.defectCoordinates는 모달을 연 시점의 agent_logs.defect_coordinates 스냅샷이라 위 exclude/adopt/edit 결과를 반영하지 못한다 - 그 값을 그대로 감사 로그에 남기면 관리자가 오탐이라고 제외한 BBox까지 "검증 완료" 라벨로 재학습 데이터에 흘러간다. build_defect_coordinates는 파이프라인 완료 시점에도 쓰는 동일 함수라 포맷이 항상 일치한다.
         from app.ai.langgraph_wrapper import LangGraphInspectionWrapper
         final_defect_coordinates = LangGraphInspectionWrapper.build_defect_coordinates(
             _defects, job.image_urls or []
@@ -497,23 +475,14 @@ def submit_hitl_override(
             from app.domains.inventory.service import assign_rack_location_after_inspection
             from app.models.wms import clamp_ubci_score_to_grade
             target_grade = item.targetGrade or (job.agent_logs.get("suggested_grade") if job.agent_logs else "NORMAL")
-            # [2026-08-06 수정] 관리자가 등급을 하향/상향 확정하면 점수도 확정 등급의 공식
-            # 경계 구간으로 재산정한다. 종전에는 AI 산출 점수(예: 100)를 그대로 넘겨
-            # "UBCI 100점 (NORMAL 등급)" 모순 표기 + 동적 가격의 상태 보정이 MINT 기준으로
-            # 계산되는 문제가 있었다. 재산정은 보증서 생성보다 먼저 수행한다 (보증서 본문의
-            # 점수/등급 표기가 확정값을 따르도록).
+            # [2026-08-06 수정] 관리자가 등급을 하향/상향 확정하면 점수도 확정 등급의 공식 경계 구간으로 재산정한다. 종전에는 AI 산출 점수(예: 100)를 그대로 넘겨 "UBCI 100점 (NORMAL 등급)" 모순 표기 + 동적 가격의 상태 보정이 MINT 기준으로 계산되는 문제가 있었다. 재산정은 보증서 생성보다 먼저 수행한다 (보증서 본문의 점수/등급 표기가 확정값을 따르도록).
             job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, target_grade)
-            # lpn_barcode가 없으면 새로 채번한다 (구 하드코딩 fallback 사고, 배경: 33번 문서).
+            # lpn_barcode가 없으면 새로 채번한다.
             from app.domains.inventory.service import generate_next_lpn_barcode
             lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or generate_next_lpn_barcode(session, zone="B")
             if not (job.agent_logs and job.agent_logs.get("lpn_barcode")):
                 job.agent_logs = {**(job.agent_logs or {}), "lpn_barcode": lpn}
-            # [2026-08-08 수정] HITL 승인 건의 보증서 본문 생성(GPT-4o-mini, build_certificate_document)을
-            # 더 이상 이 요청 스레드에서 동기 호출하지 않는다. 종전에는 매 승인 건마다 여기서 LLM을
-            # 호출했는데, 합성 시드 데이터 다건을 한 번에 승인하는 요청에서 순차 LLM 호출이 쌓여
-            # wms-secret-api 컨테이너가 OOM(exit 137)으로 죽었다. 등급 확정·랙 배정·재고 편입은
-            # 그대로 이 자리에서 동기로 끝내고, 보증서 문서화만 커밋 후 워커로 큐잉한다
-            # (app/worker/tasks.py generate_hitl_certificate - 판정/집행 분리 원칙 준수).
+            # HITL 승인 건의 보증서 본문 생성(GPT-4o-mini, build_certificate_document)을 더 이상 이 요청 스레드에서 동기 호출하지 않는다. 종전에는 매 승인 건마다 여기서 LLM을 호출했는데, 합성 시드 데이터 다건을 한 번에 승인하는 요청에서 순차 LLM 호출이 쌓여 wms-secret-api 컨테이너가 OOM(exit 137)으로 죽었다. 등급 확정·랙 배정·재고 편입은 그대로 이 자리에서 동기로 끝내고, 보증서 문서화만 커밋 후 워커로 큐잉한다 (app/worker/tasks.py generate_hitl_certificate - 판정/집행 분리 원칙 준수).
             approved_job_ids_for_cert.append(str(job.id))
 
             try:
@@ -535,17 +504,13 @@ def submit_hitl_override(
                 logger.error(f"Failed to assign rack location: {ex}")
         elif item.decision.startswith("REJECT"):
             job.status = JobStatusEnum.REJECTED
-            # [수정 이력] 승인(APPROVE) 분기와 달리 반려 분기는 랙 배정 자체를 호출하지 않아,
-            # HITL에서 반려된 건은 Zone E(격리/폐기) 배정도 안 되고 InventoryUsedItem row도
-            # 안 만들어져 실물 추적이 안 되고 있었다 - 자동 반려 경로(worker/tasks.py)와
-            # 동일하게 Zone E 격리 랙 배정을 호출하도록 교정.
+            # 승인(APPROVE) 분기와 달리 반려 분기는 랙 배정 자체를 호출하지 않아, HITL에서 반려된 건은 Zone E(격리/폐기) 배정도 안 되고 InventoryUsedItem row도 안 만들어져 실물 추적이 안 되고 있었다 - 자동 반려 경로(worker/tasks.py)와 동일하게 Zone E 격리 랙 배정을 호출하도록 교정.
             from app.domains.inventory.service import assign_rack_location_after_inspection, generate_next_lpn_barcode
             from app.models.wms import clamp_ubci_score_to_grade
             lpn = (job.agent_logs.get("lpn_barcode") if job.agent_logs else None) or generate_next_lpn_barcode(session, zone="B")
             if not (job.agent_logs and job.agent_logs.get("lpn_barcode")):
                 job.agent_logs = {**(job.agent_logs or {}), "lpn_barcode": lpn}
-            # [2026-08-06 수정] 반려 확정도 승인 분기와 동일하게 점수를 확정 등급(REJECT) 구간으로
-            # 재산정한다 (검수 내역 목록의 점수-등급 모순 방지, 기존 or 40 임의 폴백 제거).
+            # 반려 확정도 승인 분기와 동일하게 점수를 확정 등급(REJECT) 구간으로 재산정한다 (검수 내역 목록의 점수-등급 모순 방지, 기존 or 40 임의 폴백 제거).
             job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, "REJECT")
             try:
                 assign_rack_location_after_inspection(
@@ -563,11 +528,7 @@ def submit_hitl_override(
                 logger.error(f"Failed to assign rack location (reject): {ex}")
             rejected_job_ids.append(str(job.id))
         elif item.decision in ["RE_CHECK", "AI_REINSPECT"]:
-            # [수정 이력] 존재하지 않는 app.domains.returns.service.process_inspection을 import해서
-            # 실제로 호출되면 100% ImportError로 죽던 코드였다 (Pipeline A/B 통합 이전의 잔재).
-            # 상태만 PENDING으로 되돌리고 아무것도 재큐잉하지 않아 작업이 그대로 멈춰있던 문제도
-            # 함께 수정 - /admin/hitl/{job_id}/re-inspect와 동일하게 Celery로 재큐잉한다.
-            # was_hitl은 재큐잉 전 원래 상태(previous_state) 기준. 배경: 01-freeze-zones.md.
+            # 존재하지 않는 app.domains.returns.service.process_inspection을 import해서 실제로 호출되면 100% ImportError로 죽던 코드였다 (Pipeline A/B 통합 이전의 잔재). 상태만 PENDING으로 되돌리고 아무것도 재큐잉하지 않아 작업이 그대로 멈춰있던 문제도 함께 수정 - /admin/hitl/{job_id}/re-inspect와 동일하게 Celery로 재큐잉한다. was_hitl은 재큐잉 전 원래 상태(previous_state) 기준.
             was_hitl = _is_hitl_required(previous_state)
             job.status = JobStatusEnum.PENDING
             job.retry_count += 1
@@ -590,10 +551,7 @@ def submit_hitl_override(
             raise BadRequestException(f"Unknown decision: {item.decision}")
         
         # Save Agent Logs / Comments
-        # [수정 이력] 기존에는 job.agent_logs 딕셔너리를 제자리 변경(in-place mutation)했는데,
-        # SQLAlchemy는 JSONB 컬럼의 제자리 변경을 감지하지 못해(MutableDict 미적용) UPDATE문에
-        # 아예 포함되지 않았다. 그 결과 관리자의 결정/등급/메모가 DB에 한 번도 저장된 적이 없다.
-        # 새 dict를 할당해 변경을 확실히 감지시킨다.
+        # 기존에는 job.agent_logs 딕셔너리를 제자리 변경(in-place mutation)했는데, SQLAlchemy는 JSONB 컬럼의 제자리 변경을 감지하지 못해(MutableDict 미적용) UPDATE문에 아예 포함되지 않았다. 그 결과 관리자의 결정/등급/메모가 DB에 한 번도 저장된 적이 없다. 새 dict를 할당해 변경을 확실히 감지시킨다.
         job.agent_logs = {
             **(job.agent_logs or {}),
             "admin_decision": item.decision,
@@ -625,17 +583,13 @@ def submit_hitl_override(
         
     session.commit()
 
-    # 반려(매입 불가) 확정 건은 커밋 완료 후 Restock 판정 그래프를 비동기로 태워
-    # 자동 발주 제안(order_proposals)을 생성한다. 커밋 전에 큐잉하면 태스크가 새 세션에서
-    # primary_reason_code가 저장되기 전의 agent_logs를 읽는 레이스가 생긴다.
-    # 라우터는 큐잉만 하고 즉시 응답한다 (판정/집행 분리 - 관리자 화면은 LLM을 기다리지 않는다).
+    # 반려(매입 불가) 확정 건은 커밋 완료 후 Restock 판정 그래프를 비동기로 태워 자동 발주 제안(order_proposals)을 생성한다. 커밋 전에 큐잉하면 태스크가 새 세션에서 primary_reason_code가 저장되기 전의 agent_logs를 읽는 레이스가 생긴다. 라우터는 큐잉만 하고 즉시 응답한다 (판정/집행 분리 - 관리자 화면은 LLM을 기다리지 않는다).
     if rejected_job_ids:
         from app.worker.tasks import enqueue_restock_proposal
         for rejected_id in rejected_job_ids:
             enqueue_restock_proposal(rejected_id)
 
-    # 승인 확정 건의 보증서 생성(GPT-4o-mini)도 같은 이유로 커밋 후 워커에 큐잉한다.
-    # 같은 요청 안에서 N건을 동기로 돌리다 OOM으로 죽은 사고(2026-08-08)의 재발 방지.
+    # 승인 확정 건의 보증서 생성(GPT-4o-mini)도 같은 이유로 커밋 후 워커에 큐잉한다. 같은 요청 안에서 N건을 동기로 돌리다 OOM으로 죽은 사고의 재발 방지.
     if approved_job_ids_for_cert:
         from app.worker.tasks import enqueue_hitl_certificate
         for approved_id in approved_job_ids_for_cert:
@@ -653,14 +607,8 @@ def submit_hitl_override(
 def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
     """
     [Master AI Re-inspection Engine]
-    HITL 관리자가 재검수를 요청하면, 앱 전체가 공유하는 단일 Celery 파이프라인
-    (app.worker.tasks.process_inspection - WBF+GPT-4o Vision Agent, Redlock+DLQ)으로
-    재큐잉한다.
-
-    [수정 이력] 과거에는 요청을 블로킹하며 이미 폐기된 app.ai.graph.build_wms_graph()를
-    동기 실행했고, 존재하지 않는 JobStatusEnum.INSPECTED 값을 대입하는 등 실행 자체가
-    불가능한 버그가 있었다 (Pipeline A/B 통합 작업 중 발견). /inbound/retry와 동일한
-    비동기 재큐잉 패턴으로 통일한다.
+    HITL 관리자가 재검수를 요청하면, 앱 전체가 공유하는 단일 Celery 파이프라인(app.worker.tasks.process_inspection - WBF+GPT-4o Vision Agent, Redlock+DLQ)으로 재큐잉한다.
+    과거에는 요청을 블로킹하며 이미 폐기된 app.ai.graph.build_wms_graph()를 동기 실행했고, 존재하지 않는 JobStatusEnum.INSPECTED 값을 대입하는 등 실행 자체가 불가능한 버그가 있었다 (Pipeline A/B 통합 작업 중 발견). /inbound/retry와 동일한 비동기 재큐잉 패턴으로 통일한다.
     """
     try:
         job_uuid = UUID(job_id)
@@ -675,16 +623,14 @@ def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
         if used_item and used_item.source_job_id:
             job = session.get(ReturnJob, used_item.source_job_id)
 
-    # [수정 이력] 여기서 `job = session.query(ReturnJob).first()`로 폴백하고 있었다.
-    # 잘못된 ID로 재검수를 눌러도 404가 아니라 "DB의 아무 검수 작업 한 건"을 다시 큐에
-    # 밀어넣어, 전혀 관계없는 도서가 재검수되고 그 등급이 덮어써졌다. 정직하게 404를 낸다.
+    # 잘못된 ID로 재검수를 눌러도 404가 아니라 "DB의 아무 검수 작업 한 건"을 다시 큐에 밀어넣어, 전혀 관계없는 도서가 재검수되고 그 등급이 덮어써졌다. 정직하게 404를 낸다.
     if not job:
         raise NotFoundException(f"ReturnJob with ID {job_id} not found")
 
     if not job.image_urls:
         raise BadRequestException("No images found for this job.")
 
-    # was_hitl을 process_inspection에 태스크 인자로 직접 넘긴다. 배경: 01-freeze-zones.md.
+    # was_hitl을 process_inspection에 태스크 인자로 직접 넘긴다.
     was_hitl = str(job.status) == JobStatusEnum.HITL_REQUIRED.value
 
     job.status = JobStatusEnum.PENDING.value
@@ -724,8 +670,7 @@ def get_hitl_assist_briefing(
       2) 유사 과거 판정  - 같은 결함 유형 + 인접 UBCI 점수대의 확정 이력 (SQL)
       3) 쟁점 정리       - 위 둘을 근거로 GPT-4o-mini가 작성
 
-    LLM은 결재를 대신 결정하지 않는다. 최종 판단 권한은 관리자에게 있으며, 응답의
-    disclaimer 필드가 이를 명시한다.
+    LLM은 결재를 대신 결정하지 않는다. 최종 판단 권한은 관리자에게 있으며, 응답의 disclaimer 필드가 이를 명시한다.
     """
     from app.models.wms import Book
     from app.core.rag_service import build_hitl_briefing

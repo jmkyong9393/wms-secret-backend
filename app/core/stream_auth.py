@@ -1,7 +1,6 @@
 """SSE 스트림 접근 인가.
 
-EventSource는 커스텀 헤더를 못 붙이므로 쿠키(같은 오리진 기본) 또는
-1회성 티켓(`?ticket=`) 두 경로로 인가한다.
+EventSource는 커스텀 헤더를 못 붙이므로 쿠키(같은 오리진 기본) 또는 1회성 티켓(`?ticket=`) 두 경로로 인가한다.
 """
 from typing import Optional
 

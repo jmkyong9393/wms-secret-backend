@@ -199,8 +199,7 @@ def build_vector_db(rebuild: bool = False):
     # 지식베이스는 두 축이다.
     #   ① policy_data_master.yaml - 외부 법령·약관·플랫폼 운영정책 (규범적 근거)
     #   ② WMS_표준_운영_정책서.md  - 내부 실행 기준 (AI 임계값·상태 전이·SLA)
-    # 감점 근거 인용은 대부분 ②를 가리키고, ①은 반품 가능 여부·비용 부담 같은
-    # 거래 조건을 다룰 때 인용된다.
+    # 감점 근거 인용은 대부분 ②를 가리키고, ①은 반품 가능 여부·비용 부담 같은 거래 조건을 다룰 때 인용된다.
     data = load_yaml_knowledge()
     ids, texts, metadatas = to_documents(data)
 

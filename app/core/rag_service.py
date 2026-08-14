@@ -1,21 +1,14 @@
 """
 RAG 조회 서비스 (ChromaDB 클라이언트-서버 + text-embedding-3-small)
 
-[배경] app/core/rag_builder.py는 policy_data_master.yaml을 ChromaDB로 임베딩하는 코드가
-완성되어 있었으나 호출부가 0건이고 chromadb 의존성 자체가 pyproject에 없어, 인덱스가
-한 번도 빌드된 적이 없었다. "RAG Vector Engine"은 문서에만 존재하는 유령 컴포넌트였다.
-
+[배경] app/core/rag_builder.py는 policy_data_master.yaml을 ChromaDB로 임베딩하는 코드가 완성되어 있었으나 호출부가 0건이고 chromadb 의존성 자체가 pyproject에 없어, 인덱스가 한 번도 빌드된 적이 없었다. "RAG Vector Engine"은 문서에만 존재하는 유령 컴포넌트였다.
 [실행 방식 - 임베디드가 아니라 클라이언트-서버]
-chromadb 풀 패키지는 bcrypt>=4.0.1을 요구하는데 이 프로젝트는 passlib 1.7.4 호환을 위해
-bcrypt==3.2.2로 고정되어 있어 함께 설치할 수 없다(설치 강행 시 로그인이 깨진다).
+chromadb 풀 패키지는 bcrypt>=4.0.1을 요구하는데 이 프로젝트는 passlib 1.7.4 호환을 위해 bcrypt==3.2.2로 고정되어 있어 함께 설치할 수 없다(설치 강행 시 로그인이 깨진다).
 docker-compose에 이미 정의된 chroma-server 컨테이너에 얇은 chromadb-client로 붙는다.
-무거운 의존성은 전부 Chroma 컨테이너 안에 있으므로 백엔드와 충돌하지 않고,
-워커를 스케일 아웃해도 인덱스 하나를 공유한다.
+무거운 의존성은 전부 Chroma 컨테이너 안에 있으므로 백엔드와 충돌하지 않고, 워커를 스케일 아웃해도 인덱스 하나를 공유한다.
 
 [설계 원칙 - RAG는 점수를 정하지 않는다]
-UBCI 점수·등급은 UBCI_Specification 매트릭스 산식이 결정론적으로 산출한다. RAG는 이미
-확정된 감점에 **근거 조항을 찾아 붙이는 역할(grounding)만** 한다. 검색 결과가 점수에
-영향을 주면 같은 도서가 실행할 때마다 다른 등급을 받게 되어 감사 추적성이 깨진다.
+UBCI 점수·등급은 UBCI_Specification 매트릭스 산식이 결정론적으로 산출한다. RAG는 이미 확정된 감점에 **근거 조항을 찾아 붙이는 역할(grounding)만** 한다. 검색 결과가 점수에 영향을 주면 같은 도서가 실행할 때마다 다른 등급을 받게 되어 감사 추적성이 깨진다.
 """
 from __future__ import annotations
 
@@ -64,8 +57,7 @@ def get_embedder():
     """
     OpenAI 임베딩 모델. 키가 없거나 실패하면 None (fail-open).
 
-    API 키는 settings(.env)에서 명시적으로 읽어 넘긴다. CLI로 빌더를 직접 실행할 때는
-    환경변수가 주입되어 있지 않아 OPENAI_API_KEY만 바라보면 초기화에 실패한다.
+    API 키는 settings(.env)에서 명시적으로 읽어 넘긴다. CLI로 빌더를 직접 실행할 때는 환경변수가 주입되어 있지 않아 OPENAI_API_KEY만 바라보면 초기화에 실패한다.
     """
     global _embedder
     if _embedder is None:
@@ -131,8 +123,7 @@ def search_policy(query: str, k: int = 3, where: Optional[Dict[str, Any]] = None
     out: List[Dict[str, Any]] = []
     for doc, md, dist in zip(docs, metas, dists):
         md = md or {}
-        # Chroma는 거리(distance)를 반환한다. 코사인 거리를 0~1 유사도로 환산해
-        # 호출부가 임계값 판단을 직관적으로 할 수 있게 한다.
+        # Chroma는 거리(distance)를 반환한다. 코사인 거리를 0~1 유사도로 환산해 호출부가 임계값 판단을 직관적으로 할 수 있게 한다.
         similarity = max(0.0, 1.0 - float(dist))
         out.append({
             "chunk_id": md.get("chunk_id"),
@@ -150,8 +141,7 @@ def search_policy(query: str, k: int = 3, where: Optional[Dict[str, Any]] = None
 
 
 # 결함 코드 -> 규정 검색 질의문.
-# "DMG_INT_DOODLE" 같은 내부 코드를 그대로 임베딩하면 규정 문서의 자연어와 매칭되지 않으므로,
-# 규정집에서 실제로 쓰는 표현으로 번역한 질의를 사용한다.
+# "DMG_INT_DOODLE" 같은 내부 코드를 그대로 임베딩하면 규정 문서의 자연어와 매칭되지 않으므로, 규정집에서 실제로 쓰는 표현으로 번역한 질의를 사용한다.
 _DEDUCTION_QUERY_MAP = {
     "DMG_INT_DOODLE": "중고 도서 내지 필기 밑줄 낙서 감점 기준",
     "DMG_INT_STAIN": "중고 도서 내지 오염 얼룩 감점 기준",
@@ -214,8 +204,7 @@ def build_hitl_briefing(
       2) 유사 과거 판정 사례 (호출부가 DB에서 조회해 넘겨줌 - 이건 RAG가 아니라 SQL이다)
       3) 위 둘을 근거로 한 판단 재료 정리 (GPT-4o-mini)
 
-    LLM이 결재를 대신하지 않도록 프롬프트에서 "결정하지 말고 판단 재료를 정리하라"고
-    명시한다. 최종 결정 권한은 사람에게 있다.
+    LLM이 결재를 대신하지 않도록 프롬프트에서 "결정하지 말고 판단 재료를 정리하라"고 명시한다. 최종 결정 권한은 사람에게 있다.
     """
     import json
 
