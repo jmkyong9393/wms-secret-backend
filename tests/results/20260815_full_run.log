@@ -1,0 +1,427 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend
+configfile: pyproject.toml
+plugins: anyio-4.14.1, langsmith-0.9.4, cov-7.1.0
+collecting ... collected 212 items
+
+tests/api/v1/test_auth_flow.py::test_login_success_sets_httponly_cookie PASSED [  0%]
+tests/api/v1/test_auth_flow.py::test_login_unknown_employee_returns_401 PASSED [  0%]
+tests/api/v1/test_auth_flow.py::test_login_missing_field_returns_422 PASSED [  1%]
+tests/api/v1/test_auth_flow.py::test_me_without_token_returns_401 PASSED [  1%]
+tests/api/v1/test_auth_flow.py::test_me_with_valid_token PASSED          [  2%]
+tests/api/v1/test_auth_flow.py::test_me_with_forged_token_returns_401 PASSED [  2%]
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404 PASSED [  3%]
+tests/api/v1/test_error_contract.py::test_unknown_route_returns_404 PASSED [  3%]
+tests/api/v1/test_health.py::test_health_check PASSED                    [  4%]
+tests/api/v1/test_rbac.py::test_admin_endpoint_without_token_returns_401 PASSED [  4%]
+tests/api/v1/test_rbac.py::test_admin_endpoint_as_worker_returns_403 PASSED [  5%]
+tests/api/v1/test_rbac.py::test_admin_endpoint_as_master_returns_200 PASSED [  5%]
+tests/api/v1/test_rbac.py::test_dashboard_as_worker_returns_403 PASSED   [  6%]
+tests/api/v1/test_read_endpoints.py::test_inventory_list_returns_array PASSED [  6%]
+tests/api/v1/test_read_endpoints.py::test_orders_list_returns_array PASSED [  7%]
+tests/api/v1/test_read_endpoints.py::test_notifications_list PASSED      [  7%]
+tests/api/v1/test_read_endpoints.py::test_dashboard_kpi_as_master PASSED [  8%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-0] PASSED [  8%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-0.1] PASSED [  8%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-1] PASSED [  9%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-4.9] PASSED [  9%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-5] PASSED [ 10%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-5.1] PASSED [ 10%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-10] PASSED [ 11%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-14.9] PASSED [ 11%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-15] PASSED [ 12%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-15.1] PASSED [ 12%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-30] PASSED [ 13%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-80] PASSED [ 13%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule0-_legacy_scratch-100] PASSED [ 14%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-0] PASSED [ 14%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-0.1] PASSED [ 15%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-1] PASSED [ 15%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-4.9] PASSED [ 16%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-5] PASSED [ 16%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-5.1] PASSED [ 16%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-10] PASSED [ 17%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-14.9] PASSED [ 17%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-15] PASSED [ 18%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-15.1] PASSED [ 18%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-30] PASSED [ 19%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-80] PASSED [ 19%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule1-_legacy_tear-100] PASSED [ 20%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-0] PASSED [ 20%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-0.1] PASSED [ 21%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-1] PASSED [ 21%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-4.9] PASSED [ 22%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-5] PASSED [ 22%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-5.1] PASSED [ 23%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-10] PASSED [ 23%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-14.9] PASSED [ 24%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-15] PASSED [ 24%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-15.1] PASSED [ 25%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-30] PASSED [ 25%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-80] PASSED [ 25%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule2-_legacy_sticker-100] PASSED [ 26%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-0] PASSED [ 26%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-0.1] PASSED [ 27%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-1] PASSED [ 27%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-4.9] PASSED [ 28%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-5] PASSED [ 28%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-5.1] PASSED [ 29%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-10] PASSED [ 29%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-14.9] PASSED [ 30%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-15] PASSED [ 30%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-15.1] PASSED [ 31%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-30] PASSED [ 31%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-80] PASSED [ 32%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule3-_legacy_crush-100] PASSED [ 32%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-0] PASSED [ 33%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-0.1] PASSED [ 33%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-1] PASSED [ 33%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-4.9] PASSED [ 34%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-5] PASSED [ 34%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-5.1] PASSED [ 35%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-10] PASSED [ 35%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-14.9] PASSED [ 36%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-15] PASSED [ 36%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-15.1] PASSED [ 37%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-30] PASSED [ 37%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-80] PASSED [ 38%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule4-_legacy_spine-100] PASSED [ 38%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-0] PASSED [ 39%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-0.1] PASSED [ 39%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-1] PASSED [ 40%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-4.9] PASSED [ 40%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-5] PASSED [ 41%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-5.1] PASSED [ 41%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-10] PASSED [ 41%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-14.9] PASSED [ 42%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-15] PASSED [ 42%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-15.1] PASSED [ 43%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-30] PASSED [ 43%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-80] PASSED [ 44%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule5-_legacy_stain-100] PASSED [ 44%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-0] PASSED [ 45%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-0.1] PASSED [ 45%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-1] PASSED [ 46%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-4.9] PASSED [ 46%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-5] PASSED [ 47%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-5.1] PASSED [ 47%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-10] PASSED [ 48%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-14.9] PASSED [ 48%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-15] PASSED [ 49%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-15.1] PASSED [ 49%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-30] PASSED [ 50%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-80] PASSED [ 50%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule6-_legacy_default-100] PASSED [ 50%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-0] PASSED [ 51%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-0.1] PASSED [ 51%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-1] PASSED [ 52%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-4.9] PASSED [ 52%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-5] PASSED [ 53%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-5.1] PASSED [ 53%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-10] PASSED [ 54%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-14.9] PASSED [ 54%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-15] PASSED [ 55%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-15.1] PASSED [ 55%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-30] PASSED [ 56%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-80] PASSED [ 56%]
+tests/test_ubci_matrix_equivalence.py::test_tiered_rules_match_legacy[rule7-_legacy_wear_base-100] PASSED [ 57%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-0] PASSED [ 57%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-0.1] PASSED [ 58%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-1] PASSED [ 58%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-4.9] PASSED [ 58%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-5] PASSED [ 59%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-5.1] PASSED [ 59%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-10] PASSED [ 60%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-14.9] PASSED [ 60%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-15] PASSED [ 61%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-15.1] PASSED [ 61%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-30] PASSED [ 62%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-80] PASSED [ 62%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule0-15-100] PASSED [ 63%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-0] PASSED [ 63%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-0.1] PASSED [ 64%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-1] PASSED [ 64%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-4.9] PASSED [ 65%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-5] PASSED [ 65%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-5.1] PASSED [ 66%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-10] PASSED [ 66%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-14.9] PASSED [ 66%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-15] PASSED [ 67%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-15.1] PASSED [ 67%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-30] PASSED [ 68%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-80] PASSED [ 68%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule1-10-100] PASSED [ 69%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-0] PASSED [ 69%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-0.1] PASSED [ 70%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-1] PASSED [ 70%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-4.9] PASSED [ 71%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-5] PASSED [ 71%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-5.1] PASSED [ 72%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-10] PASSED [ 72%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-14.9] PASSED [ 73%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-15] PASSED [ 73%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-15.1] PASSED [ 74%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-30] PASSED [ 74%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-80] PASSED [ 75%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule2-10-100] PASSED [ 75%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-0] PASSED [ 75%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-0.1] PASSED [ 76%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-1] PASSED [ 76%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-4.9] PASSED [ 77%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-5] PASSED [ 77%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-5.1] PASSED [ 78%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-10] PASSED [ 78%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-14.9] PASSED [ 79%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-15] PASSED [ 79%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-15.1] PASSED [ 80%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-30] PASSED [ 80%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-80] PASSED [ 81%]
+tests/test_ubci_matrix_equivalence.py::test_flat_rules_are_area_independent[rule3-15-100] PASSED [ 81%]
+tests/test_ubci_matrix_equivalence.py::test_discolor_level_matches_legacy[1-2] PASSED [ 82%]
+tests/test_ubci_matrix_equivalence.py::test_discolor_level_matches_legacy[2-5] PASSED [ 82%]
+tests/test_ubci_matrix_equivalence.py::test_discolor_level_matches_legacy[3-10] PASSED [ 83%]
+tests/test_ubci_matrix_equivalence.py::test_doodle_page_threshold_matches_legacy[0-10] PASSED [ 83%]
+tests/test_ubci_matrix_equivalence.py::test_doodle_page_threshold_matches_legacy[1-10] PASSED [ 83%]
+tests/test_ubci_matrix_equivalence.py::test_doodle_page_threshold_matches_legacy[5-10] PASSED [ 84%]
+tests/test_ubci_matrix_equivalence.py::test_doodle_page_threshold_matches_legacy[6-15] PASSED [ 84%]
+tests/test_ubci_matrix_equivalence.py::test_doodle_page_threshold_matches_legacy[100-15] PASSED [ 85%]
+tests/test_ubci_matrix_equivalence.py::test_edge_wear_total_matches_legacy[0-1] PASSED [ 85%]
+tests/test_ubci_matrix_equivalence.py::test_edge_wear_total_matches_legacy[3-1] PASSED [ 86%]
+tests/test_ubci_matrix_equivalence.py::test_edge_wear_total_matches_legacy[3-4] PASSED [ 86%]
+tests/test_ubci_matrix_equivalence.py::test_edge_wear_total_matches_legacy[10-2] PASSED [ 87%]
+tests/test_ubci_matrix_equivalence.py::test_edge_wear_total_matches_legacy[20-1] PASSED [ 87%]
+tests/test_ubci_matrix_equivalence.py::test_edge_wear_total_matches_legacy[20-4] PASSED [ 88%]
+tests/test_ubci_matrix_equivalence.py::test_edge_wear_total_matches_legacy[50-8] PASSED [ 88%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[100-S\uae09 (MINT)-APPROVE] PASSED [ 89%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[95-S\uae09 (MINT)-APPROVE] PASSED [ 89%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[94-A\uae09 (GOOD)-APPROVE] PASSED [ 90%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[85-A\uae09 (GOOD)-APPROVE] PASSED [ 90%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[84-B\uae09 (NORMAL)-APPROVE] PASSED [ 91%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[65-B\uae09 (NORMAL)-APPROVE] PASSED [ 91%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[64-REJECT C\uae09 (\ud3d0\uae30)-REJECT] PASSED [ 91%]
+tests/test_ubci_matrix_equivalence.py::test_grade_and_decision_match_legacy[0-REJECT C\uae09 (\ud3d0\uae30)-REJECT] PASSED [ 92%]
+tests/test_ubci_matrix_equivalence.py::test_text_overlap_exemptions_preserved PASSED [ 92%]
+tests/test_ubci_matrix_equivalence.py::test_every_rule_carries_a_clause_reference PASSED [ 93%]
+tests/unit/test_best_model_and_jsonb.py::test_wbf_ensemble_model_paths_exist PASSED [ 93%]
+tests/unit/test_best_model_and_jsonb.py::test_vision_result_bbox_and_jsonb_serialization PASSED [ 94%]
+tests/unit/test_best_model_and_jsonb.py::test_defect_detail_optional_fields_default_safely PASSED [ 94%]
+tests/unit/test_best_model_and_jsonb.py::test_return_job_agent_logs_jsonb_roundtrip PASSED [ 95%]
+tests/unit/test_dlq_retention_policy.py::test_push_to_dlq_applies_retention_policy PASSED [ 95%]
+tests/unit/test_dlq_retention_policy.py::test_push_to_dlq_survives_redis_failure PASSED [ 96%]
+tests/unit/test_restock_scan_batch.py::test_batch_enqueues_scan_task PASSED [ 96%]
+tests/unit/test_restock_scan_batch.py::test_batch_falls_back_to_inprocess_on_broker_failure PASSED [ 97%]
+tests/unit/test_zpl_label_service.py::test_certificate_qr_url_points_to_lpn_route PASSED [ 97%]
+tests/unit/test_zpl_label_service.py::test_lpn_label_contains_qr_and_barcode_text PASSED [ 98%]
+tests/unit/test_zpl_label_service.py::test_ubci_label_contains_grade_and_score PASSED [ 98%]
+tests/unit/test_zpl_label_service.py::test_ubci_label_without_score_prints_dash PASSED [ 99%]
+tests/unit/test_zpl_label_service.py::test_zpl_control_characters_are_sanitized PASSED [ 99%]
+tests/unit/test_zpl_label_service.py::test_label_dimensions_match_203dpi_50x31mm PASSED [100%]
+
+============================== warnings summary ===============================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+app\main.py:151
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\main.py:151: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+.venv\Lib\site-packages\fastapi\applications.py:4675
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\.venv\Lib\site-packages\fastapi\applications.py:4675: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+tests/api/v1/test_auth_flow.py::test_me_with_valid_token
+tests/api/v1/test_rbac.py::test_admin_endpoint_as_worker_returns_403
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\tests\api\v1\conftest.py:26: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    {"sub": employee_id, "exp": dt.datetime.utcnow() + dt.timedelta(minutes=30)},
+
+tests/api/v1/test_auth_flow.py::test_me_with_forged_token_returns_401
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\.venv\Lib\site-packages\jwt\api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 12 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:562: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    new_inv = db.query(Inventory).filter(Inventory.id == parsed_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:568: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    new_invs = db.query(Inventory).all()
+
+tests/api/v1/test_error_contract.py: 47 warnings
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:573: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    b = db.query(Book).filter(Book.id == inv.book_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:620: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    item = db.query(InventoryUsedItem).filter(InventoryUsedItem.id == parsed_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:625: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    item = db.query(InventoryUsedItem).filter(InventoryUsedItem.lpn_barcode == item_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:634: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    job = db.query(ReturnJob).filter(ReturnJob.id == parsed_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:640: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    db.query(ReturnJob)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\tests\results\20260815_junit.xml -
+=============================== tests coverage ================================
+______________ coverage: platform win32, python 3.12.13-final-0 _______________
+
+Name                                              Stmts   Miss  Cover
+---------------------------------------------------------------------
+app\ai\agents\__init__.py                             9      0   100%
+app\ai\agents\common.py                              59     45    24%
+app\ai\agents\critic.py                              68     59    13%
+app\ai\agents\detector.py                            32     24    25%
+app\ai\agents\llm.py                                  9      4    56%
+app\ai\agents\policy.py                             286    273     5%
+app\ai\agents\report.py                             113     96    15%
+app\ai\agents\schemas.py                             67      0   100%
+app\ai\agents\vision.py                             301    276     8%
+app\ai\bin_packing_agent.py                         143     73    49%
+app\ai\langgraph_wrapper.py                          56     47    16%
+app\ai\state.py                                      37      0   100%
+app\ai\wbf_detector.py                              289    219    24%
+app\batch\__init__.py                                 0      0   100%
+app\batch\restock_scan.py                            17      2    88%
+app\core\aws_auth_service.py                         25     15    40%
+app\core\celery_app.py                                6      0   100%
+app\core\config.py                                   55      0   100%
+app\core\constants.py                                29      1    97%
+app\core\exceptions.py                               44     12    73%
+app\core\label_printer_service.py                    30     18    40%
+app\core\limiter.py                                  38     13    66%
+app\core\middleware.py                               14      0   100%
+app\core\password_policy.py                          50     40    20%
+app\core\redis_pubsub.py                             11      4    64%
+app\core\security.py                                 40      3    92%
+app\core\settings_service.py                         26     18    31%
+app\core\sse_ticket_service.py                       35     25    29%
+app\core\stream_auth.py                              30     18    40%
+app\core\ubci_matrix.py                              56      0   100%
+app\core\zpl_label_service.py                        75     24    68%
+app\db\session.py                                    12      0   100%
+app\domains\admin\__init__.py                         0      0   100%
+app\domains\admin\router.py                         357    277    22%
+app\domains\auth\router.py                           71     18    75%
+app\domains\auth\schemas.py                          22      0   100%
+app\domains\auth\throttle.py                         51     19    63%
+app\domains\board\__init__.py                         0      0   100%
+app\domains\board\router.py                          50     24    52%
+app\domains\board\schemas.py                         53      0   100%
+app\domains\board\service.py                        105     83    21%
+app\domains\dashboard\router.py                      84     52    38%
+app\domains\dashboard\weekly_insight_service.py      69     58    16%
+app\domains\fds\__init__.py                           0      0   100%
+app\domains\fds\router.py                            15      3    80%
+app\domains\fds\service.py                          166    125    25%
+app\domains\inbound\router.py                       231    183    21%
+app\domains\inbound\service.py                       95     74    22%
+app\domains\inventory\bin_packing.py                 44     36    18%
+app\domains\inventory\packing3d.py                  149    102    32%
+app\domains\inventory\router.py                     278    145    48%
+app\domains\inventory\service.py                    176    158    10%
+app\domains\labels\__init__.py                        0      0   100%
+app\domains\labels\router.py                         69     26    62%
+app\domains\notifications\__init__.py                 0      0   100%
+app\domains\notifications\router.py                 104     68    35%
+app\domains\notifications\service.py                 48     31    35%
+app\domains\orders\picking.py                       166    146    12%
+app\domains\orders\pricing.py                        73     55    25%
+app\domains\orders\router.py                        311    250    20%
+app\domains\orders\schemas.py                        36      0   100%
+app\domains\orders\service.py                       122    105    14%
+app\domains\po\router.py                             34     10    71%
+app\domains\po\service.py                           111     95    14%
+app\domains\research\__init__.py                      0      0   100%
+app\domains\research\router.py                       46     32    30%
+app\domains\returns\job_service.py                   73     59    19%
+app\domains\returns\router.py                        87     70    20%
+app\domains\returns\schemas.py                        7      0   100%
+app\domains\returns\service.py                       22     13    41%
+app\domains\settings\__init__.py                      0      0   100%
+app\domains\settings\router.py                       22      4    82%
+app\domains\uploads\router.py                        59     37    37%
+app\domains\users\router.py                          96     65    32%
+app\domains\users\schemas.py                         58      0   100%
+app\domains\users\service.py                        178    125    30%
+app\main.py                                         114     26    77%
+app\models\wms.py                                   399     16    96%
+app\worker\__init__.py                                0      0   100%
+app\worker\tasks.py                                 340    275    19%
+---------------------------------------------------------------------
+TOTAL                                              6653   4174    37%
+====================== 212 passed, 59 warnings in 10.28s ======================

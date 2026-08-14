@@ -1,0 +1,121 @@
+........................................................................ [ 33%]
+........................................................................ [ 67%]
+....................................................................     [100%]
+============================== warnings summary ===============================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+app\main.py:151
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\main.py:151: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+.venv\Lib\site-packages\fastapi\applications.py:4675
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\.venv\Lib\site-packages\fastapi\applications.py:4675: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+tests/api/v1/test_auth_flow.py::test_me_with_valid_token
+tests/api/v1/test_rbac.py::test_admin_endpoint_as_worker_returns_403
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\tests\api\v1\conftest.py:26: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    {"sub": employee_id, "exp": dt.datetime.utcnow() + dt.timedelta(minutes=30)},
+
+tests/api/v1/test_auth_flow.py::test_me_with_forged_token_returns_401
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\.venv\Lib\site-packages\jwt\api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 12 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+    return self._jws.encode(
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:562: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    new_inv = db.query(Inventory).filter(Inventory.id == parsed_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:568: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    new_invs = db.query(Inventory).all()
+
+tests/api/v1/test_error_contract.py: 47 warnings
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:573: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    b = db.query(Book).filter(Book.id == inv.book_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:620: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    item = db.query(InventoryUsedItem).filter(InventoryUsedItem.id == parsed_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:625: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    item = db.query(InventoryUsedItem).filter(InventoryUsedItem.lpn_barcode == item_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:634: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    job = db.query(ReturnJob).filter(ReturnJob.id == parsed_id).first()
+
+tests/api/v1/test_error_contract.py::test_inventory_detail_unknown_id_returns_404
+  E:\취업\KT AIVLE School\빅프로젝트\develop\solo_develop\wms-secret-backend\app\domains\inventory\router.py:640: DeprecationWarning: 
+          🚨 You probably want to use `session.exec()` instead of `session.query()`.
+  
+          `session.exec()` is SQLModel's own short version with increased type
+          annotations.
+  
+          Or otherwise you might want to use `session.execute()` instead of
+          `session.query()`.
+          
+    db.query(ReturnJob)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+212 passed, 59 warnings in 5.12s
