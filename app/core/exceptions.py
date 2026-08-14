@@ -1,10 +1,7 @@
 from fastapi import HTTPException, status
 
-# [2026-08-06 신설] 실패 사유 식별 코드.
-#
-# 종전에는 프론트가 HTTP 상태코드와 영문 detail 문자열만 보고 사유를 추측했다. 그래서
-# 429(시도 제한)가 "사번 또는 비밀번호가 올바르지 않습니다"로 표시되는 등, 화면에 뜬 사유와
-# 실제 원인이 어긋나 장애 진단이 불가능했다. 사람이 읽는 문구가 아니라 **기계가 분기할 수 있는
+# 실패 사유 식별 코드.
+# 예전에는 프론트가 HTTP 상태코드와 영문 detail 문자열만 보고 사유를 추측했다. 그래서 429(시도 제한)가 "사번 또는 비밀번호가 올바르지 않습니다"로 표시되는 등, 화면에 뜬 사유와     # 실제 원인이 어긋나 장애 진단이 불가능했다. 사람이 읽는 문구가 아니라 기계가 분기할 수 있는
 # 코드**를 별도로 실어 보낸다 (문구는 바뀌어도 코드는 계약으로 고정된다).
 
 
@@ -54,9 +51,7 @@ class InvalidCredentialsException(UnauthorizedException):
     error_code = "AUTH_INVALID_CREDENTIALS"
 
     def __init__(self, remaining_attempts: int | None = None):
-        # 사번 미존재와 비밀번호 불일치를 구분해 알려주지 않는다 - 유효 사번을 열거당하는
-        # 계정 탐색(user enumeration)의 통로가 되기 때문이다. 대신 "남은 시도 횟수"를 줘서
-        # 사용자가 자기 상태를 파악할 수 있게 한다.
+        # 사번 미존재와 비밀번호 불일치를 구분해 알려주지 않는다 - 유효 사번을 열거당하는 계정 탐색(user enumeration)의 통로가 되기 때문이다. 대신 "남은 시도 횟수"를 줘서 사용자가 자기 상태를 파악할 수 있게 한다.
         super().__init__(detail="사번 또는 비밀번호가 일치하지 않습니다.")
         self.remaining_attempts = remaining_attempts
 

@@ -6,21 +6,11 @@ QR에는 LPN 원문 대신 /lpn/{lpn} URL을 넣어 작업자 스캔과 소비�
 내부 상세를, 아니면 /certificate/{lpn} 공개 보증서로 자동 전환해 보여준다 — 이 함수는
 그 진입점만 만든다.
 
-[2026-08-11] 예전에는 이 함수가 /certificate/{lpn}을 직접 가리켰다. 그런데
-/certificate/[lpn] 페이지는 (프론트 사이드 변경으로) role 분기 없는 순수 고객 화면으로
-분리되어, 로그인한 직원이 스캔해도 항상 고객 화면만 보고 내부 상세로 못 갔다.
-역할 분기는 /lpn/[lpn] 페이지에만 있으므로, QR 자체가 그 페이지를 가리키도록 정정한다.
-
 레이아웃은 제조사 인쇄 여백(왼쪽 1.5mm / 위쪽 1.44mm)에 미관용 여유 인셋을 더해
 ^LH로 원점을 밀어낸 뒤, 그 안에 액자형 테두리 + QR/텍스트 2단 구성을 그린다.
 좌표는 전부 이 원점 기준 상대값이다.
 
-[2026-08-08] 실측 인쇄(LPN-260803-B007)에서 테두리가 물리적 왼쪽 가장자리에
-붙어 보인다는 피드백으로 _VISUAL_INSET_DOTS를 추가했다. 제조사 여백은 "인쇄
-가능한 최소 여백"이지 "보기 좋은 여백"이 아니므로, 최소 여백 위에 순수 미관용
-여유를 더 얹는다. 같은 실측에서 12dot(≈1.5mm) 폰트로 찍은 하단 문구
-("SCAN FOR ITEM OR CERTIFICATE")의 F/R 획이 열전사 헤드 해상도에서 뭉개져
-읽기 어려웠던 것도 확인해, 하단 문구 폰트를 15dot로 키웠다.
+실측 인쇄에서 테두리가 물리적 왼쪽 가장자리에 붙어 보인다는 피드백으로 _VISUAL_INSET_DOTS를 추가했다. 제조사 여백은 "인쇄 가능한 최소 여백"이지 "보기 좋은 여백"이 아니므로, 최소 여백 위에 순수 미관용 여유를 더 얹는다. 같은 실측에서 12dot(≈1.5mm) 폰트로 찍은 하단 문구 ("SCAN FOR ITEM OR CERTIFICATE")의 F/R 획이 열전사 헤드 해상도에서 뭉개져 읽기 어려웠던 것도 확인해, 하단 문구 폰트를 15dot로 키웠다.
 """
 from decimal import Decimal
 from pathlib import Path
@@ -29,7 +19,7 @@ from app.core.config import settings
 
 # 한글 라벨 텍스트 렌더용 폰트 (나눔고딕 Bold, OFL 라이선스).
 # 프린터 내장 폰트(A0)는 한글 글리프가 없어 한글 줄이 통째로 누락되거나 깨진다
-# (실측 인쇄 LPN-260809-B697). 비ASCII 텍스트는 서버에서 비트맵(^GFA)으로 렌더한다.
+# 비ASCII 텍스트는 서버에서 비트맵(^GFA)으로 렌더한다.
 # Bold를 쓰는 이유: 203dpi 열전사에서 Regular의 가는 획이 끊겨 보인다 (실측 피드백).
 _KOREAN_FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NanumGothic-Bold.ttf"
 
@@ -64,14 +54,8 @@ def _sanitize_zpl_text(value: str) -> str:
 # 물리적 가장자리에 붙어 보이지 않도록 추가로 밀어내는 값이다.
 _VISUAL_INSET_DOTS = 14
 
-# 프레임 내부 2단 레이아웃 고정 좌표 (원점 기준). 실측 인쇄(LPN-260803-B007)
-# 피드백을 반영해 프레임을 원점에서 한 번 더 안쪽으로 넣고, 하단 문구 폰트를
-# 15dot로 키웠다.
-#
-# [2026-08-08] 실측 인쇄(LPN-260808-TEST)에서 QR이 구분선(당시 138)과 텍스트
-# 컬럼을 침범했다. /certificate/{lpn} 풀 URL을 인코딩하는 QR은 예상(mag5≈128dot)
-# 보다 커서(mag5 실측 ≈144dot) BQN 배율을 5→4로 낮추고, 그만큼 좁아진 QR 폭에
-# 맞춰 구분선·텍스트 컬럼 좌표를 다시 뒤로 뺐다.
+# 프레임 내부 2단 레이아웃 고정 좌표 (원점 기준). 실측 인쇄 피드백을 반영해 프레임을 원점에서 한 번 더 안쪽으로 넣고, 하단 문구 폰트를 15dot로 키웠다.
+# 실측 인쇄(LPN-260808-TEST)에서 QR이 구분선(당시 138)과 텍스트 컬럼을 침범했다. /certificate/{lpn} 풀 URL을 인코딩하는 QR은 예상(mag5≈128dot) 보다 커서(mag5 실측 ≈144dot) BQN 배율을 5→4로 낮추고, 그만큼 좁아진 QR 폭에 맞춰 구분선·텍스트 컬럼 좌표를 다시 뒤로 뺐다.
 _FRAME_WIDTH = 360
 _FRAME_HEIGHT = 212
 _QR_MAGNIFICATION = 4
@@ -85,7 +69,7 @@ _FOOTER_FONT_SIZE = 15
 
 
 def _build_label_header() -> list[str]:
-    """50mm × 31mm 라벨에 공통으로 적용할 ZPL 헤더다. 인쇄 여백 + 미관용 인셋만큼 원점을 민다."""
+    """50mm * 31mm 라벨에 공통으로 적용할 ZPL 헤더다. 인쇄 여백 + 미관용 인셋만큼 원점을 민다."""
     label_width = _mm_to_dots(settings.LABEL_PRINTER_LABEL_WIDTH_MM)
     label_height = _mm_to_dots(settings.LABEL_PRINTER_LABEL_HEIGHT_MM)
     margin_left = _mm_to_dots(settings.LABEL_PRINTER_MARGIN_LEFT_MM) + _VISUAL_INSET_DOTS

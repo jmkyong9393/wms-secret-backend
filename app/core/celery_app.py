@@ -36,11 +36,8 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
 
     # Redis 브로커의 unacked 태스크 복원 대기 시간.
-    # 기본값 3600초라 워커가 죽으면 미완료 작업이 1시간 뒤에야 재전달된다
-    # (2026-08-05 카오스 테스트 실측으로 발견). 검수 태스크 최대 실행 시간
-    # (task_time_limit 360초)보다 길게 잡되 분 단위 복구가 되도록 480초로 설정.
-    # 주의: 실행 중 태스크가 이 시간을 넘기면 중복 전달될 수 있으나,
-    # Redlock 분산 락이 중복 처리를 차단한다.
+    # 검수 태스크 최대 실행 시간(task_time_limit 360초)보다 길게 잡되 분 단위 복구가 되도록 480초로 설정.
+    # 주의: 실행 중 태스크가 이 시간을 넘기면 중복 전달될 수 있으나, Redlock 분산 락이 중복 처리를 차단한다.
     broker_transport_options={"visibility_timeout": 480},
 
     # 장시간 실행 task 보호를 위한 실행 시간 제한
@@ -48,19 +45,15 @@ celery_app.conf.update(
     task_time_limit = 360, # 6분이 넘으면 강제 종료
 
     # 원장 기반 미아 작업 스위퍼 주기 실행.
-    # 종전에는 worker_ready 시그널(기동 시 1회)에만 걸려 있었는데, 스위퍼의 대상 조건이
-    # "2분 이상 방치된 PENDING"이라 워커 재기동 직후에는 방금 유실된 작업이 아직 2분이
-    # 안 돼 걸리지 않았다. 결과적으로 두 조건이 서로를 무력화해, 브로커에서 소실된 작업이
-    # 다음 재기동 때까지 무기한 방치됐다(2026-08-12 카오스 재실행에서 25분 방치 실측).
-    # 주기 실행으로 바꿔 재기동 없이도 복구되게 한다.
+    # worker_ready 시그널(기동 시 1회)에만 걸려 있었는데, 스위퍼의 대상 조건이 "2분 이상 방치된 PENDING"이라 워커 재기동 직후에는 방금 유실된 작업이 아직 2분이 안 돼 걸리지 않았다.
+    # 결과적으로 두 조건이 서로를 무력화해, 브로커에서 소실된 작업이 다음 재기동 때까지 무기한 방치됐다. 주기 실행으로 바꿔 재기동 없이도 복구되게 한다.
     beat_schedule={
         "requeue-stale-pending-inspections": {
             "task": "app.worker.tasks.sweep_stale_pending_inspections",
             "schedule": 60.0,  # 초. 스위퍼 자체가 멱등(터미널 검사+Redlock)이라 짧아도 안전
         },
         # 주간 인사이트 정규 생성. timezone="Asia/Seoul" + enable_utc=False라 crontab도 KST다.
-        # 00:00이 아니라 00:05인 이유: 자정 정각은 다른 일배치와 겹치기 쉽고, 주 경계 직후
-        # 몇 분은 직전 주 마지막 트랜잭션이 아직 커밋 중일 수 있어 여유를 둔다.
+        # 00:00이 아니라 00:05인 이유: 자정 정각은 다른 일배치와 겹치기 쉽고, 주 경계 직후 몇 분은 직전 주 마지막 트랜잭션이 아직 커밋 중일 수 있어 여유를 둔다.
         # 태스크가 멱등(직전 주는 없을 때만 생성, 현재 주는 force 재집계)이라 중복 실행도 안전하다.
         "generate-weekly-insight": {
             "task": "app.worker.tasks.generate_weekly_insight",

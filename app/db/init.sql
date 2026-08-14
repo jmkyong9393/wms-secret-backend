@@ -1,5 +1,4 @@
 -- WMS Core Database DDL (PostgreSQL)
--- 기반 문서: 01_엔지니어링_산출물.md (ver 1.5.2.0 - 단품 추적 LPN 바코드 체계 및 테이블 통폐합)
 
 -- 1. UUID 생성을 위한 확장 모듈 활성화
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -250,8 +249,7 @@ CREATE TABLE weekly_insights (
 
 -- 14. AI 피킹 지시서 (picking_instructions, picking_instruction_items)
 -- app/models/wms.py의 PickingInstruction/PickingInstructionItem 모델에 대응.
--- 할당·피킹 순서(pick_seq)는 결정론적 규칙 엔진(FIFO + Zone 동선)이 확정하고,
--- LLM은 route_summary/worker_note 내러티브 생성에만 관여한다.
+-- 할당·피킹 순서(pick_seq)는 결정론적 규칙 엔진(FIFO + Zone 동선)이 확정하고, LLM은 route_summary/worker_note 내러티브 생성에만 관여한다.
 CREATE TABLE picking_instructions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -295,8 +293,7 @@ CREATE TABLE picking_instruction_items (
 CREATE INDEX idx_picking_instruction_items_instruction_id ON picking_instruction_items(instruction_id);
 
 -- 15. HITL 관리자 결재 감사 로그 (admin_audit_logs)
--- app/models/wms.py의 AdminAuditLog 모델에 대응. HITL 오버라이드(/admin/hitl/override) 시
--- 관리자의 판단 근거와 체류 시간을 규제 대응(ISMS-P)용으로 남긴다.
+-- app/models/wms.py의 AdminAuditLog 모델에 대응. HITL 오버라이드(/admin/hitl/override) 시 관리자의 판단 근거와 체류 시간을 규제 대응(ISMS-P)용으로 남긴다.
 CREATE TABLE admin_audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     admin_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
@@ -313,9 +310,7 @@ CREATE TABLE admin_audit_logs (
 );
 
 -- 16. AI 자동 발주 제안 (order_proposals) - SCM 칸반보드 카드
--- app/models/wms.py의 OrderProposal 모델에 대응. Restock 판정 그래프(Collector→Agent→Validator)가
--- 입고 검수 반려/저재고 스캔 시 PENDING 카드를 적재하고, 관리자가 칸반에서 승인해야만
--- Order(AUTO_PO) 생성 + 신품 Fast-Track 입고가 집행된다 (LLM 판정/집행 분리 게이트).
+-- app/models/wms.py의 OrderProposal 모델에 대응. Restock 판정 그래프(Collector→Agent→Validator)가 입고 검수 반려/저재고 스캔 시 PENDING 카드를 적재하고, 관리자가 칸반에서 승인해야만 Order(AUTO_PO) 생성 + 신품 Fast-Track 입고가 집행된다 (LLM 판정/집행 분리 게이트).
 CREATE TABLE order_proposals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     book_id UUID NOT NULL REFERENCES books(id) ON DELETE RESTRICT,
