@@ -98,7 +98,8 @@ def _load_image_as_base64(path_or_url: str) -> Optional[str]:
     try:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             import urllib.request
-            req = urllib.request.Request(path_or_url, headers={"User-Agent": "Mozilla/5.0"})
+            from app.core.cloudfront_signing import sign_url
+            req = urllib.request.Request(sign_url(path_or_url), headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=10) as response:
                 return base64.b64encode(_downscale_for_vlm(response.read())).decode("utf-8")
         with open(path_or_url, "rb") as f:
@@ -115,7 +116,8 @@ def _ensure_local_path(path_or_url: str) -> Optional[str]:
     try:
         import urllib.request
         import tempfile
-        req = urllib.request.Request(path_or_url, headers={"User-Agent": "Mozilla/5.0"})
+        from app.core.cloudfront_signing import sign_url
+        req = urllib.request.Request(sign_url(path_or_url), headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=10) as response:
             data = response.read()
         suffix = os.path.splitext(path_or_url)[1] or ".jpg"
