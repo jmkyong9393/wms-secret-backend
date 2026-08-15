@@ -104,6 +104,38 @@ app.add_middleware(
 )
 app.add_middleware(LoggingMiddleware)
 
+
+# CloudFront 열람자 제한이 켜지면 서명 없는 이미지 URL은 403이 된다. 이미지 URL이
+# 흘러나가는 경로가 검수 상세·결함 좌표·보증서 등 여러 갈래라 엔드포인트마다 손대면
+# 누락이 생기므로, JSON 응답을 한 번 훑어 서명을 붙인다.
+# SSE(text/event-stream)는 본문을 모으면 스트림이 깨지므로 건드리지 않는다.
+@app.middleware("http")
+async def sign_cloudfront_urls(request, call_next):
+    import json as _json
+    from fastapi.responses import Response as _Response
+    from app.core.cloudfront_signing import is_signing_enabled, sign_payload
+
+    response = await call_next(request)
+    if not is_signing_enabled():
+        return response
+    if not response.headers.get("content-type", "").startswith("application/json"):
+        return response
+
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    try:
+        signed = sign_payload(_json.loads(body))
+        body = _json.dumps(signed, ensure_ascii=False).encode("utf-8")
+    except Exception as exc:
+        print(f"[CloudFront] 응답 서명 건너뜀: {exc}")
+    return _Response(
+        content=body,
+        status_code=response.status_code,
+        headers=headers,
+        media_type="application/json",
+    )
+
 # ==========================================
 # 글로벌 에러 핸들러 (Global Exception Handlers)
 # ==========================================
