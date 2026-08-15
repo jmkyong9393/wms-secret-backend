@@ -20,7 +20,11 @@ class Settings(BaseSettings):
     APP_ENV: str = "local" # local, dev, prod
     API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = "postgresql://admin:password@localhost:5432/wms_db"
-    
+
+    # SQL 원문 로그. 기본 꺼짐 — 켜면 쿼리 파라미터(개인정보 포함)가 로그 수집기까지 흘러간다.
+    # 로컬 디버깅에서만 .env에 SQL_ECHO=true로 켠다.
+    SQL_ECHO: bool = False
+
     # Celery & Redis (추후 비동기 작업 및 상태 캐싱을 위해 사용 예정)
     REDIS_URL: str = "redis://localhost:6379/0"
 
