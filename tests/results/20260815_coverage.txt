@@ -60,10 +60,10 @@ app\domains\notifications\__init__.py                 0      0   100%
 app\domains\notifications\router.py                 104     68    35%
 app\domains\notifications\service.py                 48     31    35%
 app\domains\orders\picking.py                       166    146    12%
-app\domains\orders\pricing.py                        73     55    25%
+app\domains\orders\pricing.py                        73     50    32%
 app\domains\orders\router.py                        311    250    20%
 app\domains\orders\schemas.py                        36      0   100%
-app\domains\orders\service.py                       122    105    14%
+app\domains\orders\service.py                       122     85    30%
 app\domains\po\router.py                             34     10    71%
 app\domains\po\service.py                           111     95    14%
 app\domains\research\__init__.py                      0      0   100%
@@ -79,8 +79,11 @@ app\domains\users\router.py                          96     65    32%
 app\domains\users\schemas.py                         58      0   100%
 app\domains\users\service.py                        178    125    30%
 app\main.py                                         114     26    77%
+app\ml\__init__.py                                    0      0   100%
+app\ml\pricing_predictor.py                          50      3    94%
+app\ml\train_pricing_model.py                        64     64     0%
 app\models\wms.py                                   399     16    96%
 app\worker\__init__.py                                0      0   100%
 app\worker\tasks.py                                 340    275    19%
 ---------------------------------------------------------------------
-TOTAL                                              6653   4174    37%
+TOTAL                                              6767   4216    38%
