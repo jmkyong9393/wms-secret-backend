@@ -1,0 +1,18 @@
+{
+  "_설명": "이 파일을 bridge_config.json으로 복사한 뒤 값을 채우세요. 비밀번호가 들어가므로 bridge_config.json은 git에 커밋되지 않습니다.",
+  "_모드": "프린터가 LAN에 있으면 PRINTER_MODE=TCP + PRINTER_HOST, USB 직결이면 PRINTER_MODE=USB + PRINTER_NAME",
+
+  "NEXUS_API_BASE": "https://nexus-wms.p-e.kr",
+  "NEXUS_BRIDGE_ID": "WM2608001",
+  "NEXUS_BRIDGE_PW": "",
+
+  "PRINTER_MODE": "TCP",
+  "PRINTER_HOST": "192.168.0.7",
+  "PRINTER_PORT": "9100",
+
+  "_USB모드일때만": "PRINTER_MODE를 USB로 바꾸고 아래에 제어판의 프린터 이름을 그대로 적으세요",
+  "PRINTER_NAME": "XP-423B",
+
+  "POLL_SECONDS": "3",
+  "DRY_RUN": "0"
+}
