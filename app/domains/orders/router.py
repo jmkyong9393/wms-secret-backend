@@ -61,7 +61,7 @@ def create_order(
     days_in_inventory: int = 120, 
     session: Session = Depends(get_db)
 ):
-    """동적 프라이싱 적용 주문 생성 (XGBoost 2-Step Price Elasticity & Expected Revenue Optimization)"""
+    """동적 프라이싱 적용 주문 생성 — XGBoost 구매확률 예측 + 기대매출 최대화 그리드 탐색"""
     opt_res = calculate_price_elasticity_revenue_optimization(
         list_price=list_price,
         ubci_score=ubci_score,

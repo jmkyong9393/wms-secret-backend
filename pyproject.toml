@@ -31,6 +31,7 @@ dependencies = [
     "tenacity>=9.1.4",
     "Pillow>=10.2.0",
     "pottery>=3.0.1",
+    "xgboost>=3.4.0",
     "ultralytics>=8.4.115",
     # torch/torchvision은 ultralytics의 전이 의존성이지만 여기에 직접 명시한다.
     # uv의 [tool.uv.sources]는 **직접 의존성에만** 적용되므로, 전이 상태로 두면 아래

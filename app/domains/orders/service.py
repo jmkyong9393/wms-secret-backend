@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional
 # orders/router.py는 pricing.py 쪽을 import하고 이 파일은 자기 사본을 쓰는 이중 상태여서,
 # 요율을 한쪽만 고치면 경로에 따라 서로 다른 가격이 나오는 구조였다.
 # 단일 소스(pricing.py)로 통일하고 여기서는 재노출만 한다.
+from app.ml.pricing_predictor import predict_p_sold_batch, model_label
 from app.domains.orders.pricing import (  # noqa: F401  (기존 import 경로 호환 유지)
     CATEGORY_BASE_RATE,
     CATEGORY_SEASONALITY,
@@ -40,21 +41,14 @@ def calculate_price_elasticity_revenue_optimization(
     max_expected_revenue = 0.0
     best_p_sold = 0.0
 
-    # 5% 단위로 최적 할인율 delta 탐색 (0.05 ~ 0.85)
-    for step in range(5, 90, 5):
-        delta = step / 100.0
-        
-        # Step 1: Customer Purchase Probability Formula (PM Spec eq. 54)
-        p_sold = (
-            0.30 +
-            (delta * 0.80) -
-            (((100.0 - ubci_score) / 100.0) * 0.60) +
-            ((seasonality - 1.0) * 0.40) -
-            dwell_decay
-        )
-        p_sold = max(0.05, min(0.98, p_sold))
-        
-        # Step 2: Expected Revenue E(delta)
+    # Step 1: 학습된 XGBoost 모델이 할인율 후보별 구매 성사 확률을 예측한다.
+    # 후보 전체를 한 번에 넘겨 그리드 탐색 1회당 추론도 1회만 일어나게 한다.
+    # 모델 파일이 없으면 predictor가 기존 선형 산식으로 자동 폴백한다.
+    candidates = [step / 100.0 for step in range(5, 90, 5)]
+    p_sold_list = predict_p_sold_batch(candidates, ubci_score, seasonality, days_in_inventory)
+
+    # Step 2: 기대매출 E(delta) = P(구매) x 할인 적용가 가 최대인 할인율을 고른다.
+    for delta, p_sold in zip(candidates, p_sold_list):
         discounted_price = base_price * (1.0 - delta)
         expected_revenue = p_sold * discounted_price
         
@@ -74,7 +68,7 @@ def calculate_price_elasticity_revenue_optimization(
         "max_expected_revenue": round(max_expected_revenue, -1),
         "final_price": final_price,
         "trend_badge_text": trend_badge_text,
-        "optimization_model": "XGBoost 2-Step Price Elasticity & Expected Revenue Maximization"
+        "optimization_model": model_label()
     }
 
 
