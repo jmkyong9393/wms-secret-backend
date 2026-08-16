@@ -394,14 +394,21 @@ def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: S
     for it in items:
         if it.stock_type == "USED" and it.used_item_id:
             used = session.get(InventoryUsedItem, it.used_item_id)
-            if used:
-                used.item_status = ItemStatusEnum.SHIPPED.value
-                used.updated_at = now_kst()
-                session.add(used)
+            # 재고 행이 없으면 등급을 지어내지 않고 확정을 중단한다. 송장 발급·재고 차감이
+            # 걸린 확정 행위라, 원장에 근거 없는 등급을 남기며 진행하면 안 된다.
+            if not used:
+                raise HTTPException(
+                    409,
+                    f"중고 재고를 찾을 수 없습니다 (LPN: {it.lpn_barcode}). "
+                    "재고 원장을 확인한 뒤 다시 확정하세요.",
+                )
+            used.item_status = ItemStatusEnum.SHIPPED.value
+            used.updated_at = now_kst()
+            session.add(used)
             session.add(InventoryLog(
                 transaction_type="OUTBOUND",
                 book_id=it.book_id,
-                condition_grade=(used.condition_grade if used else "GOOD"),
+                condition_grade=used.condition_grade,
                 quantity_change=-1,
                 target_lpn=it.lpn_barcode,
                 picked_location=f"{it.zone}-{it.rack}-{it.shelf}",
@@ -429,7 +436,8 @@ def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: S
             session.add(InventoryLog(
                 transaction_type="OUTBOUND",
                 book_id=it.book_id,
-                condition_grade="MINT",
+                # 신품은 UBCI 검수를 타지 않아 등급이 없다. 입고 로그와 같이 "NEW"로 구분값을 쓴다.
+                condition_grade="NEW",
                 quantity_change=-it.quantity,
                 picked_location=f"{it.zone}-{it.rack}-{it.shelf}",
             ))
