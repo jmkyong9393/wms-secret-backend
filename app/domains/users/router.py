@@ -17,6 +17,12 @@ from app.models.wms import User
 # 로그인/로그아웃/내 정보 조회·수정/비밀번호 변경은 app/domains/auth/router.py
 # (/api/v1/auth/*)로 이관되었다. 이 라우터는 관리자용 사원 리소스 관리(CRUD)만 다룬다.
 
+from app.models.wms import UserRoleEnum
+
+# 계정 발급용 관리자 가드. 이 라우터는 init-master/reset-all-passwords가 무인증이어야
+# 하므로 라우터 단위로 걸 수 없다 — 해당 엔드포인트에만 붙인다.
+_users_admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
+
 router = APIRouter()
 
 
@@ -85,7 +91,11 @@ def reset_all_passwords(session: Session = Depends(get_db)):
 
 @router.post("/issue", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
-def issue_account(request: Request, user_in: UserCreate, session: Session = Depends(get_db)):
+def issue_account(request: Request, user_in: UserCreate, session: Session = Depends(get_db),
+                  # docstring에는 "(Admin 전용)"이라 적혀 있었으나 실제 인가가 없어
+                  # 인증 없이 계정을 만들 수 있었다. 라우터 단위로 걸 수 없는 것은
+                  # 같은 라우터의 init-master/reset-all-passwords가 무인증이어야 하기 때문이다.
+                  current_admin=Depends(_users_admin_only)):
     """
     (Admin 전용) 사번 발급 및 계정 생성
     - company_prefix 기반 사번 자동 채번
