@@ -7,7 +7,8 @@ from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.db.session import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, RoleChecker
+from app.models.wms import UserRoleEnum
 from app.models.wms import (
     Order, OrderItem, OrderStatusEnum, InventoryUsedItem, ItemStatusEnum, Book,
     Inventory, InventoryLog, PickingInstruction, PickingInstructionItem, now_kst,
@@ -49,6 +50,9 @@ logger = logging.getLogger(__name__)
 # 주문·피킹·출고는 로그인 필수
 router = APIRouter(prefix="/orders", tags=["Orders & Outbound"],
                    dependencies=[Depends(get_current_user)])
+
+# 되돌리기 같은 재고 변경 작업은 관리자만 수행한다.
+admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 
 @router.get("/")
 def get_orders_list(session: Session = Depends(get_db)):
@@ -460,6 +464,97 @@ def confirm_packing(instruction_id: UUID, req: ConfirmPackingRequest, session: S
         "packed_at": instruction.packed_at.isoformat(),
         "message": f"패킹 확정 및 CJ 송장 [{waybill}] 발급, DB 재고 차감 완료 - worker 포장 대기",
     }
+
+
+@router.post("/picking-instructions/{instruction_id}/revert-packing")
+def revert_packing(instruction_id: UUID, session: Session = Depends(get_db),
+                   current_admin=Depends(admin_only)):
+    """
+    [admin] 패킹 확정을 되돌려 피킹 완료(PICKED) 상태로 복원한다.
+
+    confirm_packing이 한 일을 정확히 역으로 되돌린다 - 중고 SHIPPED 해제,
+    신품 수량 복원, 송장·박스 정보 제거, 상태 PICKED 전이.
+    재고를 손대는 작업이라 SHIPPED(최종 출고) 건은 대상에서 제외한다.
+
+    InventoryLog는 지우지 않는다. 차감 기록과 복원 기록이 모두 남아야
+    "왜 수량이 이렇게 됐는지"를 나중에 되짚을 수 있다.
+    """
+    instruction = session.get(PickingInstruction, instruction_id)
+    if not instruction:
+        raise HTTPException(status_code=404, detail="지시서를 찾을 수 없습니다.")
+    if instruction.status == "SHIPPED":
+        raise HTTPException(status_code=409, detail="이미 출고 완료된 지시서는 되돌릴 수 없습니다.")
+    if instruction.status != "PACKED":
+        raise HTTPException(
+            status_code=409,
+            detail=f"패킹 확정(PACKED) 상태만 되돌릴 수 있습니다. 현재: {instruction.status}",
+        )
+
+    items = session.exec(
+        select(PickingInstructionItem).where(
+            PickingInstructionItem.instruction_id == instruction_id
+        )
+    ).all()
+
+    restored_used, restored_new = 0, 0
+    for it in items:
+        if it.used_item_id:
+            used = session.get(InventoryUsedItem, it.used_item_id)
+            if used and used.item_status == ItemStatusEnum.SHIPPED.value:
+                used.item_status = ItemStatusEnum.IN_STOCK.value
+                used.updated_at = now_kst()
+                session.add(used)
+                restored_used += 1
+                session.add(InventoryLog(
+                    transaction_type="INBOUND",
+                    book_id=it.book_id,
+                    condition_grade=used.condition_grade or "GOOD",
+                    quantity_change=1,
+                    target_lpn=it.lpn_barcode,
+                    picked_location=f"{it.zone}-{it.rack}-{it.shelf}",
+                ))
+        else:
+            # 신품은 차감했던 수량을 되돌린다. 어느 로케이션에서 뺐는지는
+            # 기록이 남지 않으므로 해당 도서의 첫 재고 행에 합산한다.
+            inv = session.exec(
+                select(Inventory).where(Inventory.book_id == it.book_id)
+                .order_by(Inventory.created_at.asc())
+            ).first()
+            if inv:
+                inv.quantity += int(it.quantity or 0)
+                inv.updated_at = now_kst()
+                session.add(inv)
+                restored_new += int(it.quantity or 0)
+                session.add(InventoryLog(
+                    transaction_type="INBOUND",
+                    book_id=it.book_id,
+                    condition_grade="MINT",
+                    quantity_change=int(it.quantity or 0),
+                    picked_location=f"{it.zone}-{it.rack}-{it.shelf}",
+                ))
+
+    prev_waybill = instruction.cj_waybill_no
+    instruction.status = "PICKED"
+    instruction.cj_waybill_no = None
+    instruction.box_id = None
+    instruction.cushion_name = None
+    instruction.packed_at = None
+    instruction.updated_at = now_kst()
+    session.add(instruction)
+    session.commit()
+
+    return {
+        "status": "PICKED",
+        "instruction_no": instruction.instruction_no,
+        "reverted_waybill": prev_waybill,
+        "restored_used_items": restored_used,
+        "restored_new_qty": restored_new,
+        "message": (
+            f"{instruction.instruction_no} 패킹 확정을 되돌렸습니다 "
+            f"(중고 {restored_used}건 재입고 · 신품 {restored_new}권 복원, 송장 {prev_waybill} 회수)."
+        ),
+    }
+
 
 @router.post("/picking-instructions/{instruction_id}/complete-packing")
 def complete_packing(instruction_id: UUID, req: CompletePackingRequest, session: Session = Depends(get_db)):
