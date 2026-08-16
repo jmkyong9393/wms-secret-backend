@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, Query
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
-from sqlalchemy import or_
+from sqlalchemy import or_, cast, String
 from sqlmodel import Session, select, func
 from app.db.session import get_db
 from app.models.wms import (
     ReturnJob, InventoryUsedItem, Inventory, Order, Book, JobStatusEnum, ubci_grade_from_score,
+    AdminAuditLog,
 )
 from app.core.security import RoleChecker, UserRoleEnum
 from app.models.wms import now_kst
@@ -55,15 +56,43 @@ def get_kpi(session: Session = Depends(get_db)) -> Dict[str, Any]:
     ).one() or 0
     decided = approved + rejected + pending_issues
 
+    # 6. 관리자 결재를 거친 건을 분리한다.
+    #    status만 보면 관리자가 소환해 손으로 승인한 건도 APPROVED에 섞여 "자동 승인율"로
+    #    잡힌다. 사람이 개입한 건은 정의상 자동이 아니므로 감사 로그 유무로 갈라낸다.
+    def _human_touched(statuses: List[str]) -> int:
+        return session.exec(
+            select(func.count(func.distinct(AdminAuditLog.target_id)))
+            .where(AdminAuditLog.target_type == "RETURN_JOB")
+            .where(AdminAuditLog.target_id.in_(
+                select(cast(ReturnJob.id, String)).where(ReturnJob.status.in_(statuses))
+            ))
+        ).one() or 0
+
+    decided_statuses = [
+        JobStatusEnum.APPROVED.value,
+        JobStatusEnum.REJECTED.value,
+        JobStatusEnum.HITL_REQUIRED.value,
+    ]
+    # 자동 승인율에서 빼는 것은 "승인된 건 중 사람이 손댄 것"뿐이다. 반려·대기 건을 같이
+    # 빼면 분자가 과소 집계된다.
+    human_approved = _human_touched([JobStatusEnum.APPROVED.value])
+    human_reviewed = _human_touched(decided_statuses)
+    auto_approved = max(approved - human_approved, 0)
+
     return {
         "today_inbound": today_inbound,
         "today_outbound": today_outbound,
         "today_inspection": today_inspection,
         "pending_issues": pending_issues,
+        # approval_rate는 사람 개입분을 포함한 "최종" 승인율이다. AI 단독 성과가 아니다.
         "approval_rate": round(approved / decided * 100, 1) if decided else 0.0,
+        "auto_approval_rate": round(auto_approved / decided * 100, 1) if decided else 0.0,
         "rejection_rate": round(rejected / decided * 100, 1) if decided else 0.0,
         "hitl_rate": round(pending_issues / decided * 100, 1) if decided else 0.0,
         "decided_total": decided,
+        "human_reviewed": human_reviewed,
+        "human_approved": human_approved,
+        "auto_approved": auto_approved,
     }
 
 @router.get("/charts")
