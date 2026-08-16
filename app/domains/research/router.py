@@ -139,3 +139,84 @@ def generate_fds_report(
         "min_samples": BLIND_APPROVAL_MIN_SAMPLES,
         "worker_stats": report,
     }
+
+
+@router.get("/hitl-recheck-list", summary="HITL 결재를 거친 도서 LPN 목록 (재검수 전수조사용)")
+def list_hitl_reviewed_items(
+    only_recalled: bool = False,
+    session: Session = Depends(get_db),
+    current_admin=Depends(admin_only),
+) -> Dict[str, Any]:
+    """
+    관리자가 결재한 검수 건을 **LPN 단위**로 집계한다.
+
+    같은 도서를 여러 번 재검수하면 감사 로그가 여러 줄 쌓인다. 건별로 세면 한 권이
+    여러 번 계산되므로 **LPN마다 마지막 조치만** 남기고, 조치 횟수는 별도 열로 센다.
+
+    only_recalled=true면 관리자가 재고 화면에서 직접 되불러온 건(ADMIN_RECALL)만 추린다.
+    """
+    from app.models.wms import InventoryUsedItem
+
+    rows = session.exec(
+        select(AdminAuditLog, ReturnJob)
+        .join(ReturnJob, AdminAuditLog.target_id == cast(ReturnJob.id, String))
+        .where(AdminAuditLog.target_type == "RETURN_JOB")
+        .order_by(AdminAuditLog.created_at.asc())
+    ).all()
+
+    by_lpn: Dict[str, Dict[str, Any]] = {}
+    for audit, job in rows:
+        logs = job.agent_logs or {}
+        lpn = logs.get("lpn_barcode")
+        if not lpn:
+            continue
+        rec = by_lpn.setdefault(lpn, {
+            "lpn": lpn, "job_id": str(job.id), "actions": 0,
+            "recalled": False, "bbox_edited": False,
+        })
+        rec["actions"] += 1
+        rec["last_action"] = audit.action
+        rec["last_reason"] = audit.primary_reason_code
+        rec["last_grade"] = audit.target_grade
+        rec["last_at"] = audit.created_at.strftime("%Y-%m-%d %H:%M") if audit.created_at else None
+        if audit.action == "RECALL_TO_HITL" or audit.primary_reason_code == "ADMIN_RECALL":
+            rec["recalled"] = True
+        if audit.defect_coordinates:
+            rec["bbox_edited"] = True
+            # 관리자가 실제로 그린 박스 개수 (이미지별 bboxes 합)
+            n = 0
+            for g in audit.defect_coordinates:
+                if isinstance(g, dict):
+                    n += len(g.get("bboxes") or [])
+            rec["bbox_count"] = max(int(rec.get("bbox_count", 0)), n)
+
+    items = list(by_lpn.values())
+    if only_recalled:
+        items = [x for x in items if x["recalled"]]
+
+    # 재고 현황을 붙여 준다 - 이미 출고된 건은 재검수 대상이 아니다.
+    lpns = [x["lpn"] for x in items]
+    inv = {}
+    if lpns:
+        for it in session.exec(
+            select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode.in_(lpns))
+        ).all():
+            inv[it.lpn_barcode] = it
+    for x in items:
+        it = inv.get(x["lpn"])
+        x["item_status"] = getattr(it, "item_status", None) if it else None
+        x["confirmed_grade"] = getattr(it, "condition_grade", None) if it else None
+        x["ubci_score"] = getattr(it, "ubci_score", None) if it else None
+        x["title"] = None
+        if it and getattr(it, "book_id", None):
+            from app.models.wms import Book
+            b = session.get(Book, it.book_id)
+            x["title"] = b.title if b else None
+
+    items.sort(key=lambda x: (not x["recalled"], x["lpn"]))
+    return {
+        "total": len(items),
+        "recalled_count": sum(1 for x in items if x["recalled"]),
+        "bbox_edited_count": sum(1 for x in items if x["bbox_edited"]),
+        "items": items,
+    }
