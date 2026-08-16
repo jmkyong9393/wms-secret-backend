@@ -12,10 +12,13 @@ from app.core.security import get_current_user, RoleChecker
 from app.core.constants import format_worker_label
 from app.core.exceptions import NotFoundException, BadRequestException
 
-router = APIRouter(prefix="/admin/hitl", tags=["Admin HITL"])
-
 # Admin 전용 권한 체커
 admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
+
+# HITL 결재는 전부 관리자 전용이다. 엔드포인트별로 붙이면 새 경로에서 또 빠뜨린다 —
+# 실제로 재검수 트리거(POST)에 인가가 없어 무인증으로 Celery 재큐잉이 가능했다.
+router = APIRouter(prefix="/admin/hitl", tags=["Admin HITL"],
+                   dependencies=[Depends(admin_only)])
 
 
 def _is_hitl_required(status) -> bool:

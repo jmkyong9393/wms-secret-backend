@@ -12,7 +12,10 @@ from app.core.stream_auth import require_stream_access
 from app.core.security import get_current_user
 from app.models.wms import User
 
-router = APIRouter(prefix="/returns", tags=["Returns & AI Inspections"])
+# 라우터 전체에 인증을 건다. 조회에는 걸려 있었으나 검수 접수(POST)가 빠져 있어
+# 인증 없이 검수 작업을 만들 수 있었다 (쓰기 전수 검사에서 발견).
+router = APIRouter(prefix="/returns", tags=["Returns & AI Inspections"],
+                   dependencies=[Depends(get_current_user)])
 
 @router.post("/inspections", status_code=202)
 def create_inspection(
