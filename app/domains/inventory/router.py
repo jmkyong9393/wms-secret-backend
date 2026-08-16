@@ -4,13 +4,17 @@ from datetime import datetime
 from uuid import UUID
 from sqlalchemy.orm import Session
 from app.db.session import get_db
+from app.core.security import RoleChecker, get_current_user
 from app.domains.inventory.service import generate_lpn, get_all_lpn
 
 # Inventory 도메인 라우터: 새 상품 및 중고/반품 도서들의 통합 재고 관리를 담당합니다.
-router = APIRouter(prefix="/inventory", tags=["Inventory"])
+# 라우터 전체에 인증을 건다. 엔드포인트마다 붙이면 새 경로를 추가할 때 또 빠뜨린다 -
+# 실제로 재고·피킹지시서·발주제안이 무인증으로 조회되던 것을 전수 점검에서 발견했다.
+# 재고 조회는 로그인 필수
+router = APIRouter(prefix="/inventory", tags=["Inventory"],
+                   dependencies=[Depends(get_current_user)])
 
 # 하드 삭제는 관리자 전용 (MASTER/ADMIN)
-from app.core.security import RoleChecker
 from app.models.wms import UserRoleEnum
 
 _admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])

@@ -8,6 +8,7 @@ import json
 import uuid
 import datetime
 from app.db.session import get_db
+from app.core.security import get_current_user
 from app.models.wms import now_kst, InboundJob, Book, ReturnJob, InventoryUsedItem, JobStatusEnum, ubci_grade_from_score
 from app.domains.inbound.service import (
     generate_signed_cookie,
@@ -35,7 +36,11 @@ class EvaluateRequest(BaseModel):
     worker_id: Optional[str] = None
 
 # Inbound 도메인 라우터: 협력사(B2B) 또는 일반 사용자의 입고 요청 및 처리 이력을 담당합니다.
-router = APIRouter(prefix="/inbound", tags=["Inbound"])
+# 라우터 전체에 인증을 건다. 엔드포인트마다 붙이면 새 경로를 추가할 때 또 빠뜨린다 -
+# 실제로 재고·피킹지시서·발주제안이 무인증으로 조회되던 것을 전수 점검에서 발견했다.
+# 입고 검수는 로그인 필수
+router = APIRouter(prefix="/inbound", tags=["Inbound"],
+                   dependencies=[Depends(get_current_user)])
 
 @router.get("/history")
 async def get_inbound_history(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:

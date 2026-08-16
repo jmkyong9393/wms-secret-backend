@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.db.session import get_db
+from app.core.security import get_current_user
 from app.models.wms import (
     Order, OrderItem, OrderStatusEnum, InventoryUsedItem, ItemStatusEnum, Book,
     Inventory, InventoryLog, PickingInstruction, PickingInstructionItem, now_kst,
@@ -43,7 +44,11 @@ from app.domains.orders.picking import (
 from app.ai.bin_packing_agent import bin_packing_agent
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/orders", tags=["Orders & Outbound"])
+# 라우터 전체에 인증을 건다. 엔드포인트마다 붙이면 새 경로를 추가할 때 또 빠뜨린다 -
+# 실제로 재고·피킹지시서·발주제안이 무인증으로 조회되던 것을 전수 점검에서 발견했다.
+# 주문·피킹·출고는 로그인 필수
+router = APIRouter(prefix="/orders", tags=["Orders & Outbound"],
+                   dependencies=[Depends(get_current_user)])
 
 @router.get("/")
 def get_orders_list(session: Session = Depends(get_db)):
