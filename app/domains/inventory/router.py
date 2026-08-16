@@ -21,7 +21,7 @@ _admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 
 
 from sqlmodel import select
-from app.models.wms import InventoryUsedItem, Book, Location
+from app.models.wms import InventoryUsedItem, Book, Location, now_kst
 
 from datetime import datetime, timezone, timedelta
 
@@ -29,7 +29,8 @@ KST = timezone(timedelta(hours=9))
 
 def to_kst_str(dt: Optional[datetime]) -> str:
     if not dt:
-        dt = datetime.now()
+        # 컨테이너 TZ가 UTC라 datetime.now()를 쓰면 KST로 표기하면서 값은 UTC가 된다.
+        dt = now_kst()
     if dt.tzinfo is not None:
         return dt.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S")
     return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -714,7 +715,9 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
 
     days_in_inventory = 0
     if item.created_at:
-        days_in_inventory = max(0, (datetime.now() - item.created_at).days)
+        # created_at은 KST naive다. UTC인 datetime.now()와 빼면 9시간이 모자라
+        # 보관일수가 하루 적게 나오고, 그대로 동적 가격 산정에 들어간다.
+        days_in_inventory = max(0, (now_kst() - item.created_at).days)
 
     pricing = build_pricing_breakdown(
         list_price=book.base_price if book else 0.0,

@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.ai.state import WMSInspectionState
-from app.ai.agents.common import DEFECT_TRANSLATION_MAP
+from app.ai.agents.common import DEFECT_TRANSLATION_MAP, now_kst
 from app.ai.agents.llm import llm_mini
 from app.ai.agents.schemas import CertificateDocument
 
@@ -259,7 +259,7 @@ def report_agent(state: WMSInspectionState) -> WMSInspectionState:
     ubci_score = state.get("ubci_score")
     if ubci_score is None:
         ubci_score = 100
-    cert_id = f"CERT-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    cert_id = f"CERT-{now_kst().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
     doc = build_certificate_document(state)
     doc["cert_id"] = cert_id

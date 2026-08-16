@@ -8,7 +8,18 @@ import base64
 import io
 import os
 import tempfile
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+# 컨테이너 TZ가 UTC라 datetime.now()는 UTC를 준다. 보증서 번호처럼 밖으로 나가는 값의
+# 날짜는 KST여야 한다. app.models.wms를 쓰지 않는 것은 AI 그래프가 DB 모델 모듈에
+# 묶이지 않게 하기 위함이다.
+_KST = timezone(timedelta(hours=9))
+
+
+def now_kst() -> datetime:
+    """한국 표준시 현재 시각 (tz 정보 없는 naive datetime)."""
+    return datetime.now(_KST).replace(tzinfo=None)
 
 # WBF YOLO 클래스명 -> UBCI_Specification_v2.0.0.0.md 결함 코드 매핑
 # 속지(Track 2·3) 컷에서 **제외**하는 결함 유형.

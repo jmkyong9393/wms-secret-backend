@@ -72,8 +72,11 @@ def generate_instruction_no(session: Session) -> str:
 
     건수를 세면 삭제로 생긴 빈자리 때문에 이미 쓰인 번호가 재발급되어
     instruction_no unique 제약에 걸린다 (0001·0002 중 0001 삭제 시 다음이 0002).
+
+    날짜는 KST 기준이다. 컨테이너 TZ가 UTC라 datetime.now()를 쓰면 KST 00~09시에
+    발행한 지시서가 전날 번호를 받는다 (실측: PICK-260809-0001이 08-10 01:25 발행).
     """
-    prefix = f"PICK-{datetime.now().strftime('%y%m%d')}"
+    prefix = f"PICK-{now_kst().strftime('%y%m%d')}"
     todays = session.exec(
         select(PickingInstruction).where(PickingInstruction.instruction_no.startswith(prefix))
     ).all()

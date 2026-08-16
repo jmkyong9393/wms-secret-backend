@@ -270,7 +270,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
 
     from app.core.s3_service import upload_bytes_to_s3
 
-    s3_prefix = f"inbound/{datetime.datetime.now().strftime('%Y%m%d')}/{job_id}"
+    s3_prefix = f"inbound/{now_kst().strftime('%Y%m%d')}/{job_id}"
 
     local_image_paths: List[str] = []
     public_image_urls: List[str] = []

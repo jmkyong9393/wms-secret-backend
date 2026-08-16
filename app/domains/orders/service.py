@@ -251,7 +251,7 @@ def _issue_waybill_no(session: Session) -> str:
     issued = session.exec(
         select(PickingInstruction).where(PickingInstruction.cj_waybill_no.is_not(None))
     ).all()
-    return f"CJ-2026-{datetime.now().strftime('%m%d')}-{len(issued) + 1:04d}"
+    return f"CJ-2026-{now_kst().strftime('%m%d')}-{len(issued) + 1:04d}"
 
 
 def fetch_aladin_real_packing_spec(isbn: str) -> dict:
