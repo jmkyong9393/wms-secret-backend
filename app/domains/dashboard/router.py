@@ -79,6 +79,11 @@ def get_kpi(session: Session = Depends(get_db)) -> Dict[str, Any]:
     human_reviewed = _human_touched(decided_statuses)
     auto_approved = max(approved - human_approved, 0)
 
+    # 7. 심사 대기를 누가 올렸는지로 쪼갠다. 관리자가 재고에서 소환한 건과 AI가 스스로
+    #    올린 건은 성격이 다르다 - 전자는 사람이 이미 의심한 건이다.
+    pending_by_admin = _human_touched([JobStatusEnum.HITL_REQUIRED.value])
+    pending_by_ai = max(pending_issues - pending_by_admin, 0)
+
     return {
         "today_inbound": today_inbound,
         "today_outbound": today_outbound,
@@ -93,7 +98,108 @@ def get_kpi(session: Session = Depends(get_db)) -> Dict[str, Any]:
         "human_reviewed": human_reviewed,
         "human_approved": human_approved,
         "auto_approved": auto_approved,
+        "pending_by_ai": pending_by_ai,
+        "pending_by_admin": pending_by_admin,
     }
+
+
+# 검수 접수 전 상태. LPN 라벨만 발급되고 아직 검수를 받지 않아 어느 경로로도 분류할 수 없다.
+_NOT_YET_INSPECTED = "PENDING_INSPECTION"
+
+
+@router.get("/inspection-breakdown")
+def get_inspection_breakdown(session: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    검수 경로를 **책 1권 단위 최종 상태**로 집계해 합이 100%가 되게 반환한다.
+    분모는 **통합 재고**다 - 중고 LPN 1행 = 1권, 신품은 묶음 재고 수량(권)을 더한다.
+
+    건별로 세지 않는 이유: 같은 책을 여러 번 재검수하면 return_jobs 행이 늘어 한 권이
+    여러 번 계산된다. 재검수를 몇 번 했든 그 책의 최종 귀속은 하나여야 한다.
+
+    분류는 상호배타이며 우선순위가 있다 (관리자 > AI 이관 > 자동):
+      D. 신품 Fast-Track - UBCI 검수 자체를 타지 않는다 (LPN 미발급, 수량 관리)
+      C. 관리자 판단     - 관리자가 결재한 이력이 있다 (소환·승인·반려 무엇이든)
+      B. AI 이관         - 관리자 개입 없이 AI가 사람에게 넘겼다
+      A. AI 자동검수     - 위 둘 다 아니다
+
+    **한계**: B는 2026-08-16 이전 건을 소급하지 못한다. 그전에는 이관 사유(reason_code)가
+    매 실행 덮어써져, AI가 올렸다가 재검수로 자동 확정된 건에 흔적이 남지 않았다.
+    그런 건은 A로 잡힌다 (agent_logs.escalations 적재는 그날부터 시작).
+    """
+    items = session.exec(
+        select(InventoryUsedItem).where(
+            or_(
+                InventoryUsedItem.item_status.is_(None),
+                InventoryUsedItem.item_status != _NOT_YET_INSPECTED,
+            )
+        )
+    ).all()
+    excluded = session.exec(
+        select(func.count(InventoryUsedItem.id))
+        .where(InventoryUsedItem.item_status == _NOT_YET_INSPECTED)
+    ).one() or 0
+
+    # 대조표를 한 번에 읽어 LPN마다 쿼리를 날리지 않는다 (재고 수백 건 규모).
+    admin_targets = {
+        row for row in session.exec(
+            select(AdminAuditLog.target_id).where(AdminAuditLog.target_type == "RETURN_JOB")
+        ).all()
+    }
+    job_rows = session.exec(select(ReturnJob.id, ReturnJob.status, ReturnJob.agent_logs)).all()
+    job_status = {str(r[0]): r[1] for r in job_rows}
+    job_escalated = {
+        str(r[0]) for r in job_rows
+        if isinstance((r[2] or {}).get("escalations"), list) and (r[2] or {}).get("escalations")
+    }
+
+    # 신품은 LPN이 없는 묶음 재고라 수량으로 센다. 단위가 '권'으로 같아 중고와 합산된다.
+    new_stock = session.exec(select(func.coalesce(func.sum(Inventory.quantity), 0))).one() or 0
+
+    counts = {"AI_AUTO": 0, "HITL_AI": 0, "HITL_ADMIN": 0, "NEW_FASTTRACK": int(new_stock)}
+    for it in items:
+        job_id = str(it.source_job_id) if it.source_job_id else None
+        if job_id and job_id in admin_targets:
+            counts["HITL_ADMIN"] += 1
+        elif (
+            (job_id and job_id in job_escalated)
+            or it.inspection_source == "PENDING_HITL"
+            or it.item_status == "HITL_PENDING"
+            or (job_id and job_status.get(job_id) == JobStatusEnum.HITL_REQUIRED.value)
+        ):
+            counts["HITL_AI"] += 1
+        else:
+            counts["AI_AUTO"] += 1
+
+    used_total = len(items)
+    total = used_total + counts["NEW_FASTTRACK"]
+    labels = {
+        "AI_AUTO": "AI 자동검수",
+        "HITL_AI": "HITL 이관 (AI 판단)",
+        "HITL_ADMIN": "HITL 이관 (관리자 판단)",
+        "NEW_FASTTRACK": "신품 Fast-Track (무검수)",
+    }
+    order = ("AI_AUTO", "HITL_AI", "HITL_ADMIN", "NEW_FASTTRACK")
+    return {
+        "total": total,
+        "used_total": used_total,
+        "new_total": counts["NEW_FASTTRACK"],
+        "excluded_not_inspected": excluded,
+        "buckets": [
+            {
+                "key": k,
+                "label": labels[k],
+                "count": counts[k],
+                "pct": round(counts[k] / total * 100, 1) if total else 0.0,
+                # 신품을 뺀 "검수를 실제로 받은 물량" 안에서의 비중. 검수 품질을 볼 때 쓴다.
+                "pct_inspected": (
+                    round(counts[k] / used_total * 100, 1)
+                    if used_total and k != "NEW_FASTTRACK" else None
+                ),
+            }
+            for k in order
+        ],
+    }
+
 
 @router.get("/charts")
 def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
