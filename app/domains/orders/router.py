@@ -687,9 +687,27 @@ def get_available_books(
     from app.domains.inventory.service import get_new_stock_map
 
     new_stock_map = get_new_stock_map(session)
+
+    # 포장 확정(confirm-packing) 시 신품은 inventory.quantity에서 차감된다. 그래서
+    # 이미 처리된 지시서를 다시 열면 그 신품이 재고 0이 되어 목록에서 빠지고,
+    # **중고 라인만 남아 "신품 0권"으로 가격이 산정된다.**
+    # 중고(ALLOCATED)는 아래에서 지시서 소속 개체를 되살리는데 신품에는 그 대칭이
+    # 없었다 - 여기서 지시서에 걸린 신품 수량을 후보에 되돌린다.
+    instruction_new_qty: Dict[UUID, int] = {}
+    if instruction_id:
+        for row in session.exec(
+            select(PickingInstructionItem).where(
+                PickingInstructionItem.instruction_id == instruction_id
+            )
+        ).all():
+            if (row.stock_type or "").upper() == "NEW" and row.book_id:
+                instruction_new_qty[row.book_id] = (
+                    instruction_new_qty.get(row.book_id, 0) + int(row.quantity or 0)
+                )
+
     all_books = session.exec(select(Book).where(Book.is_active == True)).all()
     for idx, b in enumerate(all_books):
-        pure_db_stock_qty = new_stock_map.get(b.id, 0)
+        pure_db_stock_qty = new_stock_map.get(b.id, 0) + instruction_new_qty.get(b.id, 0)
         if pure_db_stock_qty <= 0:
             continue
 
