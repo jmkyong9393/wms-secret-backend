@@ -641,9 +641,13 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
             decision = "HITL"
             ai_result["decision"] = "HITL"
             ai_result["auto_refund_eligible"] = False
-            ai_result["reason_code"] = "HITL_LOCKED_REINSPECTION"
-            prev_rationale = str(ai_result.get("supervisor_rationale") or "").strip()
-            ai_result["supervisor_rationale"] = (
+            # 사유·근거는 agent_logs 안에 써야 DB까지 간다. 종전에는 ai_result 최상위에
+            # 넣었는데 wrapper가 만드는 구조에 그 키가 없어(agent_logs.reason_code만 있다)
+            # 저장 경로가 agent_logs만 병합했고, 잠금 흔적이 DB에 한 번도 남지 않았다.
+            logs = ai_result.setdefault("agent_logs", {})
+            logs["reason_code"] = "HITL_LOCKED_REINSPECTION"
+            prev_rationale = str(logs.get("supervisor_rationale") or "").strip()
+            logs["supervisor_rationale"] = (
                 (prev_rationale + " / " if prev_rationale else "")
                 + "재검수 결과는 자동 승인 가능 수준이나, 이미 관리자 결재로 이관된 건이므로 "
                   "자동 확정을 보류하고 결재 대기를 유지합니다 (HITL 잠금)."
