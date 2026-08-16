@@ -44,7 +44,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.db.session import engine
-from app.models.wms import Book, ConditionGradeEnum, Inventory, InventoryUsedItem, Location, ReturnJob
+from app.models.wms import Book, ConditionGradeEnum, Inventory, InventoryUsedItem, Location, ReturnJob, now_kst
 
 ALADIN_LIST_URL = "https://www.aladin.co.kr/ttb/api/ItemList.aspx"
 TOP_N = 30  # 분류별 베스트셀러 상위 몇 권을 모집단으로 쓸지
@@ -353,7 +353,7 @@ def main() -> None:
             loc_by_zone[lc.zone].append(lc)
 
         seq = next_lpn_seq(db)
-        today = datetime.now()
+        today = now_kst()
         used_added: dict[str, int] = {}
         zone_cursor = 0
 

@@ -363,7 +363,9 @@ def generate_hitl_certificate(return_job_id: str, hitl_inspector: str) -> Dict[s
                 "special_notes": " / ".join(notes),
             }
             cert_doc = build_certificate_document(cert_state)
-            cert_doc["cert_id"] = f"CERT-{datetime.now().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
+            # 보증서 번호의 날짜는 KST다. 컨테이너 TZ가 UTC라 datetime.now()를 쓰면
+            # KST 00~09시 발급분이 전날 번호를 받는다.
+            cert_doc["cert_id"] = f"CERT-{now_kst().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
             cert_doc["issued_by"] = "HITL"
             cert_doc["inspected_by"] = hitl_inspector
 

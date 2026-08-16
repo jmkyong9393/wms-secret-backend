@@ -50,6 +50,7 @@ from app.models.wms import (
     Inventory,
     InventoryUsedItem,
     Location,
+    now_kst,
 )
 
 ALADIN_LIST_URL = "https://www.aladin.co.kr/ttb/api/ItemList.aspx"
@@ -257,7 +258,7 @@ def main() -> None:
 
         # 실제 창고 분포에 가깝게: 대부분 양호, 소수만 반려
         grade_plan = (["MINT"] * 25 + ["GOOD"] * 45 + ["NORMAL"] * 25 + ["REJECT"] * 5)
-        today = datetime.now()
+        today = now_kst()
         made = 0
 
         for i in range(args.used):

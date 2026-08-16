@@ -197,7 +197,7 @@ def on_startup():
             users_list = session.exec(select(User)).all()
             if len(users_list) == 0:
                 from datetime import datetime
-                yymm = datetime.now().strftime("%y%m")
+                yymm = now_kst().strftime("%y%m")
                 dynamic_master_id = f"WM{yymm}001"
                 print(f"[Startup] DB가 비어있습니다. 최초 MASTER 계정 ({dynamic_master_id} 장문경)을 자동 시딩합니다...")
                 master_user = User(

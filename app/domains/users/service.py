@@ -88,7 +88,7 @@ class UserService:
     def _generate_employee_id(self, session: Session, prefix: str) -> str:
         prefix = (prefix or "WM").upper()
         # 동적 현재 연도(2자리) + 생성월(2자리) 추출 (예: 2026년 8월 -> 2608)
-        yymm = datetime.now().strftime("%y%m")
+        yymm = now_kst().strftime("%y%m")
         base_prefix = f"{prefix}{yymm}"
 
         last_id = self._get_last_employee_id_by_prefix(session, base_prefix)

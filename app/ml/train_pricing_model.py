@@ -18,7 +18,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# 컨테이너 TZ가 UTC라 학습 메타의 시각이 UTC로 남는다. KST로 통일한다.
+_KST = timezone(timedelta(hours=9))
+
+
+def _now_kst() -> datetime:
+    return datetime.now(_KST).replace(tzinfo=None)
+
 from pathlib import Path
 
 import numpy as np
@@ -124,7 +132,7 @@ def train(verbose: bool = True) -> dict:
     meta = {
         "model": "XGBRegressor",
         "xgboost_version": xgb.__version__,
-        "trained_at": datetime.now().isoformat(timespec="seconds"),
+        "trained_at": _now_kst().isoformat(timespec="seconds"),
         "features": ["discount_rate", "ubci_score", "seasonality", "dwell_days"],
         "target": "purchase_probability",
         "n_samples": N_SAMPLES,

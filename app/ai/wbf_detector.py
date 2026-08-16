@@ -23,13 +23,21 @@
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import cv2
 import numpy as np
 from pathlib import Path
 from ultralytics import YOLO
 from typing import List, Dict, Any, Tuple, Optional
+
+# 컨테이너 TZ가 UTC라 datetime.now()는 UTC를 준다. 크롭 산출물 시각은 KST로 남긴다.
+# app.models.wms를 import하면 AI 모듈이 DB 모델에 의존하게 되므로 여기서 직접 만든다.
+_KST = timezone(timedelta(hours=9))
+
+
+def _now_kst() -> datetime:
+    return datetime.now(_KST).replace(tzinfo=None)
 
 # 모델 파일 절대 경로
 AI_DIR = Path(__file__).parent
@@ -171,7 +179,7 @@ def save_vlm_crop(
         return None
     try:
         VLM_CROP_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        stamp = _now_kst().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         safe_tag = re.sub(r"[^0-9A-Za-z가-힣_.-]", "_", str(tag))[:60]
         base = VLM_CROP_DIR / f"{stamp}_{safe_tag}"
 
@@ -195,7 +203,7 @@ def save_vlm_crop(
                         [cv2.IMWRITE_JPEG_QUALITY, 92])
 
         payload = {
-            "saved_at": datetime.now().isoformat(timespec="seconds"),
+            "saved_at": _now_kst().isoformat(timespec="seconds"),
             "tag": str(tag),
             "crop_size": {"w": int(image_bgr.shape[1]), "h": int(image_bgr.shape[0])},
             "detections": detections or [],

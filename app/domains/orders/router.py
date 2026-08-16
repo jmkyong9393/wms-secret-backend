@@ -219,7 +219,10 @@ def list_picking_instructions(
     session: Session = Depends(get_db),
 ):
     """피킹 지시서 목록 (관리자 출고 페이지 / 작업자 스캐너 공용)"""
-    stmt = select(PickingInstruction).order_by(PickingInstruction.created_at.desc()).limit(limit)
+    # 번호(PICK-YYMMDD-####)로 정렬한다. 고정폭이라 문자열 내림차순이 곧
+    # "날짜 우선, 같은 날짜면 일련번호 순"이 된다. created_at으로 정렬하면
+    # 화면에 보이는 번호 순서와 어긋난다.
+    stmt = select(PickingInstruction).order_by(PickingInstruction.instruction_no.desc()).limit(limit)
     rows = session.exec(stmt).all()
     if active_only:
         rows = [r for r in rows if r.status not in ("SHIPPED", "CANCELLED")]
@@ -621,7 +624,7 @@ def pick_outbound_3d_pack(order_id: Optional[str] = None, books: Optional[List[D
     ai_result = bin_packing_agent.optimize_packing(books)
     
     return {
-        "order_id": order_id or f"ORD-{datetime.now().strftime('%Y%m%d')}-01",
+        "order_id": order_id or f"ORD-{now_kst().strftime('%Y%m%d')}-01",
         "recommended_box": ai_result["recommended_box"],
         "box_specs": ai_result["box_specs"],
         "efficiency_percent": ai_result["efficiency"],
@@ -646,13 +649,13 @@ def ship_outbound_cj_waybill(order_id: str, session: Session = Depends(get_db)):
         # CJ대한통운 송장 번호 0001부터 순차 매핑 (CJ-2026-MMDD-0001, CJ-2026-MMDD-0002 ...)
     shipped_count = session.exec(select(Order).where(Order.status == OrderStatusEnum.SHIPPED.value)).all()
     seq_num = len(shipped_count) + 1
-    cj_waybill_no = f"CJ-2026-{datetime.now().strftime('%m%d')}-{seq_num:04d}"
+    cj_waybill_no = f"CJ-2026-{now_kst().strftime('%m%d')}-{seq_num:04d}"
     return {
         "status": "SHIPPED",
         "order_id": order_id,
         "courier": "CJ대한통운",
         "waybill_no": cj_waybill_no,
-        "shipped_at": datetime.now().isoformat(),
+        "shipped_at": now_kst().isoformat(),
         "message": f"CJ대한통운 송장 [{cj_waybill_no}] 발급 완료 및 DB 재고 출고 차감 처리 완공"
     }
 
@@ -671,7 +674,7 @@ def complete_outbound(req: OutboundCompleteRequest, session: Session = Depends(g
         # CJ대한통운 송장 번호 0001부터 순차 매핑 (CJ-2026-MMDD-0001, CJ-2026-MMDD-0002 ...)
     shipped_count = session.exec(select(Order).where(Order.status == OrderStatusEnum.SHIPPED.value)).all()
     seq_num = len(shipped_count) + 1
-    cj_waybill_no = f"CJ-2026-{datetime.now().strftime('%m%d')}-{seq_num:04d}"
+    cj_waybill_no = f"CJ-2026-{now_kst().strftime('%m%d')}-{seq_num:04d}"
     return {
         "status": "success",
         "lpn_barcode": req.lpn_barcode,
