@@ -32,6 +32,7 @@ def _inspector_label(current_admin) -> str:
 def list_proposals(
     status: Optional[str] = Query(default=None, description="PENDING | APPROVED | DISMISSED (미지정 시 전체)"),
     db: Session = Depends(get_db),
+    current_admin=Depends(admin_only),
 ) -> List[Dict[str, Any]]:
     """
     SCM 칸반보드 카드 목록. 제안 생성은 반려 이벤트/저재고 스캔 시점(write-time)에 이미
