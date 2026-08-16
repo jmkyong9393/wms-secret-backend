@@ -9,6 +9,7 @@ from app.domains.returns.service import ReturnService
 from fastapi.responses import StreamingResponse
 import redis.asyncio as redis
 from app.core.stream_auth import require_stream_access
+from app.core.security import get_current_user
 from app.models.wms import User
 
 router = APIRouter(prefix="/returns", tags=["Returns & AI Inspections"])
@@ -77,9 +78,24 @@ def list_inspections(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     status: Optional[str] = Query(None, description="APPROVED / REJECTED / HITL_REQUIRED / PENDING / PROCESSING / FAILED"),
-    worker_id: Optional[str] = Query(None, description="입고 촬영 담당자 사번으로 필터 (내 검수만 보기)"),
+    scope: Optional[str] = Query(None, description="mine이면 로그인 사용자 본인 검수만"),
+    worker_id: Optional[str] = Query(None, description="특정 담당자 사번으로 필터 (ADMIN/MASTER 전용)"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    # 조회 대상자는 **서버가 세션에서 정한다.** 종전에는 클라이언트가 보낸 worker_id를
+    # 그대로 신뢰해, 남의 사번을 넣으면 그 사람의 검수 이력이 조회됐다.
+    #
+    # role은 Enum이라 str()이 'UserRoleEnum.MASTER'가 된다. value를 꺼내야 한다.
+    _role = getattr(current_user, "role", None)
+    role = str(getattr(_role, "value", _role) or "").upper()
+    is_manager = role in ("ADMIN", "MASTER")
+
+    if not is_manager or scope == "mine":
+        # WORKER는 scope·worker_id와 무관하게 본인 것만 본다 (권한 하향 고정).
+        # 관리자도 scope=mine이면 본인 것만 본다.
+        worker_id = current_user.employee_id
+    # 관리자가 scope 없이 worker_id를 지정하면 그 담당자 것을 그대로 조회한다.
     from app.domains.inventory.router import resolve_inspector
     from app.models.wms import Book, InventoryUsedItem, ReturnJob, ubci_grade_from_score
 
