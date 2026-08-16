@@ -129,9 +129,7 @@ def save_inspection_result(
             history.append({
                 "at": now_kst().isoformat(),
                 "by": "AI",                       # 관리자 소환은 admin_audit_logs에 남는다
-                # ai_result 최상위가 최신이다. 워커의 HITL 잠금 분기가 여기만 갱신하고
-                # agent_logs 안쪽은 그래프가 낸 원래 값("OK" 등)으로 남아 있다.
-                "reason_code": ai_result.get("reason_code") or merged.get("reason_code"),
+                "reason_code": merged.get("reason_code"),
                 "ubci_score": ai_result.get("ubci_score"),
                 "final_grade": ai_result.get("final_grade"),
                 "defect_count": len(defects) if isinstance(defects, list) else 0,
