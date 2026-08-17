@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_S3_BUCKET: str = "wms-secret-vision-assets"
+    # 게시판 첨부 전용 버킷. 검수 사진(대외비, CloudFront 서명 열람)과 보안 등급·접근
+    # 정책·수명주기가 달라 버킷을 물리적으로 분리한다. 일괄 삭제 스크립트가 검수 사진을
+    # 건드리는 사고도 구조적으로 불가능해진다.
+    #   quarantine/  업로드 직후 격리 구역 (검사 전, 1일 후 자동 만료)
+    #   attachments/ 검사 통과분만 이동 (다운로드 허용)
+    AWS_S3_ATTACHMENT_BUCKET: str = "wms-secret-board-attachments"
     AWS_REGION: str = "ap-northeast-2"
     CLOUDFRONT_DOMAIN: str = "https://deao4fid6qoyp.cloudfront.net"
     CLOUDFRONT_KEY_PAIR_ID: str = "mock_key_pair_id"
