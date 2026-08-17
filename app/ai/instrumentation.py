@@ -33,8 +33,12 @@ _PRICE = {
 
 
 def _cost(model: str, prompt: int, completion: int) -> float:
-    for key, p in _PRICE.items():
+    # 긴 키부터 대조한다. "gpt-4o"는 "gpt-4o-mini"의 접두사라, 짧은 키를 먼저 보면
+    # mini 호출이 전부 4o 단가로 계산된다(실측: policy_agent 5,406토큰이 $0.000905 대신
+    # $0.015083으로 기록됐다).
+    for key in sorted(_PRICE, key=len, reverse=True):
         if key in (model or ""):
+            p = _PRICE[key]
             return prompt / 1000 * p["in"] + completion / 1000 * p["out"]
     return 0.0
 
