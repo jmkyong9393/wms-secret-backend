@@ -22,7 +22,9 @@ from app.ai.agents.common import (
     _downscale_for_vlm, _ensure_local_path, _is_inner_page, _load_image_as_base64,
 )
 from app.ai.agents.detector import build_yolo_hint
-from app.ai.agents.llm import llm_verify, llm_vlm, llm_mini
+# llm_mini는 예비 감점 검증(Stage 3) 제거로 이 노드에서 쓰지 않는다.
+# Vision Agent는 GPT-4o만 쓴다 — 1차 판독(llm_vlm) + 증거 대조 검증(llm_verify).
+from app.ai.agents.llm import llm_verify, llm_vlm
 from app.ai.agents.schemas import CriticVerdict, DefectEvidenceVerdict, VisionResult
 
 VISION_PROMPT_BASE = """당신은 WMS 디지털 품질 검수 센터의 수석 AI 비전(VLM) 검수원입니다.
@@ -196,40 +198,32 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
         invalid_image_indexes = []
         inner_page_regions = []
 
-    # --- Stage 3: GPT-4o-mini 매트릭스 수식 교차 검증 (BBox/type은 유지, preliminary_deduction만 재계산) ---
-    mini_verified = False
-    if llm_mini and defects:
-        try:
-            structured_mini = llm_mini.with_structured_output(VisionResult)
-            verify_prompt = f"""당신은 UBCI 예비 감점 연산 검증 AI입니다.
-1차 Vision AI가 판독한 아래 결함 목록(type, ratio)의 preliminary_deduction(예비 감점)이 UBCI 매트릭스 기준에 합당한지 검증하고, 틀렸다면 정정하세요.
-- DMG_INT_DOODLE: 5~15점 사이 (문제집 예외 Cap은 이후 Policy Agent가 별도 처리)
-- DMG_EXT_TEAR: Minor(ratio<5) 5점, Moderate(5<=ratio<15) 10점, Severe(ratio>=15) 15점
-- 그 외 결함: ratio에 비례하되 최소 5점
-
-is_mint, type, bbox는 절대 바꾸지 말고 defects 배열의 순서와 개수도 그대로 유지한 채 preliminary_deduction 값만 재계산해서 반환하세요.
-
-1차 판독 결과(JSON): {json.dumps({"is_mint": is_mint, "defects": defects}, ensure_ascii=False)}
-"""
-            res_mini: VisionResult = structured_mini.invoke([HumanMessage(content=verify_prompt)])
-            if res_mini and res_mini.defects and len(res_mini.defects) == len(defects):
-                for i, d in enumerate(defects):
-                    d["preliminary_deduction"] = res_mini.defects[i].preliminary_deduction
-                mini_verified = True
-        except Exception as e:
-            print(f"[Vision Agent] GPT-4o-mini 검증 실패, 휴리스틱 폴백으로 진행: {e}")
-
-    # 검증 LLM이 실패했을 때만 쓰는 결정론적 폴백 (기존 로직 보존)
-    if not mini_verified:
-        for d in defects:
-            dtype = str(d.get("type", ""))
-            ratio = d.get("ratio", 10)
-            if "DOODLE" in dtype or "필기" in dtype or "낙서" in dtype:
-                d["preliminary_deduction"] = min(15, max(5, ratio))
-            elif "TEAR" in dtype or "찢어짐" in dtype:
-                d["preliminary_deduction"] = 5 if ratio < 5 else (10 if ratio < 15 else 15)
-            else:
-                d["preliminary_deduction"] = max(5, ratio)
+    # --- 예비 감점 산정 (결정론적) ---
+    #
+    # [프리즈 예외 — 2026-08-17, 조장 승인]
+    # 종전에는 GPT-4o-mini가 이 값을 재계산했다(Stage 3). 그 호출을 제거한다.
+    # 백업: archive/2026-08-17_freeze_exception_vision_stage3/
+    #
+    # 제거 근거 — preliminary_deduction을 최종 산정에 쓰는 곳이 없다.
+    #   · policy.py는 이 값을 읽지 않는다(참조 0건). UBCI 매트릭스 SSOT
+    #     (app/core/ubci_matrix.py)로 처음부터 다시 계산해 applied_deduction에 넣는다.
+    #   · Policy는 모든 분기에서 applied_deduction을 세우므로, 소비처(critic·report·wrapper)의
+    #     `d.get("applied_deduction", d.get("preliminary_deduction"))` 폴백은 정상 경로에서
+    #     도달하지 않는다.
+    #   · 그 폴백은 오히려 위험하다 — 그룹 산정(마모 부위 합산)·Cap·오탐 제외를 반영하지
+    #     않아 보증서에 실제와 다른 감점이 찍힌 전례가 있다(report.py 주석 참조).
+    #
+    # 즉 아무도 쓰지 않는 값의 정확도를 높이려고 LLM을 호출하고 있었다.
+    # 아래 규칙은 종전 폴백 로직 그대로이며, 판정 결과에는 영향이 없다.
+    for d in defects:
+        dtype = str(d.get("type", ""))
+        ratio = d.get("ratio", 10)
+        if "DOODLE" in dtype or "필기" in dtype or "낙서" in dtype:
+            d["preliminary_deduction"] = min(15, max(5, ratio))
+        elif "TEAR" in dtype or "찢어짐" in dtype:
+            d["preliminary_deduction"] = 5 if ratio < 5 else (10 if ratio < 15 else 15)
+        else:
+            d["preliminary_deduction"] = max(5, ratio)
 
     # --- Track 2·3: 속지 지면 크롭에 doodle 단독 추론 ---
     # VLM이 지정한 지면 영역만 잘라 doodle 모델에 넣는다. 인쇄면 전체를 넣으면 활자를 손글씨로 오인하므로(실측: 깨끗한 속지 1장에 오탐 12건), 학습 도메인인 "손글씨 크롭 패치"에 가까운 입력을 만들어 준다. 크롭본과 탐지 결과는 로컬에 적재해 나중에 검증한다.
