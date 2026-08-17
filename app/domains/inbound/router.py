@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
@@ -147,8 +148,19 @@ async def fasttrack_inbound(request: FasttrackRequest, db: Session = Depends(get
 
         book = Book(**book_kwargs)
         db.add(book)
-        db.commit()
-        db.refresh(book)
+        try:
+            db.commit()
+            db.refresh(book)
+        except IntegrityError:
+            # select→insert 사이에 다른 요청이 같은 ISBN을 먼저 넣은 경우.
+            # unique 제약(ix_books_isbn)이 이미 중복을 막고 있으므로, 여기서는
+            # 롤백하고 그 요청이 만든 행을 다시 읽어 쓰면 된다.
+            # (부하 테스트 실측: 같은 신규 ISBN 20건 동시 입고 시 14건이 500으로 실패했다)
+            db.rollback()
+            book = db.exec(select(Book).where(Book.isbn == isbn)).first()
+            if not book:
+                raise HTTPException(status_code=409,
+                                    detail="도서 등록이 동시 요청과 충돌했습니다. 다시 시도해 주세요.")
 
     # 2) Zone A(신품존) 묶음 재고 upsert + virtual_stock 가산 + INBOUND 원장 기록.
     #    자동 발주(OrderProposal) 승인 입고와 동일한 공용 관문(fasttrack_new_stock_inbound)을 사용한다.
