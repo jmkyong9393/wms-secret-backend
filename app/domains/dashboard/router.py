@@ -5,7 +5,7 @@ from sqlalchemy import or_, cast, String
 from sqlmodel import Session, select, func
 from app.db.session import get_db
 from app.models.wms import (
-    ReturnJob, InventoryUsedItem, Inventory, Order, Book, JobStatusEnum, ubci_grade_from_score,
+    ReturnJob, InventoryUsedItem, Inventory, Order, OrderItem, Book, JobStatusEnum, ubci_grade_from_score,
     AdminAuditLog,
 )
 from app.core.security import RoleChecker, UserRoleEnum
@@ -204,14 +204,18 @@ def get_inspection_breakdown(session: Session = Depends(get_db)) -> Dict[str, An
 @router.get("/charts")
 def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     """
-    7일간 일별 입출고 물량, 등급 분포, 카테고리 분포 SQL 실집계 데이터 반환.
+    14일간 일별 입출고 물량, 등급 분포, 카테고리 분포 SQL 실집계 데이터 반환.
 
     [수정 이력, 2026-08-04] ReturnJob 모델에는 final_grade 컬럼이 없어 기존
     `select(ReturnJob.final_grade, ...)` 쿼리는 실행 시 크래시했다. ubci_score를
     조회해 ubci_grade_from_score()로 Python 단에서 등급 버켓팅하도록 교정.
     volume_data/category_data도 하드코딩을 걷어내고 실집계로 교체.
     """
-    seven_days_ago = now_kst() - timedelta(days=7)
+    # 집계 창의 마지막 날이 **오늘**이 되도록 (VOLUME_DAYS - 1)일 전부터 센다.
+    # 종전에는 7일 전부터 7칸을 세어 오늘이 창 밖으로 밀려났다 - 당일 입출고가
+    # 화면에 영영 뜨지 않았다(실측: 08-17 입고 37권이 차트에 없었다).
+    VOLUME_DAYS = 14
+    volume_start = now_kst() - timedelta(days=VOLUME_DAYS - 1)
 
     # 보유 중고 재고의 등급 분포 (UBCI_Specification_v2.0.0.0.md 공식 경계값 기준 버켓팅).
     #
@@ -258,21 +262,37 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     # 무관하게 항상 같은 숫자가 떠 있었다. 여기서 실계산값을 함께 내려 하드코딩을 대체한다.
     mint_good_pct = _pct(grade_counts["MINT"] + grade_counts["GOOD"])
 
-    # 7일간 일별 입출고 실집계 (입고: InventoryUsedItem 생성 시각, 출고: AUTO_PO를 제외한 Order 생성 시각)
+    # 일별 입출고 실집계. **양축 모두 "권(book)" 단위로 통일한다.**
+    #
+    # 종전에는 입고가 중고 LPN 행수, 출고가 주문 건수여서 서로 다른 단위가 같은 그래프에
+    # 그려지고 있었다. 실측 왜곡 2건:
+    #   - 신품 Fast-track 입고가 통째로 빠졌다 (08-09: 실제 110권인데 차트에는 2로 표시)
+    #   - 24권을 출고한 날이 주문 1건이라 1로 찍혀 출고선이 바닥에 붙었다
+    # 입고 = 중고 LPN 1행(1권) + 신품 quantity 합, 출고 = order_items.quantity 합.
     volume_data = []
-    for i in range(7):
-        day_start = (seven_days_ago + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+    for i in range(VOLUME_DAYS):
+        day_start = (volume_start + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
 
-        inbound_count = session.exec(
+        used_in = session.exec(
             select(func.count(InventoryUsedItem.id)).where(
                 InventoryUsedItem.created_at >= day_start,
                 InventoryUsedItem.created_at < day_end,
             )
         ).one() or 0
 
+        new_in = session.exec(
+            select(func.coalesce(func.sum(Inventory.quantity), 0)).where(
+                Inventory.created_at >= day_start,
+                Inventory.created_at < day_end,
+            )
+        ).one() or 0
+
+        # 주문 건수가 아니라 실제 출고 권수. AUTO_PO(자동 발주)는 입고 예정이라 제외한다.
         outbound_count = session.exec(
-            select(func.count(Order.id)).where(
+            select(func.coalesce(func.sum(OrderItem.quantity), 0))
+            .join(Order, Order.id == OrderItem.order_id)
+            .where(
                 Order.created_at >= day_start,
                 Order.created_at < day_end,
                 Order.type != "AUTO_PO",
@@ -281,8 +301,10 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
 
         volume_data.append({
             "date": day_start.strftime("%m-%d"),
-            "inbound": inbound_count,
-            "outbound": outbound_count,
+            "inbound": int(used_in) + int(new_in),
+            "inbound_used": int(used_in),
+            "inbound_new": int(new_in),
+            "outbound": int(outbound_count),
         })
 
     # 카테고리별 실재고 보유 수량 집계 (중고 / 신품 분리).
