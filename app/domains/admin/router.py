@@ -27,6 +27,25 @@ def _is_hitl_required(status) -> bool:
     return getattr(status, "value", status) == JobStatusEnum.HITL_REQUIRED.value
 
 
+# 재검수 결과를 AI가 단독으로 확정하면 안 되는 상태들.
+# HITL 대기(사람이 봐야 함) + 이미 사람이 결재를 마친 상태(그 결재를 뒤엎으면 안 됨).
+_HUMAN_OWNED_STATUSES = frozenset({
+    JobStatusEnum.HITL_REQUIRED.value,
+    JobStatusEnum.APPROVED.value,
+    JobStatusEnum.REJECTED.value,
+})
+
+
+def _is_human_owned(status) -> bool:
+    """이 건의 판정 소유권이 사람에게 있는가.
+
+    종전에는 HITL_REQUIRED만 봤다. 그래서 관리자가 결재를 끝내 APPROVED가 된 건에
+    "AI 재검수"를 누르면 was_hitl=False로 넘어가 AI가 그 결재를 뒤엎고 재고 등급까지
+    덮어썼다 (실측: LPN-260810-A012, 관리자 확정 UBCI 60/NORMAL -> AI 재판정 85/GOOD).
+    결재를 마친 건도 사람 소유로 본다."""
+    return getattr(status, "value", status) in _HUMAN_OWNED_STATUSES
+
+
 def _resolve_admin_audit_id(current_admin, session: Session) -> UUID:
     """AdminAuditLog.admin_id는 users.id를 참조하는 UUID FK다. current_admin.id를
     신뢰하되 DB에 실제로 존재하는지 확인하고, 없으면 관리자 계정으로 폴백한다."""
@@ -532,7 +551,7 @@ def submit_hitl_override(
             rejected_job_ids.append(str(job.id))
         elif item.decision in ["RE_CHECK", "AI_REINSPECT"]:
             # 존재하지 않는 app.domains.returns.service.process_inspection을 import해서 실제로 호출되면 100% ImportError로 죽던 코드였다 (Pipeline A/B 통합 이전의 잔재). 상태만 PENDING으로 되돌리고 아무것도 재큐잉하지 않아 작업이 그대로 멈춰있던 문제도 함께 수정 - /admin/hitl/{job_id}/re-inspect와 동일하게 Celery로 재큐잉한다. was_hitl은 재큐잉 전 원래 상태(previous_state) 기준.
-            was_hitl = _is_hitl_required(previous_state)
+            was_hitl = _is_human_owned(previous_state)
             job.status = JobStatusEnum.PENDING
             job.retry_count += 1
             session.add(job)
@@ -634,7 +653,9 @@ def trigger_ai_reinspection(job_id: str, session: Session = Depends(get_db)):
         raise BadRequestException("No images found for this job.")
 
     # was_hitl을 process_inspection에 태스크 인자로 직접 넘긴다.
-    was_hitl = str(job.status) == JobStatusEnum.HITL_REQUIRED.value
+    # HITL 대기뿐 아니라 이미 결재가 끝난 건(APPROVED/REJECTED)도 사람 소유로 본다 - 그렇지
+    # 않으면 재고에 편입된 건을 재검수했을 때 AI가 관리자 결재를 덮어쓴다.
+    was_hitl = _is_human_owned(job.status)
 
     job.status = JobStatusEnum.PENDING.value
     job.retry_count = (job.retry_count or 0) + 1
