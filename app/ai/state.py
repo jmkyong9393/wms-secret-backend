@@ -122,3 +122,9 @@ class WMSInspectionState(TypedDict):
     # Policy/Critic이 아예 실행되지 않으므로, UI가 "4개 다 돌았다"고 거짓 표기하지 않도록
     # 어느 노드가 실제로 돌았는지를 누적 기록한다 (operator.add 리듀서로 노드별 append).
     executed_agents: Annotated[List[str], operator.add]
+
+    # 노드별 구간 지연·토큰. app/ai/instrumentation.py의 래퍼가 채운다 (노드 코드는 관여하지 않는다).
+    # 종전에는 return_jobs.latency_ms 하나뿐이라 어느 노드가 병목인지 말할 수 없었고,
+    # LLM 비용도 토큰 계측이 없어 추정에 머물렀다. 재검수 루프가 돌면 같은 노드가 여러 번 쌓인다.
+    node_timings: Annotated[List[dict], operator.add]
+    node_tokens: Annotated[List[dict], operator.add]

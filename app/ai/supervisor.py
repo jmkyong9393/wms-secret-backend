@@ -156,13 +156,17 @@ def build_supervisor_graph():
     builder = StateGraph(WMSInspectionState)
 
     # 1. 노드 등록 (add_node)
-    builder.add_node("supervisor", supervisor_node)
-    builder.add_node("detector_node", detector_node)
-    builder.add_node("vision_agent", vision_agent)
-    builder.add_node("policy_agent", policy_agent)
-    builder.add_node("critic_agent", critic_agent)
-    builder.add_node("human_node", human_node)
-    builder.add_node("report_agent", report_agent)
+    # 계측 래퍼로 감싼다 — 구간 지연과 LLM 토큰을 노드 단위로 수집한다.
+    # 노드 구현은 그대로 두고 등록 시점에만 감싸므로 파이프라인 구조·모델 배정은 불변이다.
+    from app.ai.instrumentation import instrument
+
+    builder.add_node("supervisor", instrument("supervisor", supervisor_node))
+    builder.add_node("detector_node", instrument("detector_node", detector_node))
+    builder.add_node("vision_agent", instrument("vision_agent", vision_agent))
+    builder.add_node("policy_agent", instrument("policy_agent", policy_agent))
+    builder.add_node("critic_agent", instrument("critic_agent", critic_agent))
+    builder.add_node("human_node", instrument("human_node", human_node))
+    builder.add_node("report_agent", instrument("report_agent", report_agent))
 
     # 2. 파이프라인 진입 (START ➔ Detector ➔ Vision Agent)
     builder.add_edge(START, "detector_node")

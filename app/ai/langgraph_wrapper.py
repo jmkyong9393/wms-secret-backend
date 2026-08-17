@@ -2,6 +2,16 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage
 
+
+def _summarize_cost(timings, tokens) -> Dict[str, Any]:
+    """계측 집계. 계측이 실패해도 검수 결과 저장을 막지 않는다."""
+    try:
+        from app.ai.instrumentation import summarize
+        return summarize(timings, tokens)
+    except Exception:
+        return {}
+
+
 # LangGraph Supervisor 파이프라인 호출 담당 Wrapper class
 class LangGraphInspectionWrapper:
     # LangGraph Supervisor에 전달한 초기 WMSInspectionState 생성
@@ -51,6 +61,10 @@ class LangGraphInspectionWrapper:
 
             # 실행 노드 추적 (operator.add 리듀서 - 초기값은 반드시 빈 리스트)
             "executed_agents": [],
+
+            # 노드 계측 (operator.add 리듀서 - 초기값은 반드시 빈 리스트)
+            "node_timings": [],
+            "node_tokens": [],
         }
 
     # LangGraph 최종 state를 기반으로 Worker가 사용할 decision 값으로 변환하는 함수
@@ -128,6 +142,13 @@ class LangGraphInspectionWrapper:
                 # MINT 무결점 확정 건의 자동 매입/환불 대상 여부.
                 "auto_refund_eligible": bool(final_state.get("auto_refund_eligible")),
                 "retry_count": final_state.get("revision_count") or 0,
+                # 노드별 구간 지연·토큰 (instrumentation 래퍼 수집분).
+                # latency_ms 단일 값으로는 어느 노드가 병목인지 말할 수 없었다.
+                "node_timings": final_state.get("node_timings") or [],
+                "node_tokens": final_state.get("node_tokens") or [],
+                "cost_summary": _summarize_cost(
+                    final_state.get("node_timings"), final_state.get("node_tokens")
+                ),
                 # 프론트 BBox 오버레이가 바로 쓸 수 있는 이미지별 정규화 좌표
                 "defect_coordinates": self.build_defect_coordinates(
                     defects, final_state.get("display_image_urls") or []
