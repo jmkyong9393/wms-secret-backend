@@ -51,6 +51,16 @@ def critic_stage_a_integrity_check(defects: list, image_count: int, score) -> li
             f"직접 판단하지 않고 제보를 반환한 것으로 보임"
         )
 
+    # 비접지 BBox - VLM이 위치를 못 잡고 좌표를 지어낸 패턴 (동일 좌표 반복 / 등차 나열).
+    # 처리 계보는 conf_copied_from_candidate와 같다: 결함은 보존하되 자동 확정을 막고
+    # 관리자가 실제 위치를 그리도록 HITL로 보낸다 (실측: LPN-260810-A030 · A012).
+    ungrounded = [i for i, d in enumerate(defects) if isinstance(d, dict) and d.get("bbox_ungrounded")]
+    if ungrounded:
+        integrity_issues.append(
+            f"결함 {len(ungrounded)}건의 BBox가 지어낸 좌표 패턴(동일 좌표 반복/등차 나열) - "
+            f"VLM이 위치를 특정하지 못한 것으로 보이므로 관리자가 좌표를 확인해야 함"
+        )
+
     return integrity_issues
 
 

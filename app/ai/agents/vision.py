@@ -40,7 +40,8 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
 3. 인쇄본 구별:
    - 교재 본문에 기본 인쇄된 텍스트, 표(Table), 인포그래픽 박스는 절대 결함으로 오탐하지 말 것.
 4. 좌표계:
-   - 각 결함(defects[i])의 bbox 필드에 xmin, ymin, xmax, ymax를 이미지 0~1000 픽셀 상대 좌표로 반드시 채워서 반환하세요 (누락 금지). confidence 필드에는 본인의 판독 확신도(0.0~1.0)를 적으세요.
+   - 각 결함(defects[i])의 bbox 필드에 xmin, ymin, xmax, ymax를 이미지 0~1000 픽셀 상대 좌표로 채워서 반환하세요. confidence 필드에는 본인의 판독 확신도(0.0~1.0)를 적으세요.
+   - bbox는 **당신이 이미지에서 실제로 본 위치**여야 합니다. 결함은 보이는데 위치를 정확히 특정할 수 없으면 좌표를 지어내지 말고 bbox를 null로 두세요 (그 건은 관리자가 직접 위치를 그립니다). (50,50,150,150)처럼 규칙적인 예시형 좌표, 여러 결함에 같은 좌표 반복, 이미지 전체를 덮는 띠는 전부 "보지 않고 지어낸 좌표"로 간주되어 판독 전체가 반려됩니다.
    - 해당 결함이 도서 제목이나 본문 텍스트 영역을 가리거나 침범하면 text_overlap을 true로, 아니면 false로 설정하세요 (UBCI 1.5배 가중치 판정에 직접 사용됩니다).
    - image_index에는 결함이 발견된 이미지의 순서(0번째=정면, 1번째=후면, 2번째부터=내지/측면 등)를 정확히 기재하세요.
 5. 정성적 관찰(special_notes):
@@ -115,6 +116,71 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
    - 촬영 컷 전체가 물리적으로 판독 불가한 경우가 아니라면, 반드시 각 컷을 끝까지 살펴본 뒤
      결과를 내세요. 사진이 지저분하거나 각도가 나쁘다는 이유로 판독을 포기하지 마세요.
 """
+
+
+def _flag_ungrounded_bboxes(defects: List[Dict[str, Any]]) -> int:
+    """VLM이 지어낸(비접지) BBox를 결정론 규칙으로 표시한다. LLM 미사용.
+
+    VLM은 정규화 좌표를 픽셀 위치로 환산하지 못하므로, 위치를 못 잡으면 그럴듯한
+    좌표를 만들어 반환한다. 실측 두 패턴:
+      R1  서로 다른 컷에 완전히 같은 좌표 반복 (LPN-260810-A030: 컷 0·1·2 전부 (0,0,1000,100))
+      R2  같은 크기 상자가 일정 간격 등차로 나열 (LPN-260810-A012: (50,50,150,150) →
+          (100,100,200,200) → (150,150,250,250) → (200,200,300,300), 전부 100x100)
+
+    지어낸 좌표는 두 가지를 오염시킨다 - ① 크롭 검증이 엉뚱한 부위를 심사해 실제 결함의
+    감점을 지운다(A012 재검수에서 발생) ② HITL 화면·학습 데이터에 가짜 위치가 실린다.
+
+    결함을 지우지 않는다. `bbox_ungrounded=True` 표식만 남기고, 크롭 검증이 이를 건너뛰며
+    Critic Stage A가 정합성 위반으로 승격시켜 HITL로 보낸다 - conf_copied_from_candidate와
+    같은 처리 계보다. YOLO 좌표(conf_source="yolo"/자동 채택분)는 실측이므로 대상이 아니다.
+    """
+    vlm_owned = [
+        d for d in defects
+        if isinstance(d.get("bbox"), dict)
+        and d.get("conf_source") != "yolo"
+        and not d.get("adopted_from_candidate")
+    ]
+    if len(vlm_owned) < 2:
+        return 0
+
+    def key(d):
+        b = d["bbox"]
+        return (int(b.get("xmin", 0)), int(b.get("ymin", 0)),
+                int(b.get("xmax", 0)), int(b.get("ymax", 0)))
+
+    flagged: set = set()
+
+    # R1: 같은 좌표 4값이 서로 다른 image_index에서 반복
+    by_coord: Dict[tuple, List[Dict[str, Any]]] = {}
+    for d in vlm_owned:
+        by_coord.setdefault(key(d), []).append(d)
+    for coord, group in by_coord.items():
+        if len({int(g.get("image_index") or 0) for g in group}) >= 2:
+            flagged.update(id(g) for g in group)
+
+    # R2: 같은 크기 상자가 xmin·ymin 모두 동일 간격 등차 (3건 이상)
+    by_size: Dict[tuple, List[Dict[str, Any]]] = {}
+    for d in vlm_owned:
+        x1, y1, x2, y2 = key(d)
+        by_size.setdefault((x2 - x1, y2 - y1), []).append(d)
+    for size, group in by_size.items():
+        if len(group) < 3:
+            continue
+        pts = sorted({(key(g)[0], key(g)[1]) for g in group})
+        if len(pts) < 3:
+            continue
+        dx = pts[1][0] - pts[0][0]
+        dy = pts[1][1] - pts[0][1]
+        if (dx, dy) != (0, 0) and all(
+            (pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) == (dx, dy)
+            for i in range(len(pts) - 1)
+        ):
+            flagged.update(id(g) for g in group)
+
+    for d in vlm_owned:
+        if id(d) in flagged:
+            d["bbox_ungrounded"] = True
+    return len(flagged)
 
 
 def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
@@ -402,6 +468,13 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
                 d["conf_copied_from_candidate"] = True
         copied_conf = max(copied_conf, len(vlm_confs))
 
+    # --- 비접지 BBox 탐지 (결정론적) ---
+    # 크롭 검증보다 먼저 돈다 - 지어낸 좌표를 크롭 심사하면 엉뚱한 부위를 보고
+    # "손상 없음"이 나와 실제 결함의 감점이 지워진다 (실측: LPN-260810-A012 재검수).
+    ungrounded_cnt = _flag_ungrounded_bboxes(defects)
+    if ungrounded_cnt:
+        print(f"[Vision Agent] ⚠ 비접지 BBox {ungrounded_cnt}건 - VLM이 좌표를 지어낸 패턴 (HITL 승격 대상)")
+
     # --- 증거 대조 검증 (GPT-4o, BBox 크롭 건별 심사) ---
     # [호출 위치] 속지 마모 제외와 확신도 출처 확정이 끝난 뒤에 돈다.
     #   - 앞에서 돌면 곧 폐기될 속지 결함까지 심사해 비용만 쓴다.
@@ -618,6 +691,13 @@ def verify_defects_with_images(
         bbox = d.get("bbox")
         if not isinstance(bbox, dict) or not (0 <= idx < len(image_paths)):
             d["verify_status"] = "skipped_no_bbox"
+            skipped += 1
+            continue
+
+        # 비접지 좌표는 심사하지 않는다 - 지어낸 위치를 크롭하면 반드시 "손상 없음"이
+        # 나와 실제 결함의 감점이 지워진다. 이 건은 Critic Stage A가 HITL로 보낸다.
+        if d.get("bbox_ungrounded"):
+            d["verify_status"] = "skipped_ungrounded_bbox"
             skipped += 1
             continue
 
