@@ -30,8 +30,18 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-BASE = 'http://localhost:8000'
+import os
+
+# 프로빙 대상. 라이브 검사는 AUDIT_BASE로 넘긴다.
+BASE = os.getenv('AUDIT_BASE', 'http://localhost:8000')
+# 경로 목록을 읽어올 곳. 운영은 /openapi.json을 비활성화(404)하므로 —
+# 그 자체가 올바른 설정이다 — 같은 이미지를 띄운 로컬에서 스펙을 가져온다.
+SPEC_BASE = os.getenv('AUDIT_SPEC_BASE', BASE)
 WRITE_MODE = '--write' in sys.argv
+if WRITE_MODE and 'localhost' not in BASE and '127.0.0.1' not in BASE:
+    raise SystemExit(
+        f'--write는 로컬 전용이다. 원격({BASE})에 실행하면 인가가 없는 경로에서 '
+        '실제 상태 변경이 발생한다.')
 # 부작용 실측용 — 검사 전후로 건수를 대조한다
 COUNT_TABLES = [
     'return_jobs', 'inventory_used_items', 'inventory', 'orders', 'order_items',
@@ -100,7 +110,9 @@ def table_counts():
         return None
 
 
-spec = json.load(urllib.request.urlopen(f'{BASE}/openapi.json', timeout=20))
+spec = json.load(urllib.request.urlopen(f'{SPEC_BASE}/openapi.json', timeout=20))
+if SPEC_BASE != BASE:
+    print(f'스펙 출처 {SPEC_BASE} · 프로빙 대상 {BASE}')
 paths = spec.get('paths', {})
 
 WANT = {'get', 'post', 'put', 'patch', 'delete'} if WRITE_MODE else {'get'}
