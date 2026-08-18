@@ -20,7 +20,7 @@ from app.domains.orders.service import (
     calculate_price_elasticity_revenue_optimization,
     calculate_line_price,
     calculate_order_pricing,
-    # [2026-08-14] 라우터에 있던 업무 규칙을 service로 이관. 라우터는 HTTP 입출력만 맡는다.
+    # 라우터에 있던 업무 규칙을 service로 이관. 라우터는 HTTP 입출력만 맡는다.
     fetch_aladin_real_packing_spec,
     _issue_waybill_no,
     _resolve_order_lines,
@@ -175,7 +175,7 @@ def simulate_b2b_order(session: Session = Depends(get_db)):
     """
     customers = ["교보문고 B2B 지점", "알라딘 중고매장 강남점", "예스24 B2B 물류센터", "영풍문고 종로본점"]
 
-    # [2026-08-10 수정] 종전에는 활성 도서 전체에서 무작위로 뽑아, 재고가 0인 신품도
+    # 종전에는 활성 도서 전체에서 무작위로 뽑아, 재고가 0인 신품도
     # 주문에 실렸다(중고는 IN_STOCK 조건이 있었으나 신품은 아무 조건이 없었다).
     # 시뮬레이션이라도 팔 수 없는 물건을 주문에 넣으면 그 뒤 흐름 전체가 거짓이 된다.
     from app.domains.inventory.service import get_new_stock_map

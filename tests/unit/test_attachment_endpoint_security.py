@@ -75,11 +75,10 @@ def s3(monkeypatch):
 
 
 class Session:
-    """로그인 주체를 바꿔 가며 호출하는 클라이언트.
+    """로그인 주체를 호출 직전에 바꿔 가며 요청하는 클라이언트.
 
-    사용자별로 픽스처를 나누면 둘 다 같은 `dependency_overrides` 키를 덮어써서
-    **나중에 만들어진 쪽으로 두 요청이 모두 나간다**(실제로 이 함정에 빠져 IDOR 테스트가
-    거짓 통과했다). 호출 직전에 주체를 바꾸는 방식으로 그 가능성을 없앤다.
+    사용자별 픽스처 분리는 같은 dependency_overrides 키를 덮어써
+    거짓 통과를 낳는다 (92번 §5-3d).
     """
 
     def __init__(self, client: TestClient) -> None:

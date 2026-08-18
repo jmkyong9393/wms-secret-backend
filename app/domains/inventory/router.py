@@ -127,7 +127,7 @@ def resolve_inspector(item: Optional[Any], job: Optional[Any]) -> Dict[str, Any]
 
 # 끝 슬래시 유무를 모두 직접 받는다 (리다이렉트 금지).
 #
-# [수정 이력 2026-08-06] 이 엔드포인트는 `/inventory/` 하나만 등록되어 있어서, 슬래시 없이
+# 이 엔드포인트는 `/inventory/` 하나만 등록되어 있어서, 슬래시 없이
 # 들어온 요청에 FastAPI가 307 리다이렉트를 응답했다. 문제는 그 Location이
 # **절대 URL(`http://localhost:8000/...`)** 이라는 점이다.
 #
@@ -289,10 +289,10 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             "ubci_score": item.ubci_score,
             "zone": zone_str,
             "quantity": 1,
-            # [2026-08-10] 작업자(사람)와 확정 트랙(AI/HITL)을 분리해 내려준다.
+            # 작업자(사람)와 확정 트랙(AI/HITL)을 분리해 내려준다.
             # 종전에는 "Nexus Vision AI (LangGraph 4-Agent)" 한 문자열이 작업자 칸을 채워
             # 실제 검수를 수행한 사람이 화면에 전혀 나오지 않았다.
-            # [2026-08-12] 검수 기록이 없으면 선부착(라벨 발급) 작업자로 폴백.
+            # 검수 기록이 없으면 선부착(라벨 발급) 작업자로 폴백.
             "worker_label": format_worker_label(
                 worker_by_job.get(str(item.source_job_id or ""))
                 or getattr(item, "prelabel_worker_id", None),
@@ -327,7 +327,7 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
     """
     새로운 LPN 바코드를 발급하고 검수 대기 버퍼 로케이션에 선부착 등록합니다.
 
-    [2026-08-06 수정] LPN 채번을 프론트에서 백엔드로 이관하면서, 이 엔드포인트가 **바코드
+    LPN 채번을 프론트에서 백엔드로 이관하면서, 이 엔드포인트가 **바코드
     스캔 직후** 호출되게 되었다. 그 시점에는 아직 books 행이 없어(입고 확정 전) 종전
     구현은 404 "Book not found"로 죽는다. LPN 발급은 선부착 설계상 검수보다 먼저여야
     하므로, 도서가 없으면 알라딘 조회로 최소 메타데이터를 만들어 등록한다.
@@ -380,7 +380,7 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
                 db.add(book)
                 db.commit()
 
-    # [2026-08-12] 종전에는 req.worker_id를 응답으로 되돌려줄 뿐 저장하지 않아,
+    # 종전에는 req.worker_id를 응답으로 되돌려줄 뿐 저장하지 않아,
     # 검수 전(PENDING_INSPECTION) 품목의 작업자가 어디에도 남지 않았다.
     new_lpn, book = generate_lpn(
         db, book_id=req.book_id, isbn=req.isbn, zone=req.zone, worker_id=req.worker_id
@@ -749,7 +749,7 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
         "inspector": inspector,
         # 카테고리별 차등이 적용된 가격 산정 내역 (프론트는 렌더만 한다)
         "pricing": pricing,
-        # [2026-08-06 수정] 상세/진단 타임라인의 기준 시각을 최초 입고(created_at)가 아니라
+        # 상세/진단 타임라인의 기준 시각을 최초 입고(created_at)가 아니라
         # 최종 검수 확정(inspected_at)으로 변경 - 재검수를 돌려도 화면 시각이 옛 입고 시각에
         # 머물던 문제 교정 (inspected_at 미기록 레거시 row는 created_at 폴백).
         "date": to_kst_str(item.inspected_at or item.created_at),

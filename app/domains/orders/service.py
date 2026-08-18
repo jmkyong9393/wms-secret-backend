@@ -180,7 +180,7 @@ def calculate_order_pricing(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 # ==========================================
 # 주문 라인 해석 · 송장 채번 · 도서 물성 조회
-# [2026-08-14] router.py에서 이관. 라우터는 HTTP 입출력만 맡고
+# router.py에서 이관. 라우터는 HTTP 입출력만 맡고
 # 업무 규칙은 이 파일이 갖는다 (슬라이스 내부 계층 분리).
 # ==========================================
 from datetime import datetime

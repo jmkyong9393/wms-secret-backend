@@ -81,7 +81,7 @@ def detector_node(state: WMSInspectionState) -> WMSInspectionState:
 def build_yolo_hint(yolo_candidates: List[Dict[str, Any]]) -> str:
     """YOLO 사전탐지 후보를 판독 프롬프트에 붙일 문구로 만든다.
 
-    [2026-08-06] 후보를 JSON 그대로(=confidence 포함) 넣으면 모델이 그것을 **답으로 베낀다.**
+    후보를 JSON 그대로(=confidence 포함) 넣으면 모델이 그것을 **답으로 베낀다.**
     실측: 후보 5건과 확정 결함 5건의 confidence가 소수점 4자리까지 동일
     (0.7578 / 0.7947 / 0.5241 / 0.4370 / 0.5903, job b7b34ae1). 후보에 잡음이 많을 때는
     말이 안 되는 것들을 걸러내며 "판독하는 것처럼" 보였지만, 후보 품질이 올라가자 전건

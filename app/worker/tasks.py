@@ -587,12 +587,12 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # state["book_title"]을 읽는데, 이 키를 아무도 채워준 적이 없어 항상 빈 문자열이었다.
         # 즉 수험서 Cap이 한 번도 발동하지 않고 낙서가 건당 누적 감점되고 있었다.
         book_title = ((agent_logs_in or {}).get("book_metadata") or {}).get("title") or ""
-        # [수정 이력 2026-08-12] is_workbook이 제목 키워드에만 의존해 "쉽게 풀어쓴 C언어
+        # is_workbook이 제목 키워드에만 의존해 "쉽게 풀어쓴 C언어
         # Express"처럼 실습문제가 실린 도서 다수가 안 걸렸다. inbound/router.py가 이미
         # agent_logs["book_category"]에 심어둔 값을 읽어 2차 신호로 함께 넘긴다.
         book_category = (agent_logs_in or {}).get("book_category") or ""
 
-        # [수정 이력 2026-08-13] book_metadata/book_category는 **입고 시점**에만 agent_logs에
+        # book_metadata/book_category는 **입고 시점**에만 agent_logs에
         # 심긴다. 그 이전에 만들어진 job을 재검수하면 둘 다 비어서 ① is_workbook Cap이
         # 미발동해 낙서가 건당 누적되고(실측: C언어 Express 재검수 -100점 -> UBCI 0점 REJECT),
         # ② 완료 알림 도서명이 '도서'로 표기됐다. books 테이블에는 항상 있으므로 DB에서
@@ -688,7 +688,7 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
 
             job_logs = job.agent_logs or {}
             # 도서명은 위에서 DB 폴백까지 끝낸 book_title을 재사용한다.
-            # [수정 이력 2026-08-13] 여기서 agent_logs.book_metadata를 다시 읽었는데, 입고
+            # 여기서 agent_logs.book_metadata를 다시 읽었는데, 입고
             # 시점 이전의 구 job(재검수)은 그 키가 없어 알림이 전부 '도서'로 표기됐다.
             notify_book_title = book_title or "도서"
 

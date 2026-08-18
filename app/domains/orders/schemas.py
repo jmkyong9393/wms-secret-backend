@@ -1,7 +1,7 @@
 """
 주문·출고 도메인 요청 스키마.
 
-[2026-08-14] router.py에서 이관. 라우터가 스키마까지 들고 있으면 service가 타입을
+router.py에서 이관. 라우터가 스키마까지 들고 있으면 service가 타입을
 참조할 때 순환 import가 생긴다(service ← router ← service). auth·returns·users·board
 슬라이스가 이미 쓰던 구조에 맞춘다.
 """

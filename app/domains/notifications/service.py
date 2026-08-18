@@ -185,7 +185,7 @@ def notify_outbound_event(
     """
     출고 파이프라인(피킹 완료/송장 발급/최종 출고) 사건 발행.
 
-    [수정 이력 2026-08-08] orders/picking.py의 publish_outbound_notification()이
+    orders/picking.py의 publish_outbound_notification()이
     이 서비스(emit)를 거치지 않고 Redis notifications:global 채널에 직접 publish만
     했다. 그 결과 notifications 테이블에 저장되지 않아, 화면 이동으로 SSE 연결이
     끊기는 순간(출고 흐름은 관제 화면 -> 스캐너 화면 등 여러 페이지를 오가므로 거의

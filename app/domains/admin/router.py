@@ -69,27 +69,27 @@ class HitlOverrideRequest(BaseModel):
     targetGrade: Optional[str] = Field(None, description="A, B, C, S 등")
     primaryReasonCode: str = Field(..., description="DMG_EXT_CRUSH 등 단일 사유")
     reasonComment: Optional[str] = Field(None)
-    # [2026-08-08] 더 이상 AdminAuditLog에 그대로 쓰이지 않는다 - 서버가 exclude/adopt/
+    # 더 이상 AdminAuditLog에 그대로 쓰이지 않는다 - 서버가 exclude/adopt/
     # editedBboxes 반영 후 job.agent_logs.defects로부터 감사 로그용 좌표를 직접 재조립한다
     # (프론트가 보내는 이 값은 모달을 연 시점의 스냅샷이라 편집분을 반영하지 못했다).
     # 구버전 프론트와의 호환을 위해 필드는 유지하되 무시한다.
     defectCoordinates: Optional[List[Any]] = Field(default_factory=list)
     reviewDurationMs: Optional[int] = Field(0, description="관리자 체류 시간")
-    # --- BBox 채택/제외 (2026-08-07) ---
+    # --- BBox 채택/제외 ---
     # 검수자가 화면에서 결함을 눌러 판정을 고친 결과. 인덱스는 agent_logs.defects /
     # agent_logs.yolo_candidates 배열 기준이다.
     excludedDefectIndexes: Optional[List[int]] = Field(
         default_factory=list, description="오탐으로 판단해 감점에서 제외할 결함 인덱스")
     adoptedCandidateIndexes: Optional[List[int]] = Field(
         default_factory=list, description="AI가 놓쳤으나 실제 결함으로 채택할 YOLO 후보 인덱스")
-    # --- BBox 좌표 직접 수정 (2026-08-08) ---
+    # --- BBox 좌표 직접 수정 ---
     # 검수자가 화면에서 확정 결함의 박스를 드래그해 위치/크기를 고친 결과. index는
     # agent_logs.defects 배열 기준(excludedDefectIndexes와 동일 인덱스 공간)이며,
     # xmin/ymin/xmax/ymax는 Vision Agent와 동일한 0~1000 상대좌표다.
     editedBboxes: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list,
         description="검수자가 직접 고친 결함 좌표. [{index, xmin, ymin, xmax, ymax}]")
-    # --- BBox 신규 추가 (2026-08-09) ---
+    # --- BBox 신규 추가 ---
     # AI가 아예 놓친 결함을 검수자가 직접 그려 넣은 것. defects 배열에 새 항목으로 추가된다.
     addedBboxes: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list,
@@ -113,7 +113,7 @@ class HitlTaskResponse(BaseModel):
     # 처리(상태 변경) 시각. 목록 정렬 기준이자 "언제 회수/이관됐는가" 표시용.
     updated_at: Optional[str] = None
     # 관리자가 남긴 최신 메모. 프론트가 이 필드를 읽는데 종전에는 서버가 채우지 않아
-    # 회수 사유·결재 코멘트가 DB에 있어도 화면에는 고정 문구만 떴다 (2026-08-13 실사고).
+    # 회수 사유·결재 코멘트는 DB 값을 그대로 노출한다 — 고정 문구로 덮지 않는다.
     human_issue_notes: Optional[str] = None
 
 
@@ -497,7 +497,7 @@ def submit_hitl_override(
             from app.domains.inventory.service import assign_rack_location_after_inspection
             from app.models.wms import clamp_ubci_score_to_grade
             target_grade = item.targetGrade or (job.agent_logs.get("suggested_grade") if job.agent_logs else "NORMAL")
-            # [2026-08-06 수정] 관리자가 등급을 하향/상향 확정하면 점수도 확정 등급의 공식 경계 구간으로 재산정한다. 종전에는 AI 산출 점수(예: 100)를 그대로 넘겨 "UBCI 100점 (NORMAL 등급)" 모순 표기 + 동적 가격의 상태 보정이 MINT 기준으로 계산되는 문제가 있었다. 재산정은 보증서 생성보다 먼저 수행한다 (보증서 본문의 점수/등급 표기가 확정값을 따르도록).
+            # 관리자가 등급을 하향/상향 확정하면 점수도 확정 등급의 공식 경계 구간으로 재산정한다. 종전에는 AI 산출 점수(예: 100)를 그대로 넘겨 "UBCI 100점 (NORMAL 등급)" 모순 표기 + 동적 가격의 상태 보정이 MINT 기준으로 계산되는 문제가 있었다. 재산정은 보증서 생성보다 먼저 수행한다 (보증서 본문의 점수/등급 표기가 확정값을 따르도록).
             job.ubci_score = clamp_ubci_score_to_grade(job.ubci_score, target_grade)
             # lpn_barcode가 없으면 새로 채번한다.
             from app.domains.inventory.service import generate_next_lpn_barcode
