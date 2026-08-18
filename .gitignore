@@ -89,3 +89,6 @@ scripts/bridge_config.json
 # PyInstaller 빌드 산출물 (print_bridge.exe 등 - 20MB, 커밋 금지)
 scripts/_build/
 scripts/_dist/
+
+# Claude Code 로컬 지침 (커밋 금지)
+CLAUDE.md
