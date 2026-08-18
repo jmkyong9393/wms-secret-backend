@@ -21,7 +21,7 @@ def calculate_price_elasticity_revenue_optimization(
     category: str = "Novel"
 ) -> Dict[str, Any]:
     """
-    [PM 마스터 명세서 08_Dynamic_Pricing_합성_데이터_생성_명세서 연동]
+    [PM 마스터 명세서 29_DynamicPricing_합성데이터_생성_명세서 연동]
     비부패성(Non-perishable) 도서 물류 특성 반영 보관료 패널티 방어 모델
     - 도서는 썩지 않기 때문에 체류일(days_in_inventory)에 따른 감가를 최소화(최대 -10% 방어)
     - 120일 체류 시: (120/365)*10% = -3.2% 미세 방어 보정 적용
