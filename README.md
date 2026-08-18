@@ -1,37 +1,92 @@
-# 📦 B2B WMS AI Platform (Backend Repository)
+# Nexus — AI Smart WMS Platform (Backend)
 
-본 저장소는 물류센터(WMS)로 인바운드되는 상품의 외관 상태를 AI가 자동으로 판독하고 검수 리포트를 생성하는 **대규모 비동기 AI 파이프라인 시스템**의 백엔드(FastAPI) 및 워커 코어 레포지토리입니다.
+입고부터 출고까지를 단일 파이프라인으로 처리하는 **AI 기반 B2B 물류(WMS) 자동화 플랫폼**의
+백엔드·AI 워커 레포지토리입니다. 시연 도메인은 도서이며, 신품 무검수 Fast-Track과
+중고·반품 AI 검수가 같은 파이프라인의 두 갈래로 동작합니다.
 
-## 🚀 Key Architectural Innovations
+- **Live**: https://nexus-wms.p-e.kr (AWS EC2 kubeadm 2노드 클러스터에서 운영 중)
+- **Stack**: FastAPI · Celery/Redis · PostgreSQL · Alembic · LangGraph · ChromaDB · XGBoost
 
-본 시스템은 단순한 AI API 호출을 넘어, 대규모 트래픽과 데이터 유실 방지를 위한 엔터프라이즈급 아키텍처를 적용했습니다.
+## 아키텍처 개요
 
-### 1. Zero Data Loss & 비동기 워커 (Redis/Celery)
-- 클라이언트의 대기 시간을 최소화하기 위해 **비동기 분산 큐(Redis & Celery)** 구조를 채택했습니다.
-- FastAPI 백엔드는 접수만 받고 빠르게 응답(202 Accepted)하며, 백그라운드 AI 워커 데몬이 트래픽 스파이크에도 무너지지 않고 순차적으로 추론을 수행합니다.
+```
+Worker PWA ──(presigned POST)──▶ S3 ─┐
+     │ 202 접수                       │
+     ▼                                ▼
+ FastAPI ──▶ Redis Queue ──▶ Celery AI Worker ──▶ LangGraph 판정 체인
+     │            │                                Detector(WBF 3-YOLO, LLM 미사용)
+     │            └─ KEDA 오토스케일                → Vision(GPT-4o 판독)
+     ▼                                             → Policy(UBCI 결정론 산식)
+ SSE(1회용 티켓 인증) ◀── 판정 결과 ──            → Critic(2단 교차검증)
+                                                   → Supervisor(게이트) → Report(보증서)
+```
 
-### 2. 대용량 이미지 처리 파이프라인 최적화 (AWS CloudFront Signed Cookie)
-- 모바일 클라이언트가 5~10MB의 고화질 이미지를 백엔드를 거치지 않고 **AWS S3에 다이렉트로 업로드**하여 서버 병목을 원천 차단합니다.
-- AI 모듈은 무거운 바이너리 이미지 대신 S3 URL과 경량화된 JSON 데이터만 패싱하여 토큰 비용과 레이턴시를 극단적으로 절약합니다.
+**설계 원칙 — AI는 제안하고, 산식이 결정한다.** 결함 탐지·판독은 AI가 하지만
+등급·가격 등 금액을 정하는 값은 결정론 산식이 계산합니다(해당 노드 LLM 토큰 0,
+동일 입력 270회 반복 검증 오차 0).
 
-### 3. AI 기반 검수 파이프라인 모듈
-- **[AI Lead 홍경표]** 주도 하에 AI Vision 모델이 훼손 부위의 정량적 크기를 추출하고, 내부 품질 정책 DB 기반으로 감점 점수를 동적 산출하는 다중 모듈 프로세스를 가동합니다.
+## 도메인 구성 (`app/domains/`)
 
-### 4. 하드웨어 연동 및 라벨링 처리
-- **[FE PC/Admin 박준희]** 주도 하에 블루투스 프린터 통신을 제어하며, 도서 훼손을 방지하는 정전기 필름(포스트잇 재질) LPN 라벨 발급 로직을 지원합니다.
+| 도메인 | 역할 |
+| --- | --- |
+| `inbound` | 신품 Fast-Track / 중고 LPN 발급 · 3컷 촬영 접수 · AI 검수 큐 등록 |
+| `admin` | HITL 결재(결함 박스 보정 → 재학습 정답지 축적) · 재검수 |
+| `inventory` | Zone–Rack–Shelf 로케이션 자동 배정 · 재고 원장 |
+| `orders` / `outbound` | 주문 → 스냅샷 기반 피킹 지시서 → 3D 패킹(EP-BFD 자체 구현) → 송장 |
+| `po` | 이벤트 기반 저재고 감지 → Restock 발주 제안(관리자 승인 후 집행) |
+| `fds` | 이상거래 룰엔진 (블라인드 승인 · 등급 오버라이드 · 야간 대량 고액) |
+| `dashboard` | 관제 지표 · Weekly Insights(수치는 SQL, 서사만 LLM) |
+| `board` / `uploads` | 게시판 + 첨부 파일 보안 업로드(격리 검사 후 승격) |
+| `labels` | ZPL 라벨 프린터 브리지 (LAN 내부망 하드웨어 제어) |
+| `auth` / `users` / `settings` / `notifications` / `returns` / `research` | 인증 · 계정 · 정책 · 알림 · 반품 · 실험 계측 |
 
----
+핵심 공용 모듈은 `app/core/`에 있습니다 — UBCI 감점 매트릭스(`ubci_matrix.py`),
+RAG 정책 근거(`rag_service.py`), 파일 보안 검사(`file_security.py`),
+CloudFront 서명(`cloudfront_signing.py`), SSE 티켓(`sse_ticket_service.py`) 등.
 
-## 📂 Repository Structure & Documentations
+## 신뢰성 · 보안 (실측 기준)
 
-팀원 및 기여자는 개발 시작 전 반드시 `docs` 폴더 내의 기획 문서들을 숙지하시기 바랍니다.
+| 항목 | 내용 |
+| --- | --- |
+| 작업 유실 방지 | Celery `acks_late` + DLQ. 카오스 테스트(워커 강제 종료)에서 4/4건 전량 복구 — 유실 0 |
+| 판정 재현성 | 결정론 엔진 동일 입력 270회 반복 오차 0 |
+| 동시성 | Redis Lock 중복 처리 차단 · 1,000건 동시 입고 부하 실측 |
+| 인증 | HttpOnly Secure 쿠키 JWT · SSE는 1회용 티켓(EventSource는 커스텀 헤더를 못 붙인다) |
+| 인가 | 역할별 RBAC + 전 엔드포인트 무인증 런타임 프로빙 — 노출 경로 17건 발견 → 전량 차단(잔여 0) |
+| 객체 열람 | S3 Block Public Access + CloudFront 서명 URL만 허용 |
+| 첨부 업로드 | presign → 격리 구역(`quarantine/`) 업로드 → 서버가 실제 바이트 검사 → 정상 구역 승격. 매직바이트·중첩 아카이브·PDF 액티브 콘텐츠·후미 페이로드 등 10계층 검사, 소유권은 키 접두사로 결속 |
+| 개인정보 | KISA 권고 전수 대조 · 감사 추적(판정 100% 기록 보존) |
 
-- 📄 [B2B_WMS_AI_Platform_기획서_ver1.4.2.0.md](docs/B2B_WMS_AI_Platform_기획서_ver1.4.2.0.md): 전체 시스템 구조 및 백엔드 요구사항
-- 📊 [B2B_WMS_AI_Platform_워크플로우_ver1.4.2.0.md](docs/B2B_WMS_AI_Platform_워크플로우_ver1.4.2.0.md): 서비스 시퀀스 다이어그램 및 데이터 흐름도
-- ⚙️ **app/**: FastAPI 기반 메인 API 서버 및 워커 스켈레톤 소스 코드
+상세 명세와 검증 로그는 `개인개발가이드/` 문서 체계(93번 첨부 보안, 92번 트러블슈팅
+아카이브 등)와 `tests/`에 있습니다.
 
----
+## 실행
 
-## 🔒 Copyright & Authorship
+```bash
+uv sync                                  # 의존성 (Python 3.12+, uv 기준)
+docker compose up -d                     # Postgres · Redis 로컬 기동
+alembic upgrade head                     # 스키마 마이그레이션 (Migration as Code)
+uvicorn app.main:app --reload            # API 서버
+celery -A app.core.celery_app worker -l info   # AI 워커
+```
+
+테스트는 `pytest`로 실행합니다. 단위 테스트는 `tests/unit/`에 있으며 첨부 보안
+엣지케이스(위장 확장자·중첩 압축·오탐 검증 등)를 포함합니다.
+
+## 배포
+
+`k8s/` 매니페스트 기준 — kubeadm 2노드, ALB/ACM HTTPS 단일 개방, KEDA(Redis 큐 길이
+기반 워커 오토스케일), GitHub Actions OIDC 무중단 롤링 배포, CloudWatch + Sentry 관측.
+
+## 문서
+
+- `docs/policies/` — 검수·감점 정책 원문 (RAG 근거 소스)
+- `docs/ai_knowledge_base/`, `docs/vision_model_docs/` — AI 모델 지식베이스
+- `CLAUDE.md`, `guide.md` — 개발 규칙 및 온보딩 가이드
+
+## Copyright & Authorship
+
 - **Project Manager & Chief Architect:** 장문경
-- 본 레포지토리의 핵심 아키텍처(S3-JSON Decoupling, Redis/Celery 비동기 제어 구조 등)의 설계 기획 및 IP는 장문경 PM에게 귀속되어 있으며, 본 레포지토리 내의 구조는 추후 논문 및 포트폴리오로 활용될 예정입니다. 참여 팀원 여러분의 구현 기여 내역은 명확히 기록되며 우수 기여 시 공동 기여자(Acknowledgement) 혜택이 주어집니다.
+- 핵심 아키텍처(비동기 판정 파이프라인, 결정론 판정·가격 엔진, S3-JSON 디커플링 등)의
+  설계와 IP는 장문경 PM에게 귀속되며, 논문 및 포트폴리오로 활용될 예정입니다.
+  참여 기여 내역은 커밋 이력으로 기록됩니다.
