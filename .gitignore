@@ -92,3 +92,10 @@ scripts/_dist/
 
 # Claude Code 로컬 지침 (커밋 금지)
 CLAUDE.md
+
+# 학습용 베이스 가중치 (Ultralytics가 자동 다운로드 — 서빙 이미지에는 app/ai/*.pt만 들어간다)
+/yolo*.pt
+
+# 루트 로그
+/agent_conversation_log.txt
+/real_chaos_logs.txt

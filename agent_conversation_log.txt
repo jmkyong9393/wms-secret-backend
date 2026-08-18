@@ -1,7 +1,0 @@
-=== 멀티 에이전트 동작 로그 ===
-
-[HumanMessage] 이미지 및 분석 요청 전송 완료
-[Vision Agent] 판독 완료 (Mint: False)
-[Policy Agent] UBCI 점수 산정 완료 (99점)
-[Critic Agent] 검증 완료 (OK)
-[Report Agent] 최종 고객 통보문 발행 완료
