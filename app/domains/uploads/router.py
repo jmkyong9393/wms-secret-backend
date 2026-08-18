@@ -17,22 +17,13 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
 # ==========================================
 # 업로드 파일 검증 (시큐어코딩 "위험한 형식 파일 업로드" 대응)
 # ==========================================
-#
-# [도입 배경 - 2026-08-06]
-# 종전에는 클라이언트가 보낸 file_name / file_type을 **아무 검증 없이** 그대로 S3 키와
-# Content-Type에 넣어 presigned URL을 발급했다. 그 결과
-#   1) `.html`, `.svg`, `.js` 같은 실행 가능한 형식을 올려 CDN 도메인에서 스크립트를
-#      실행시키는 저장형 XSS 경로가 열려 있었고,
-#   2) file_name에 `../`나 절대경로를 넣어 의도하지 않은 키 위치에 쓰는 경로 조작이 가능했다.
-#
-# 도서 검수 사진 업로드는 이미지 포맷만 통과시킨다. 차단 목록(blacklist)은 새 확장자가
-# 나올 때마다 뚫리므로 쓰지 않고 허용 목록(whitelist) 방식만 쓴다.
+# 파일명·형식은 허용 목록(whitelist)으로만 통과시킨다 — 차단 목록은 새 확장자가
+# 나올 때마다 뚫린다. 상세: 93_첨부파일_보안_업로드_아키텍처.
 ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
 ALLOWED_UPLOAD_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
 
-# [2026-08-08 추가] 게시판 첨부파일은 이미지 외에 문서 형식도 필요하다 - 도서 검수
-# 사진 업로드(위 기본 화이트리스트)와는 별도로 관리한다. 실행 가능한 스크립트 형식
-# (.html/.svg/.js 등)은 여전히 제외되고, 사무용 문서 확장자만 추가로 허용한다.
+# 게시판 첨부 전용 화이트리스트 — 검수 사진(이미지 전용)과 별도 관리.
+# 실행 가능한 형식(.html/.svg/.js 등)은 제외, 사무용 문서만 추가 허용.
 BOARD_ALLOWED_EXTENSIONS = ALLOWED_UPLOAD_EXTENSIONS | {
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".hwp", ".txt",
 }
@@ -208,12 +199,10 @@ ATTACHMENT_MAX_KEY_LEN = 512
 
 
 def _owner_prefix(prefix: str, user: User) -> str:
-    """격리·정상 구역을 **소유자 단위로 분할**한다.
+    """격리·정상 구역을 소유자 단위로 분할한다.
 
-    종전에는 키가 `quarantine/{uuid}_{파일명}`이라 소유 정보가 없었다. uuid4를 맞히기는
-    어렵지만, 그것은 '추측이 어렵다'일 뿐 '권한이 없다'가 아니다. 로그인만 하면 남의
-    격리본을 verify로 정상 구역에 승격시킬 수 있는 구조였다.
-    키에 소유자를 넣으면 인가 판정이 문자열 접두사 비교로 끝나므로 조회가 필요 없다.
+    키에 소유자를 넣으면 인가 판정이 접두사 비교로 끝난다 — uuid 난수성은
+    '추측이 어렵다'일 뿐 '권한이 없다'가 아니다.
     """
     return f"{prefix}{user.id}/"
 
@@ -248,10 +237,8 @@ BOARD_ALLOWED_MIME_TYPES = ALLOWED_UPLOAD_MIME_TYPES | {
 def _attachment_s3_client():
     """첨부 버킷 전용 S3 클라이언트.
 
-    엔드포인트와 서명 버전을 **명시**한다. region_name만 주면 boto3가 글로벌
-    엔드포인트(`bucket.s3.amazonaws.com` = us-east-1)로 URL을 만들 수 있고, 서명은
-    ap-northeast-2로 계산되어 열람 시 `AuthorizationQueryParametersError`가 난다
-    (실측: presigned GET이 400으로 거부됨).
+    endpoint_url과 서명 버전을 명시한다 — region_name만 주면 boto3가 글로벌
+    엔드포인트로 URL을 만들어 서명 리전 불일치가 난다 (92번 §5-3b).
     """
     if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
         raise HTTPException(status_code=503, detail="스토리지 자격증명이 설정되지 않았습니다.")
@@ -273,8 +260,7 @@ def presign_attachment_upload(
 ):
     """게시판 첨부 업로드용 Presigned POST 발급 (격리 구역 대상).
 
-    **크기 상한을 정책에 서명해 넣는다** — 종전에는 프론트만 5MB를 검사해
-    개발자도구로 우회하면 서버가 막지 못했다. 이제 S3가 거부한다.
+    크기 상한은 프론트 검사가 아니라 S3 정책 서명으로 강제한다.
     """
     from app.core.file_security import FileSecurityError, normalize_filename
 

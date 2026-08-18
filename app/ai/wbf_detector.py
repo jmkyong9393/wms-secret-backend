@@ -1,14 +1,14 @@
 """
 ====================================================================
 [WMS B2B Vision AI - WBF (Weighted Boxes Fusion) 앙상블 탐지 모듈]
-- Stage 0: yolov8n_coco_roi.pt (COCO book cls=73) -> 책 ROI 크롭 게이트 [2026-08-06 비활성]
+- Stage 0: yolov8n_coco_roi.pt (COCO book cls=73) -> 책 ROI 크롭 게이트 [비활성]
 - Model 1: yolov8_high_recall_best.pt (conf=0.12, weight=1.0) -> 미세 흠집 미탐 방지 (실측 R 0.560)
 - Model 2: yolov8_high_precision_base.pt (conf=0.25, weight=1.5) -> 오탐 억제 (실측 P 0.882)
 - Model 3: yolov8_doodle_ocr.pt (conf=0.20, weight=1.0) -> 손글씨/낙서 패치 전담 (실측 mAP50 0.842)
 수치는 각 학습 run의 fitness 최고 epoch 기준. Model 1·2는 학습 데이터셋이 달라 상호 비교 불가.
 - 순수 NumPy 기반 WBF 알고리즘 구현 (Zero-Dependency & 고속 인메모리 융합)
 
-[ROI 크롭 게이트 도입 배경 - 2026-08-05]
+[ROI 크롭 게이트 도입 배경]
 결함 3모델은 전부 "책이 프레임을 가득 채운 근접 촬영" 도메인(Roboflow/AIHub 패치)에서 학습됐다. 촬영 원본(작업자 손·책상·배경 포함)을 그대로 넣으면 배경 텍스처(머리카락, 가구 등)를 찢어짐/낙서로 오탐하고, 책이 작게 찍힐수록 미세 결함이 픽셀에서 증발한다. 특히 Model 3은 명세서상 "손글씨 전용 픽셀 패치 모듈"로 설계됐음에도 풀프레임을 받고 있었다. Stage 0에서 책 영역만 잘라 3모델에 공급함으로써 학습 도메인과 추론 입력을 일치시킨다. 책 미탐지 시에는 기존과 동일하게 풀프레임으로 폴백한다(탐지 누락 방지).
 위 전제가 실측으로 반증되어 게이트를 비활성했다 (History §14).
 

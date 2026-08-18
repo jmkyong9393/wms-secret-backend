@@ -22,7 +22,7 @@ def get_kpi(session: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     오늘의 실시간 핵심 성과 지표(KPI)를 DB SQL 집계 쿼리로 반환합니다.
 
-    [수정 이력 2026-08-04] 자동 승인율/반려율이 프론트에 91.7%/4.8%로 하드코딩되어 있던 것을
+    자동 승인율/반려율이 프론트에 91.7%/4.8%로 하드코딩되어 있던 것을
     return_jobs 실집계로 교체 - approval_rate/rejection_rate/hitl_rate 필드 신설.
     """
     today_start = now_kst().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -206,7 +206,7 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     14일간 일별 입출고 물량, 등급 분포, 카테고리 분포 SQL 실집계 데이터 반환.
 
-    [수정 이력, 2026-08-04] ReturnJob 모델에는 final_grade 컬럼이 없어 기존
+    ReturnJob 모델에는 final_grade 컬럼이 없어 기존
     `select(ReturnJob.final_grade, ...)` 쿼리는 실행 시 크래시했다. ubci_score를
     조회해 ubci_grade_from_score()로 Python 단에서 등급 버켓팅하도록 교정.
     volume_data/category_data도 하드코딩을 걷어내고 실집계로 교체.
@@ -396,7 +396,7 @@ def get_weekly_insights(session: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     주간 인사이트 스냅샷 조회 (weekly_insights 테이블).
 
-    [2026-08-12 리팩토링] 집계 로직은 weekly_insight_service로 분리했고, 정규 생성 주체는
+    집계 로직은 weekly_insight_service로 분리했고, 정규 생성 주체는
     Celery Beat(매일 00:05 KST)이다. 여기서는 조회만 하되, 크론이 아직 안 돌았거나 실패한
     경우를 대비해 같은 함수로 폴백 생성한다(자기치유). 집계 창은 ISO 주 경계로 고정되므로
     누가 언제 방문하든 같은 주차는 같은 값을 낸다.
@@ -424,7 +424,7 @@ def get_weekly_insights_history(
     session: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    지난 주간 인사이트 이력 (2026-08-09 신설).
+    지난 주간 인사이트 이력.
 
     weekly_insights는 지연 물질화라 실제로 방문된 주만 행이 쌓인다 - ISO 주 1건뿐이라
     1년에 52행 수준이라 용량 문제는 아니다. 다만 기존에는 이번 주 1건만 조회하는

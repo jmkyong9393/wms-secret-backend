@@ -37,7 +37,7 @@ def clamp_ubci_score_to_grade(score, grade: str):
     """
     사람이 등급을 최종 확정(HITL 오버라이드)했을 때 점수를 확정 등급의 공식 경계 구간으로 사상한다.
 
-    [수정 이력 2026-08-06] HITL에서 MINT(100점) 건을 NORMAL로 하향 승인해도 AI가 산출한
+    HITL에서 MINT(100점) 건을 NORMAL로 하향 승인해도 AI가 산출한
     ubci_score=100이 그대로 재고에 저장되어 "UBCI 100점 (NORMAL 등급)"이라는 모순 표기와
     함께 동적 가격 산정의 상태 보정(점수 기반)까지 MINT 가격으로 계산되던 문제의 교정.
     등급은 사람이 확정했으므로 점수가 등급을 따라간다 (역방향 금지) - 원 점수는 최소 변경
@@ -483,7 +483,7 @@ class Notification(SQLModel, table=True):
     """
     WMS 전역 알림 이력.
 
-    [수정 이력 2026-08-04] 종전에는 알림을 저장하는 테이블 자체가 없었다. 프론트
+    종전에는 알림을 저장하는 테이블 자체가 없었다. 프론트
     Header.tsx가 하드코딩된 더미 4건을 useState 초기값으로 들고 있었고, SSE로 들어온
     실시간 이벤트는 메모리에만 쌓여 새로고침하면 전부 사라졌다. 읽음 상태도 마찬가지.
     또한 notifications:global 채널에 발행하는 곳이 데모용 /trigger-fds 하나뿐이라
@@ -520,7 +520,7 @@ class FdsReport(SQLModel, table=True):
     """
     FDS(Fraud Detection System) 적발 이력.
 
-    [수정 이력 2026-08-04] 이 테이블은 init.sql에 정의만 있고 어떤 코드도 INSERT하지 않던
+    이 테이블은 init.sql에 정의만 있고 어떤 코드도 INSERT하지 않던
     죽은 테이블이었다(0건). 룰 엔진(app/domains/fds/service.py) 신설과 함께 실적재를 시작하며,
     fraud_score 등 수치는 결정론적 룰 엔진이 산출하고 fraud_reason/recommended_action 서술만
     FDS Analyst Agent(gpt-4o-mini)가 생성한다.
@@ -597,7 +597,7 @@ class LabelPrintJob(SQLModel, table=True):
 
 class SystemSetting(SQLModel, table=True):
     """
-    서버 전역 설정 키-값 저장소 (2026-08-09 신설).
+    서버 전역 설정 키-값 저장소.
 
     이전에는 안전재고 같은 값이 코드 상수(po/service.py SAFETY_STOCK_THRESHOLD,
     ai/agents/restock.py MIN_SAFETY_STOCK)로 하드코딩돼 있어 "세션에서 값을 바꿨는데

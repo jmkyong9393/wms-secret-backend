@@ -102,7 +102,7 @@ class FasttrackRequest(BaseModel):
     title: Optional[str] = None
     imageUrl: Optional[str] = None
     qty: int = 1
-    # [2026-08-10] 입고를 수행한 작업자 사번. 신품은 ReturnJob(중고 검수 원장)을 타지 않아
+    # 입고를 수행한 작업자 사번. 신품은 ReturnJob(중고 검수 원장)을 타지 않아
     # 종전에는 작업자가 어디에도 남지 않았고, 그 결과 "나의 검수 내역"이 신품 입고분을
     # 걸러낼 기준값 자체를 갖지 못했다. InventoryLog(입고 1건 = 로그 1행)에 기록한다.
     worker_id: Optional[str] = None
@@ -115,7 +115,7 @@ async def fasttrack_inbound(request: FasttrackRequest, db: Session = Depends(get
     건너뛰는 것이 설계 의도이며, LangGraph 파이프라인/ReturnJob을 아예 타지 않는다.
     신품은 개별 LPN 없이 Inventory(묶음 재고) 테이블에 수량으로 관리된다.
 
-    [수정 이력 2026-08-04] 프론트(src/app/inbound/page.tsx)가 처음부터 이 경로를 호출하고
+    프론트(src/app/inbound/page.tsx)가 처음부터 이 경로를 호출하고
     있었으나 백엔드에 라우트가 존재하지 않아 Fast-Track 입고가 100% 404로 실패하던 것을 구현.
     """
     isbn = (request.isbn or "").strip()

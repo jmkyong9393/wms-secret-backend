@@ -114,7 +114,7 @@ def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int, worker_id: st
     """
     from app.models.wms import Inventory, InventoryLog
 
-    # [2026-08-09 수정] recommend_optimal_warehouse_zone()이 있는데도 zone/rack/shelf를
+    # recommend_optimal_warehouse_zone()이 있는데도 zone/rack/shelf를
     # 전부 "A-1-1"로 하드코딩해, 신품은 카테고리·판형과 무관하게 한 칸에만 쌓이고 있었다
     # (조장 실측: 재고 목록 전 행이 A-1-1). Zone은 grade="NEW"라 항상 A로 고정되지만
     # rack/shelf는 중고와 동일한 3D 알고리즘을 그대로 태운다.
@@ -174,7 +174,7 @@ def generate_lpn(
     book_id: str = None,
     isbn: str = None,
     zone: str = None,
-    # [2026-08-12] 종전 기본값 "WM2608001"은 실제 작업자와 무관한 하드코딩이었고,
+    # 종전 기본값 "WM2608001"은 실제 작업자와 무관한 하드코딩이었고,
     # 심지어 INSERT에 쓰이지도 않아 선부착 작업자가 어디에도 남지 않았다.
     # 미전달 시 None으로 정직하게 남긴다 (화면은 "작업자 미기록" 표기).
     worker_id: str = None,
@@ -184,7 +184,7 @@ def generate_lpn(
     도서 입고 시 LPN 바코드 라벨(LPN-YYMMDD-{존}{순번3자리})을 먼저 발급해 실물에 부착합니다.
     AI 검수 전이므로 등급은 PENDING, 상태는 PENDING_INSPECTION으로 등록됩니다.
 
-    [2026-08-06 수정] 유일한 호출부(POST /inventory/lpn)가 `zone=`을 넘기는데 시그니처에는
+    유일한 호출부(POST /inventory/lpn)가 `zone=`을 넘기는데 시그니처에는
     없어서 이 엔드포인트는 호출 즉시 TypeError로 죽고 있었다. 파라미터를 추가한다.
 
     `zone`은 **입고 시점의 버퍼 존**이고, 검수 후 확정되는 보관 랙 존(locations.zone)과는
@@ -204,7 +204,7 @@ def generate_lpn(
         
     # 2. 고유 LPN 바코드 생성 (표준 규격: LPN-260803-A003)
     #
-    # [2026-08-06 수정] 종전에는 존 문자와 순번을 모두 random으로 뽑고 중복 검사를 하지 않았다.
+    # 종전에는 존 문자와 순번을 모두 random으로 뽑고 중복 검사를 하지 않았다.
     # 하루 999칸에 난수를 던지는 구조라 생일 문제로 충돌이 실제로 발생했다
     # (2026-08-03 하루에만 서로 다른 도서 3쌍이 같은 LPN을 받음). LPN은 실물에 붙는
     # 라벨이라 중복되면 출고 스캔이 다른 책을 집는다. 존별·날짜별 최대 순번 +1로 채번한다.
@@ -222,7 +222,7 @@ def generate_lpn(
     # 검수 대기 버퍼 로케이션에 임시로 물려두고 검수 확정 시 실제 랙으로 옮긴다.
     buffer_loc = get_or_create_location(db, zone=zone_code, rack="0", shelf="0")
 
-    # [2026-08-06 수정] 채번 경합 방어.
+    # 채번 경합 방어.
     #
     # `max(순번)+1`을 읽고 INSERT하는 사이에 다른 요청이 끼어들면 두 요청이 같은 번호를
     # 계산한다. 현장에서 작업자 여러 명이 각자 단말로 동시에 라벨을 뽑으므로 실제로 발생한다.
@@ -335,7 +335,7 @@ def assign_rack_location_after_inspection(
     # 기존 항목 업데이트 시에도 source_job_id / certificate_url / 검수 주체를 동기화한다.
     # HITL 오버라이드는 AI가 먼저 만들어둔 row를 덮어쓰므로, 여기서 갱신하지 않으면
     # 관리자가 최종 결재한 건도 계속 AI_AUTO로 남는다.
-    # [2026-08-06 수정] ubci_score도 함께 갱신한다 - 종전에는 신규 생성 경로만 점수를 기록해,
+    # ubci_score도 함께 갱신한다 - 종전에는 신규 생성 경로만 점수를 기록해,
     # 재검수로 점수가 바뀌어도 기존 row에는 옛 점수가 잔존했다 (예: 80점 row가 재검수 100점
     # MINT 승인 후에도 "MINT / 80점"으로 표시되는 모순).
     item.inspection_source = inspection_source

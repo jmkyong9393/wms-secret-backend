@@ -44,7 +44,7 @@ def publish_outbound_notification(event_type: str, category: str, title: str, de
     """
     출고 파이프라인(피킹 완료/송장 발급/최종 출고) 이벤트를 알림으로 발행한다.
 
-    [수정 이력 2026-08-08] 종전에는 Redis notifications:global 채널에 직접 publish만 하고
+    종전에는 Redis notifications:global 채널에 직접 publish만 하고
     notifications DB 테이블에는 저장하지 않았다. 그 결과 화면 이동으로 SSE 연결이 끊기는
     순간(출고 흐름은 관제 화면 -> 스캐너 화면 등 여러 페이지를 오가므로 거의 매번 발생)
     발행된 이벤트가 영구 소실됐고, GET /api/v1/notifications는 DB만 읽으므로 출고를 끝까지
@@ -105,7 +105,7 @@ def _fallback_location_for_book(book: Optional[Book], grade: str) -> Dict[str, s
     """
     재고 행이 없어 실제 적치 위치를 알 수 없을 때 쓸 위치.
 
-    [2026-08-10 수정] 종전에는 `{"zone":"A","rack":"01","shelf":"01"}`을 하드코딩해
+    종전에는 `{"zone":"A","rack":"01","shelf":"01"}`을 하드코딩해
     **창고에 존재하지도 않는 A-01-01을 지시서에 박아 넣었다**(실측: 배포 DB의 실제 위치는
     전부 A-1-1·C-1-4 같은 무패딩 표기이고 "01"은 단 한 건도 없다). 작업자는 없는 칸으로
     안내받고, 화면상으로는 정상 지시서처럼 보여 실패가 드러나지 않았다.

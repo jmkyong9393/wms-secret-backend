@@ -175,7 +175,7 @@ async def trigger_fds_notification():
     데모용 FDS 적발 시뮬레이터. notifications:global 채널 발행과 동시에 fds_reports에도
     실제로 기록한다 (rule_code='SIMULATED'로 구분 - 실탐지는 POST /api/v1/fds/scan 사용).
 
-    [수정 이력 2026-08-04] 기존에는 하드코딩 문구를 채널에 발행만 하고 DB에는 아무것도
+    기존에는 하드코딩 문구를 채널에 발행만 하고 DB에는 아무것도
     남기지 않아, fds_reports 테이블이 영구히 0건이었다.
     """
     from app.db.session import engine

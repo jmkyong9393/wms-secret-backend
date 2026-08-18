@@ -159,8 +159,7 @@ def verify_zip_bomb(data: bytes, ext: str, max_ratio: int = 100, max_total: int 
     """ZIP 계열의 압축 폭탄과 위험한 엔트리를 차단한다 (④의 ZIP 변종).
 
     압축 해제 후 총량과 압축비를 **실제로 풀지 않고** 헤더에서 읽어 판단한다.
-    엔트리 이름과 중첩 압축까지 함께 본다 — 바깥 압축비만 보면 zip 안에 zip을 넣어
-    우회할 수 있다(실측: 20MB 팽창 폭탄을 한 겹 더 감싸자 통과했다).
+    엔트리 이름과 중첩 압축까지 함께 본다 — 바깥 압축비만 보면 zip 안에 zip으로 우회된다.
     """
     if ext not in {".docx", ".xlsx", ".pptx"}:
         return
@@ -214,8 +213,8 @@ def _inspect_archive(data: bytes, depth: int, max_ratio: int, max_total: int) ->
 # ──────────────────────────────────────────────────────────────
 # PDF는 문서이자 **실행 환경**이다. 뷰어가 JavaScript를 돌리고 외부 프로그램을 띄울 수 있다.
 # 매직바이트만 보면 "정상 PDF"이므로 여기서 따로 본다.
-# 짧은 키(/JS · /AA)는 쓰지 않는다 — 압축 스트림 바이트에 우연히 걸린다
-# (실측: 정상 설계 문서 PDF 1건이 /AA 한 번으로 오탐). /JavaScript가 항상 동반되므로 손실이 없다.
+# 짧은 키(/JS · /AA)는 쓰지 않는다 — 압축 스트림 바이트에 우연히 걸려 오탐이 나고,
+# /JavaScript가 항상 동반되므로 탐지 손실도 없다.
 _PDF_ACTIVE_MARKERS = (
     (b"/JavaScript", "JavaScript"),
     (b"/OpenAction", "문서 열람 시 자동 실행"),
@@ -261,13 +260,10 @@ _TRAILING_DANGEROUS = (
 def verify_no_trailing_payload(data: bytes, ext: str) -> None:
     """이미지 종료 표지 이후에 붙은 데이터를 검사한다.
 
-    **형식마다 기준이 다르다.**
-      - PNG: IEND는 파일의 끝을 뜻하므로 뒤에 무엇이 있으면 비정상이다.
-        실제 PNG 405장 전수 확인 결과 후미는 전부 0바이트였다.
-      - JPEG: EOI 뒤에 제조사 메타데이터가 정상적으로 붙는다. 실측에서 삼성 캡처
-        트레일러(`Samsung_Capture_InfoScreenshot`, 76~383바이트)가 46장에서 나왔다.
-        존재만으로 막으면 휴대폰 스크린샷이 전부 거부되므로, **위험 시그니처가
-        섞였을 때만** 막는다 (GIFAR·phar 계열 폴리글롯이 노리는 지점이 바로 여기다).
+    형식마다 기준이 다르다.
+      - PNG: IEND가 파일의 끝 — 후미 데이터는 비정상.
+      - JPEG: EOI 뒤 제조사 메타데이터(삼성 캡처 트레일러 등)가 정상이라
+        위험 시그니처가 섞였을 때만 막는다. (오탐 실측 근거: 92번 §5-3c)
     """
     if ext == ".png":
         idx = data.rfind(b"IEND")
