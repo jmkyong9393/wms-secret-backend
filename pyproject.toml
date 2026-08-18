@@ -77,3 +77,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/manual은 외부 자원(OpenAI 키·로컬 .pt·기동 중인 API)을 요구하는 수동 실행본이라
+# 수집 대상에서 제외한다. 파일명이 test_로 시작해 기본 설정으로는 수집된다.
+addopts = "--ignore=tests/manual"
