@@ -1,0 +1,85 @@
+# 리소스 requests 조정 전용 워크플로.
+# requests는 '스케줄 예약'이라 실사용과 무관하게 노드 자리를 점유한다. 과다 예약은
+# 롤링 교체·KEDA 기동 시 Insufficient memory 교착을 만든다.
+# limits는 건드리지 않는다 — 파드가 실제로 쓸 수 있는 상한은 그대로 유지한다.
+name: Cluster Tune Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      ai_worker_mem_request:
+        description: "wms-ai-worker requests.memory (예: 768Mi). limits는 변경하지 않음"
+        required: true
+        default: "768Mi"
+      apply:
+        description: "true여야 실제 적용. false면 현재 상태만 출력(dry-run)"
+        required: true
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - name: Tune requests and verify
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            NEW_MEM="${{ github.event.inputs.ai_worker_mem_request }}"
+            APPLY="${{ github.event.inputs.apply }}"
+
+            echo "=============== 변경 전 ==============="
+            kubectl get deploy -o custom-columns=\
+            'DEPLOY:.metadata.name,REQ_MEM:.spec.template.spec.containers[0].resources.requests.memory,LIM_MEM:.spec.template.spec.containers[0].resources.limits.memory'
+            echo "--- 노드 예약률"
+            for N in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+              echo -n "$N : "
+              kubectl describe node "$N" | grep -A4 'Allocated resources' | grep -w memory || true
+            done
+
+            if [ "$APPLY" != "true" ]; then
+              echo ""
+              echo "[dry-run] apply=false 이므로 변경하지 않고 종료합니다."
+              exit 0
+            fi
+
+            echo ""
+            echo "=============== 적용: wms-ai-worker requests.memory -> $NEW_MEM ==============="
+            # limits는 patch에 포함하지 않는다 (기존 2560Mi 유지)
+            kubectl patch deployment wms-ai-worker --type=json \
+              -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/requests/memory\",\"value\":\"$NEW_MEM\"}]"
+
+            echo ""
+            echo "=============== 롤아웃 ==============="
+            # KEDA가 replicas를 0으로 유지 중이면 롤아웃 대기가 무의미하므로 분기한다.
+            DESIRED=$(kubectl get deploy wms-ai-worker -o jsonpath='{.spec.replicas}')
+            echo "현재 desired replicas = $DESIRED"
+            if [ "${DESIRED:-0}" -gt 0 ]; then
+              kubectl rollout status deployment/wms-ai-worker --timeout=300s
+            else
+              echo "replicas=0 (KEDA 대기 상태) — 다음 기동 시 새 requests가 적용됩니다."
+            fi
+
+            echo ""
+            echo "=============== 변경 후 ==============="
+            kubectl get deploy -o custom-columns=\
+            'DEPLOY:.metadata.name,REQ_MEM:.spec.template.spec.containers[0].resources.requests.memory,LIM_MEM:.spec.template.spec.containers[0].resources.limits.memory'
+            echo "--- 노드 예약률"
+            for N in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+              echo -n "$N : "
+              kubectl describe node "$N" | grep -A4 'Allocated resources' | grep -w memory || true
+            done
+
+            echo ""
+            echo "=============== 서비스 정상 확인 ==============="
+            kubectl get pods -o wide --no-headers | awk '{print "  ", $1, $2, $3, $5}'
+            kubectl get events --field-selector type=Warning --sort-by=.lastTimestamp 2>/dev/null | tail -5
