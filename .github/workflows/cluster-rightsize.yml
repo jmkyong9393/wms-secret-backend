@@ -152,17 +152,23 @@ jobs:
               for KD in $(kubectl -n keda get deploy -o jsonpath='{.items[*].metadata.name}'); do echo -n "  $KD : cpu="; kubectl -n keda get deploy $KD -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}'; echo ''; done
 
               echo ""
-              echo "--- 실사용 (cpu.stat 10초 델타)"
-              for NS in kube-system keda; do
-                for P in $(kubectl -n $NS get pods -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' 2>/dev/null); do
-                  case "$P" in coredns*|keda*) ;; *) continue ;; esac
-                  A=$(kubectl -n $NS exec "$P" -- sh -c 'grep -w usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"' 2>/dev/null)
-                  [ -n "$A" ] || { echo "  $NS/$P : 판독 불가(셸 없음)"; continue; }
-                  sleep 10
-                  B=$(kubectl -n $NS exec "$P" -- sh -c 'grep -w usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"' 2>/dev/null)
-                  echo "  $NS/$P : $(( (B - A) / 10000 ))m"
-                done
-              done
+              echo "--- 실사용 (노드 cgroup 직접 판독 — coredns·KEDA는 셸 없는 distroless라 exec 불가)"
+              # 파드 UID로 cgroup 경로를 찾아 usage_usec 델타를 잰다.
+              measure() {
+                NS=$1; NAME=$2
+                UID_=$(kubectl -n $NS get pod -l "$3" -o jsonpath='{.items[0].metadata.uid}' 2>/dev/null || true)
+                [ -n "$UID_" ] || { echo "  $NAME : 파드 없음"; return 0; }
+                CG=$(sudo find /sys/fs/cgroup/kubepods.slice -maxdepth 3 -type d -name "*${UID_//-/_}*" 2>/dev/null | head -1)
+                [ -n "$CG" ] || { echo "  $NAME : cgroup 경로 미발견"; return 0; }
+                A=$(sudo awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo "")
+                [ -n "$A" ] || { echo "  $NAME : 판독 실패"; return 0; }
+                sleep 10
+                B=$(sudo awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo "$A")
+                echo "  $NAME : $(( (B - A) / 10000 ))m"
+              }
+              measure kube-system coredns   "k8s-app=kube-dns"
+              measure keda        keda-operator "app=keda-operator"
+
 
               if [ "$APPLY" != "true" ]; then echo ""; echo "[계획만] 종료"; exit 0; fi
 
