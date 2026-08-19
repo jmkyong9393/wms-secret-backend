@@ -262,9 +262,19 @@ jobs:
           # 인스턴스당 퍼블릭 IPv4는 하나뿐이다. EIP를 붙이면 auto-assign 주소가 반납되므로
           # 비용은 그대로이고 "중지·시작해도 IP가 안 바뀐다"는 이득만 남는다.
           echo "--- 주소 상세 (진단)"
+          # InstanceId가 None이어도 미연결이 아니다. 판단 기준은 AssociationId다.
           aws ec2 describe-addresses \
-            --query 'Addresses[].[PublicIp,AllocationId,Domain,InstanceId,NetworkInterfaceId,AssociationId,NetworkBorderGroup,CarrierIp]' \
+            --query 'Addresses[].[PublicIp,AllocationId,InstanceId,NetworkInterfaceId,AssociationId]' \
             --output text
+          echo "--- 붙어 있는 ENI의 정체 (NAT GW·ALB 등은 별도 과금이 있다)"
+          for E in $(aws ec2 describe-addresses --query 'Addresses[].NetworkInterfaceId' --output text | tr '\t' '\n' | grep -v '^None$' | grep -v '^$'); do
+            aws ec2 describe-network-interfaces --network-interface-ids "$E" \
+              --query 'NetworkInterfaces[].[NetworkInterfaceId,InterfaceType,Description,Attachment.InstanceId,Status]' \
+              --output text
+          done
+          echo "--- NAT 게이트웨이 (있으면 시간당 별도 과금)"
+          aws ec2 describe-nat-gateways --filter Name=state,Values=available \
+            --query 'NatGateways[].[NatGatewayId,State,SubnetId]' --output text 2>/dev/null || echo "  (조회 권한 없음)"
 
           # 인스턴스가 아닌 대상(NAT·ENI 등)에 이미 붙은 주소는 건드리지 않는다.
           aws ec2 describe-addresses \
@@ -381,8 +391,9 @@ jobs:
             # 배포 중인 이미지가 삭제 목록에 들어가면 파드 재시작 시 pull에 실패한다.
             while read -r TAG; do
               [ -z "$TAG" ] && continue
+              # 공개 이미지 태그(15-alpine 등)는 이 저장소에 없다 — 조회 실패는 정상이다.
               D=$(aws ecr describe-images --repository-name "$R" --image-ids imageTag="$TAG" \
-                  --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)
+                  --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)
               if [ -n "$D" ] && [ "$D" != "None" ] && grep -qx "$D" /tmp/del.txt; then
                 echo "::error::사용 중 이미지 $TAG ($D)가 삭제 목록에 있다 — 중단한다"
                 exit 1
