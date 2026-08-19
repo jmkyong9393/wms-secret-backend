@@ -199,18 +199,23 @@ jobs:
           echo "--- 퍼블릭 IPv4 : 주소 1개당 약 \$0.12/일 (2024-02부터 연결 여부 무관 과금)"
           aws ec2 describe-addresses --query 'Addresses[].[PublicIp,AllocationId,InstanceId]' --output text
           EIPN=$(aws ec2 describe-addresses --query 'Addresses[].AllocationId' --output text | wc -w)
-          IDLE=$(aws ec2 describe-addresses --query 'Addresses[].[AllocationId,InstanceId]' --output text \
-                 | awk '$2=="None"||$2==""' | wc -l)
+          # 미연결 판정은 AssociationId 기준이다. InstanceId는 ALB·NAT 같은 비인스턴스
+          # 대상에 붙은 주소에서 비어 있으므로, 그것으로 판단하면 멀쩡한 주소를 낭비로 오인한다.
+          IDLE=$(aws ec2 describe-addresses --query 'Addresses[?AssociationId==null].AllocationId' \
+                 --output text | wc -w)
           # 인스턴스가 EIP 없이 쓰는 auto-assign 주소도 같은 요금이다.
           AUTO=$(aws ec2 describe-instances --filters Name=instance-state-name,Values=running \
                  --query 'Reservations[].Instances[].PublicIpAddress' --output text | wc -w)
-          ATTACHED=$((EIPN - IDLE))
-          AUTO_ONLY=$((AUTO - ATTACHED))
+          EIP_ON_INSTANCE=$(aws ec2 describe-addresses --query 'Addresses[?InstanceId!=null].AllocationId' \
+                            --output text | wc -w)
+          AUTO_ONLY=$((AUTO - EIP_ON_INSTANCE))
           if [ "$AUTO_ONLY" -lt 0 ]; then AUTO_ONLY=0; fi
           IPN=$((EIPN + AUTO_ONLY))
-          echo "  EIP ${EIPN}개 (연결 ${ATTACHED} / 미연결 ${IDLE}) + auto-assign ${AUTO_ONLY}개 = 과금 주소 ${IPN}개"
+          echo "  EIP ${EIPN}개 (미연결 ${IDLE}) + 인스턴스 auto-assign ${AUTO_ONLY}개 = 과금 주소 ${IPN}개"
           if [ "$IDLE" -gt 0 ]; then
             echo "  ::미연결 ${IDLE}개는 순수 낭비다 — trim 모드가 인스턴스에 붙이거나 해제한다."
+          else
+            echo "  전부 사용 중 (ALB는 AZ마다 ENI를 만들고 각 ENI가 주소 하나를 쓴다)"
           fi
 
           echo ""
