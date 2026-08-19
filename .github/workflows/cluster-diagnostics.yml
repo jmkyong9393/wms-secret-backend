@@ -106,6 +106,22 @@ jobs:
             done
 
             echo ""
+            echo "=============== 8-3. 노드별 호스트 메모리 실사용 (CloudWatch 대조용) ==============="
+            # 컨테이너의 /proc/meminfo는 호스트 값을 보여준다(lxcfs 미사용). 노드마다 파드 하나를 골라 읽는다.
+            for N in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+              P=$(kubectl get pods -A --field-selector spec.nodeName=$N,status.phase=Running                     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+              NS=$(kubectl get pods -A --field-selector spec.nodeName=$N,status.phase=Running                     -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null)
+              [ -n "$P" ] || { echo "  $N : 파드 없음"; continue; }
+              M=$(kubectl exec -n "$NS" "$P" -- sh -c                     'awk "/MemTotal/{t=\$2} /MemAvailable/{a=\$2} END{printf \"%d %d\", t, a}" /proc/meminfo' 2>/dev/null)
+              if [ -n "$M" ]; then
+                T=$(echo $M | awk '{print $1}'); A=$(echo $M | awk '{print $2}')
+                echo "  $N : 사용 $(( (T-A)/1024 ))Mi / 전체 $(( T/1024 ))Mi = $(( (T-A)*100/T ))%"
+              else
+                echo "  $N : 판독 실패"
+              fi
+            done
+
+            echo ""
             echo "=============== 9. 노드 실제 메모리 (예약이 아닌 호스트 실사용) ==============="
             free -m | sed -n '1,2p'
             echo "--- 컨테이너 이미지 점유"
