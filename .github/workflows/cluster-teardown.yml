@@ -65,7 +65,40 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-northeast-2
 
-      # ── 0. 과금 인벤토리 (읽기 전용 · 전 모드 공통) ─────────────
+      # ── 0-1. 권한 사전 점검 ────────────────────────────────────
+      # OIDC 역할에 EC2/ELB 권한이 없으면 destroy·nuke가 조용히 실패한다.
+      # 원인을 AWS 오류 더미가 아니라 표로 먼저 보여준다.
+      - name: Permission preflight
+        run: |
+          set +e
+          echo "=================== 권한 점검 ==================="
+          DENY=0
+          chk() {
+            LABEL=$1; shift
+            if "$@" >/dev/null 2>&1; then
+              printf "  %-42s OK\n" "$LABEL"
+            else
+              printf "  %-42s 거부\n" "$LABEL"; DENY=$((DENY+1))
+            fi
+          }
+          chk "ec2:DescribeInstances"        aws ec2 describe-instances --max-items 1
+          chk "ec2:DescribeVolumes"          aws ec2 describe-volumes --max-items 1
+          chk "ec2:DescribeAddresses"        aws ec2 describe-addresses
+          chk "elasticloadbalancing:Describe" aws elbv2 describe-load-balancers
+          chk "ecr:DescribeRepositories"     aws ecr describe-repositories --max-items 1
+          chk "s3:ListBucket(vision)"        aws s3api head-bucket --bucket "$VISION_BUCKET"
+          echo ""
+          if [ "$DENY" -gt 0 ]; then
+            echo "::warning::권한 ${DENY}건 거부 — 해당 리소스는 조회·삭제가 불가능하다."
+            echo "  조치: deploy/iam/github-actions-nexus-policy.json 을"
+            echo "        IAM 역할 github-actions-nexus-role 에 연결한다."
+            echo "  연결 전에는 destroy/nuke가 EC2·EBS·ALB를 지우지 못하고 요금이 계속 나간다."
+          else
+            echo "  전 항목 통과 — destroy/nuke 실행 가능"
+          fi
+          exit 0
+
+      # ── 0-2. 과금 인벤토리 (읽기 전용 · 전 모드 공통) ───────────
       - name: Billing inventory
         run: |
           set +e
@@ -104,12 +137,17 @@ jobs:
 
           echo ""
           echo "--- ECR : 약 \$0.10/GB/월"
+          # CLI가 페이지마다 --query를 따로 적용해 값을 여러 줄로 뱉는다. awk로 합산한다.
           for R in $(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text); do
-            CNT=$(aws ecr list-images --repository-name "$R" --query 'length(imageIds)' --output text)
-            SZ=$(aws ecr describe-images --repository-name "$R" \
-                 --query 'sum(imageDetails[].imageSizeInBytes)' --output text 2>/dev/null)
-            echo "  $R : 이미지 ${CNT}개 / ${SZ:-0} bytes"
+            CNT=$(aws ecr list-images --repository-name "$R" --query 'length(imageIds)' --output text \
+                  | awk '{s+=$1} END{print s+0}')
+            GB=$(aws ecr describe-images --repository-name "$R" \
+                 --query 'sum(imageDetails[].imageSizeInBytes)' --output text 2>/dev/null \
+                 | awk '{s+=$1} END{printf "%.1f", s/1073741824}')
+            printf "  %-24s 이미지 %4d개 / 논리합 %s GB\n" "$R" "$CNT" "$GB"
           done
+          echo "  ※ 논리합은 레이어 공유를 무시한 단순 합이라 실제 청구 용량보다 크다."
+          echo "  ※ 이미지가 수백 개면 수명주기 정책(예: 최근 10개만 유지)을 검토한다."
 
           echo ""
           echo "=================== 개략 일 비용 (시간 과금분) ==================="
