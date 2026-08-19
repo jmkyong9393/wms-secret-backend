@@ -255,15 +255,23 @@ jobs:
       # 운영 중인 리소스는 건드리지 않는다. 안 쓰이는 것만 정리한다.
       - name: Trim idle Elastic IPs
         if: ${{ github.event.inputs.mode == 'trim' }}
+        continue-on-error: true
         run: |
-          set -e
+          set +e
           echo "=================== 미연결 EIP 정리 ==================="
           # 인스턴스당 퍼블릭 IPv4는 하나뿐이다. EIP를 붙이면 auto-assign 주소가 반납되므로
           # 비용은 그대로이고 "중지·시작해도 IP가 안 바뀐다"는 이득만 남는다.
-          aws ec2 describe-addresses --query 'Addresses[].[AllocationId,InstanceId]' --output text \
-            | awk '$2=="None"||$2==""{print $1}' > /tmp/free_eip.txt
+          echo "--- 주소 상세 (진단)"
+          aws ec2 describe-addresses \
+            --query 'Addresses[].[PublicIp,AllocationId,Domain,InstanceId,NetworkInterfaceId,AssociationId,NetworkBorderGroup,CarrierIp]' \
+            --output text
+
+          # 인스턴스가 아닌 대상(NAT·ENI 등)에 이미 붙은 주소는 건드리지 않는다.
+          aws ec2 describe-addresses \
+            --query 'Addresses[?AssociationId==null && Domain==`vpc`].AllocationId' --output text \
+            | tr '\t' '\n' | grep -v '^$' > /tmp/free_eip.txt
           if [ ! -s /tmp/free_eip.txt ]; then
-            echo "  미연결 EIP 없음 — 할 일이 없다"; exit 0
+            echo "  붙일 수 있는 미연결 EIP 없음 — 할 일이 없다"; exit 0
           fi
           echo "  미연결 EIP $(wc -l < /tmp/free_eip.txt)개"
 
@@ -285,10 +293,19 @@ jobs:
             sed -i '1d' /tmp/free_eip.txt
             OLDIP=$(aws ec2 describe-instances --instance-ids "$IID" \
                     --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-            aws ec2 associate-address --instance-id "$IID" --allocation-id "$ALLOC" >/dev/null
+            # ENI에 직접 붙인다. 인스턴스에 ENI가 여러 개면 --instance-id가 모호해져 거부된다.
+            ENI=$(aws ec2 describe-instances --instance-ids "$IID" \
+                  --query 'Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId' --output text)
+            OUT=$(aws ec2 associate-address --network-interface-id "$ENI" \
+                  --allocation-id "$ALLOC" --allow-reassociation 2>&1)
+            if [ $? -ne 0 ]; then
+              echo "  ::warning::$IID 연결 실패 — $(echo "$OUT" | tr '\n' ' ' | cut -c1-160)"
+              # 실패한 할당분은 다시 목록에 넣지 않는다(해제 대상으로도 넘기지 않는다).
+              continue
+            fi
             NEWIP=$(aws ec2 describe-addresses --allocation-ids "$ALLOC" \
                     --query 'Addresses[0].PublicIp' --output text)
-            echo "  연결: $IID   $OLDIP -> $NEWIP"
+            echo "  연결: $IID ($ENI)   $OLDIP -> $NEWIP"
             if [ "$OLDIP" = "$EC2_HOST" ]; then
               echo ""
               echo "  ★ 이 인스턴스가 마스터다. EC2_HOST 시크릿을 갱신한다 (양 레포):"
