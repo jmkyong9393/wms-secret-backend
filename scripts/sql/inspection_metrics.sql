@@ -71,15 +71,46 @@ WHERE d->>'type' IS NOT NULL
 GROUP BY 1 ORDER BY 2 DESC;
 
 \echo ''
-\echo '=================== 6. UBCI 점수 분포 ==================='
-SELECT COALESCE(agent_logs->>'final_grade','(미산정)') AS 등급, count(*) AS 건수,
-       round(avg((agent_logs->>'ubci_score')::numeric), 1) AS 평균점수
+\echo '=================== 6. UBCI 점수·등급 분포 ==================='
+-- ubci_score는 agent_logs가 아니라 return_jobs의 컬럼이다.
+-- 등급 문자열은 agent_logs.suggested_grade에 들어간다(final_grade는 저장되지 않는다).
+-- suggested_grade는 나중에 추가된 키라 옛 건에는 없다. 점수에서 계산해 채운다.
+-- 경계값은 ubci_grade_from_score()와 동일하다 (S>=95 / A>=85 / B>=65 / else REJECT).
+SELECT
+  CASE
+    WHEN ubci_score IS NULL THEN '(점수 없음)'
+    WHEN ubci_score >= 95   THEN 'MINT'
+    WHEN ubci_score >= 85   THEN 'GOOD'
+    WHEN ubci_score >= 65   THEN 'NORMAL'
+    ELSE 'REJECT'
+  END                                                  AS 등급,
+  count(*)                                             AS 건수,
+  round(100.0*count(*) / SUM(count(*)) OVER (), 1)     AS 비율,
+  round(avg(ubci_score), 1)                            AS 평균점수,
+  min(ubci_score)                                      AS 최저,
+  max(ubci_score)                                      AS 최고
 FROM return_jobs GROUP BY 1 ORDER BY 2 DESC;
 
 \echo ''
+\echo '--- 점수 미산정 건 (판독 실패·게이트 차단 = 점수를 주지 않는 것이 정상) ---'
+SELECT status AS 상태, count(*) AS 건수
+FROM return_jobs WHERE ubci_score IS NULL GROUP BY 1 ORDER BY 2 DESC;
+
+\echo ''
 \echo '=================== 7. 방어 게이트 발동 이력 ==================='
-SELECT COALESCE(agent_logs->>'primary_reason_code','(없음)') AS 사유코드, count(*) AS 건수
+-- reason_code가 게이트 사유다. primary_reason_code는 주 결함 유형(HITL 드롭다운 초기값)이라
+-- 게이트 지표로 쓰면 안 된다.
+SELECT COALESCE(agent_logs->>'reason_code','(정상 통과)') AS 게이트사유, count(*) AS 건수
 FROM return_jobs GROUP BY 1 ORDER BY 2 DESC LIMIT 12;
+
+\echo ''
+\echo '--- MINT(무결점) 및 자동 매입 대상 비율 ---'
+SELECT
+  count(*) FILTER (WHERE (agent_logs->>'is_mint')::boolean)              AS mint건수,
+  count(*) FILTER (WHERE (agent_logs->>'auto_refund_eligible')::boolean) AS 자동매입대상,
+  count(*)                                                              AS 전체,
+  round(100.0 * count(*) FILTER (WHERE (agent_logs->>'is_mint')::boolean) / count(*), 1) AS mint_pct
+FROM return_jobs;
 
 \echo ''
 \echo '=================== 8. LLM 비용 실측 (계측 보유분) ==================='
