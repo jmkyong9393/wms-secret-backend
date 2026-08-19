@@ -83,6 +83,29 @@ jobs:
             kubectl get rs -A --no-headers 2>/dev/null | awk '$3=="0" && $4=="0" {c++} END {print "   개수:", c+0}'
 
             echo ""
+            echo "=============== 8-2. CPU 예약 내역 · 실사용 ==============="
+            echo "--- 노드별 파드 CPU 예약"
+            kubectl get pods -A --field-selector status.phase=Running \
+              -o custom-columns='NODE:.spec.nodeName,POD:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu' \
+              --no-headers 2>/dev/null | sort | awk '$3!="<none>"{printf "  %-18s %-44s %s\n",$1,$2,$3}'
+            echo "--- 디플로이 선언값"
+            kubectl get deploy -o custom-columns=\
+            'DEPLOY:.metadata.name,CPU_REQ:.spec.template.spec.containers[0].resources.requests.cpu,CPU_LIM:.spec.template.spec.containers[0].resources.limits.cpu'
+            echo "--- 실사용 (cpu.stat 10초 델타 → 밀리코어)"
+            for D in wms-api wms-frontend wms-ai-worker wms-beat; do
+              for P in $(kubectl get pods -l app=$D -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' 2>/dev/null); do
+                A=$(kubectl exec "$P" -- sh -c 'grep -w usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"' 2>/dev/null)
+                sleep 10
+                B=$(kubectl exec "$P" -- sh -c 'grep -w usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"' 2>/dev/null)
+                if [ -n "$A" ] && [ -n "$B" ]; then
+                  echo "  $D / $P : $(( (B - A) / 10000 ))m"
+                else
+                  echo "  $D / $P : 판독 실패"
+                fi
+              done
+            done
+
+            echo ""
             echo "=============== 9. 노드 실제 메모리 (예약이 아닌 호스트 실사용) ==============="
             free -m | sed -n '1,2p'
             echo "--- 컨테이너 이미지 점유"
