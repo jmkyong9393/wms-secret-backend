@@ -1,21 +1,26 @@
 # 원클릭 정리 — 과금 원천 차단.
 #
 # 삭제 순서가 중요하다. 의존 관계를 거스르면 거부되거나 고아 리소스가 남아 계속 과금된다.
-#   ALB → 리스너/타깃그룹 → k8s 리소스(PVC 포함) → EBS 잔존 볼륨 → 노드
-# PVC를 지우지 않고 EC2만 종료하면 **EBS 볼륨이 남아 계속 과금된다** — 가장 흔한 누락이다.
+#   ALB → 타깃그룹 → k8s 리소스(PVC) → EC2 종료 → 잔존 EBS → EIP → ECR
+# PVC는 클러스터가 살아 있을 때만 지울 수 있다. EC2를 먼저 종료하면 EBS가 고아로 남는다.
 #
-# 안전장치: 기본이 dry-run이며, 실제 삭제에는 confirm 문구 입력이 필요하다.
+# 안전장치: 기본이 dry-run이며 실제 삭제에는 confirm 문구가 필요하다.
+# S3(검수 이미지)는 확인 문구를 한 번 더 요구한다 — 로컬 회수 전에 지우면 복원이 불가능하다.
 name: Cluster Teardown (1-Click)
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "plan(현황만) | suspend(중지-데이터보존) | destroy(전체삭제)"
+        description: "plan(현황) | backup(DB덤프) | suspend(중지) | destroy(k8s+ALB+EBS) | nuke(요금 0원)"
         required: true
         default: "plan"
       confirm:
-        description: "destroy일 때만 — 정확히 DESTROY 입력"
+        description: "destroy/nuke일 때만 — 정확히 DESTROY 입력"
+        required: false
+        default: ""
+      purge_s3:
+        description: "S3 검수 이미지까지 삭제 — 로컬 회수 완료 후에만. 정확히 PURGE-S3 입력"
         required: false
         default: ""
 
@@ -29,14 +34,30 @@ jobs:
     env:
       EC2_HOST: ${{ secrets.EC2_HOST }}
       AWS_REGION: ap-northeast-2
+      MODE: ${{ github.event.inputs.mode }}
+      CONFIRM: ${{ github.event.inputs.confirm }}
+      PURGE_S3: ${{ github.event.inputs.purge_s3 }}
+      VISION_BUCKET: wms-secret-vision-assets
+      ATTACH_BUCKET: wms-secret-board-attachments
     steps:
       - name: Guard
         run: |
-          M="${{ github.event.inputs.mode }}"
-          if [ "$M" = "destroy" ] && [ "${{ github.event.inputs.confirm }}" != "DESTROY" ]; then
-            echo "::error::destroy 모드에는 confirm=DESTROY 가 필요합니다"; exit 1
+          case "$MODE" in
+            plan|backup|suspend|destroy|nuke) : ;;
+            *) echo "::error::알 수 없는 모드: $MODE"; exit 1 ;;
+          esac
+          if [ "$MODE" = "destroy" ] || [ "$MODE" = "nuke" ]; then
+            if [ "$CONFIRM" != "DESTROY" ]; then
+              echo "::error::$MODE 모드에는 confirm=DESTROY 가 필요합니다"; exit 1
+            fi
           fi
-          echo "모드=$M"
+          if [ -n "$PURGE_S3" ] && [ "$PURGE_S3" != "PURGE-S3" ]; then
+            echo "::error::purge_s3 는 비워두거나 정확히 PURGE-S3 여야 합니다"; exit 1
+          fi
+          if [ "$PURGE_S3" = "PURGE-S3" ] && [ "$MODE" != "nuke" ]; then
+            echo "::error::S3 삭제는 nuke 모드에서만 가능합니다"; exit 1
+          fi
+          echo "모드=$MODE / S3삭제=${PURGE_S3:-아니오}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -44,16 +65,145 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-northeast-2
 
-      # ── 1. 클러스터 측 정리 (SSH) ───────────────────────────
+      # ── 0. 과금 인벤토리 (읽기 전용 · 전 모드 공통) ─────────────
+      - name: Billing inventory
+        run: |
+          set +e
+          echo "=================== 과금 인벤토리 ==================="
+
+          echo "--- EC2 (실행중/중지) : t3.medium 1대당 약 \$1.25/일"
+          aws ec2 describe-instances \
+            --filters Name=instance-state-name,Values=running,stopped \
+            --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,PublicIpAddress]' \
+            --output text
+          EC2N=$(aws ec2 describe-instances --filters Name=instance-state-name,Values=running \
+                  --query 'Reservations[].Instances[].InstanceId' --output text | wc -w)
+
+          echo ""
+          echo "--- EBS 전체 (연결 여부 무관) : 약 \$0.004/GB/일"
+          aws ec2 describe-volumes --query 'Volumes[].[VolumeId,Size,State,VolumeType]' --output text
+          EBSGB=$(aws ec2 describe-volumes --query 'sum(Volumes[].Size)' --output text 2>/dev/null)
+          if [ -z "$EBSGB" ] || [ "$EBSGB" = "None" ]; then EBSGB=0; fi
+
+          echo ""
+          echo "--- ALB : 1대당 약 \$0.66/일"
+          aws elbv2 describe-load-balancers --query 'LoadBalancers[].[LoadBalancerName,State.Code]' --output text
+          ALBN=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn' --output text | wc -w)
+
+          echo ""
+          echo "--- Elastic IP (인스턴스에 안 붙어 있어도 과금된다)"
+          aws ec2 describe-addresses --query 'Addresses[].[PublicIp,AllocationId,InstanceId]' --output text
+          EIPN=$(aws ec2 describe-addresses --query 'Addresses[].AllocationId' --output text | wc -w)
+
+          echo ""
+          echo "--- S3 검수 이미지 (지우면 시연 복원 불가) : 약 \$0.023/GB/월"
+          for B in "$VISION_BUCKET" "$ATTACH_BUCKET"; do
+            SUM=$(aws s3 ls "s3://$B" --recursive --summarize 2>/dev/null | tail -2 | tr '\n' ' ')
+            echo "  $B : ${SUM:-(없음/접근불가)}"
+          done
+
+          echo ""
+          echo "--- ECR : 약 \$0.10/GB/월"
+          for R in $(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text); do
+            CNT=$(aws ecr list-images --repository-name "$R" --query 'length(imageIds)' --output text)
+            SZ=$(aws ecr describe-images --repository-name "$R" \
+                 --query 'sum(imageDetails[].imageSizeInBytes)' --output text 2>/dev/null)
+            echo "  $R : 이미지 ${CNT}개 / ${SZ:-0} bytes"
+          done
+
+          echo ""
+          echo "=================== 개략 일 비용 (시간 과금분) ==================="
+          awk -v e="$EC2N" -v g="$EBSGB" -v a="$ALBN" 'BEGIN{
+            ec=e*1.25; eb=g*0.004; al=a*0.66; t=ec+eb+al;
+            printf "  EC2  %2d대   $%.2f/일\n", e, ec;
+            printf "  EBS  %3dGB  $%.2f/일\n", g, eb;
+            printf "  ALB  %2d대   $%.2f/일\n", a, al;
+            printf "  ------------------------------\n";
+            printf "  합계        $%.2f/일  (약 %d원/일 · 월 %d원)\n", t, t*1390, t*1390*30;
+          }'
+          echo "  ※ S3·ECR 스토리지는 위 합계에 미포함 (소액이지만 0원은 아니다)"
+          echo "  ※ Elastic IP ${EIPN}개 — nuke가 미연결분을 해제한다"
+          exit 0
+
+      # ── 1. DB 백업 (backup · destroy · nuke) ───────────────────
+      - name: Backup database
+        if: ${{ contains('backup destroy nuke', github.event.inputs.mode) && env.EC2_HOST != '' }}
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+          # 계정은 admin이다 — postgres 롤은 존재하지 않는다. 파드 환경변수에서 읽는다.
+          # base64로 감싸는 이유: 중첩 따옴표가 SSH 인자를 통과하며 깨진다.
+          CMD=$(printf '%s' 'POD=$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}"); kubectl exec "$POD" -- sh -c "pg_dumpall -U \$POSTGRES_USER"' | base64 -w0)
+          STAMP=$(date +%Y%m%d-%H%M)
+          ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+            ubuntu@"$EC2_HOST" "echo $CMD | base64 -d | bash" | gzip > "nexus-db-$STAMP.sql.gz"
+          SZ=$(stat -c%s "nexus-db-$STAMP.sql.gz")
+          echo "덤프 크기: $SZ bytes"
+          if [ "$SZ" -lt 1000 ]; then
+            echo "::error::덤프가 비어 있다 — 이후 삭제 단계를 중단한다"; exit 1
+          fi
+          gzip -t "nexus-db-$STAMP.sql.gz"
+          echo "gzip 무결성 OK"
+
+      # 운영 매니페스트는 마스터에만 있다 (리포의 k8s/deployment.yml은 실제와 값이 다르다).
+      # 회수하지 않고 EC2를 종료하면 재구축의 근거가 사라진다.
+      - name: Export live manifests
+        if: ${{ contains('backup destroy nuke', github.event.inputs.mode) && env.EC2_HOST != '' }}
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set +e
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+          mkdir -p manifests
+          for F in k8s-manifests-v31.yaml keda-scaler.yaml; do
+            scp -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              ubuntu@"$EC2_HOST":"$F" "manifests/$F" 2>/dev/null \
+              && echo "  회수: $F" || echo "  없음: $F"
+          done
+          # 파일이 유실됐을 때의 최후 복원 근거로 살아 있는 상태도 함께 남긴다.
+          ssh -n -o StrictHostKeyChecking=no ubuntu@"$EC2_HOST" \
+            'kubectl get deploy,svc,cm,pvc,sc,ingress -o yaml' > manifests/live-state.yaml 2>/dev/null
+          ssh -n -o StrictHostKeyChecking=no ubuntu@"$EC2_HOST" \
+            'kubectl get scaledobject,cronjob -o yaml 2>/dev/null' > manifests/live-keda.yaml 2>/dev/null
+          ssh -n -o StrictHostKeyChecking=no ubuntu@"$EC2_HOST" \
+            'kubectl get nodes -o wide --show-labels' > manifests/live-nodes.txt 2>/dev/null
+          ls -la manifests/
+          exit 0
+
+      - name: Upload backup artifact
+        if: ${{ contains('backup destroy nuke', github.event.inputs.mode) && env.EC2_HOST != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-db-backup
+          path: |
+            nexus-db-*.sql.gz
+            manifests/**
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: S3 회수 안내
+        if: ${{ contains('backup destroy nuke', github.event.inputs.mode) }}
+        run: |
+          echo "=================== 로컬 회수 (직접 실행) ==================="
+          echo "DB 덤프는 이 실행의 Artifacts → nexus-db-backup 에서 내려받는다."
+          echo "검수 이미지는 S3에 있다. 아래를 로컬에서 실행해 회수한다:"
+          echo ""
+          echo "  aws s3 sync s3://$VISION_BUCKET  ./s3-backup/vision-assets"
+          echo "  aws s3 sync s3://$ATTACH_BUCKET  ./s3-backup/board-attachments"
+          echo ""
+          echo "회수 전에는 purge_s3 를 쓰지 않는다 — 지우면 덤프의 image_urls가 죽은 링크가 된다."
+
+      # ── 2. 클러스터 측 정리 (suspend · destroy · nuke) ──────────
       - name: Cluster resources
-        if: ${{ env.EC2_HOST != '' }}
+        if: ${{ contains('suspend destroy nuke', github.event.inputs.mode) && env.EC2_HOST != '' }}
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ env.EC2_HOST }}
+          host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 20m
-          envs: MODE
           script: |
             MODE="${{ github.event.inputs.mode }}"
 
@@ -62,18 +212,17 @@ jobs:
             echo "--- PVC (삭제하지 않으면 EBS가 계속 과금된다)"
             kubectl get pvc --no-headers 2>/dev/null | awk '{print "  ",$1,$2,$4}'
 
-            if [ "$MODE" = "plan" ]; then echo "[plan] 변경 없이 종료"; exit 0; fi
-
             if [ "$MODE" = "suspend" ]; then
               echo ""
               echo "=============== 중지 (데이터 보존) ==============="
               # 워크로드만 0으로 내린다. PVC·EBS·이미지는 유지되어 재개가 빠르다.
+              # 주의: AWS 과금(EC2·EBS·ALB)은 전혀 줄지 않는다. 요금이 목적이면 nuke를 쓴다.
               for D in wms-api wms-frontend wms-ai-worker wms-beat redis chroma-server postgres; do
                 kubectl scale deployment "$D" --replicas=0 2>/dev/null && echo "  $D → 0" || true
               done
               kubectl delete scaledobject --all 2>/dev/null || true
-              echo "✅ 파드 중지 완료. EBS·ECR은 유지된다(소액 과금 지속)."
-              echo "   재개: kubectl scale deployment <이름> --replicas=1"
+              echo "파드 중지 완료. AWS 과금은 변하지 않는다."
+              echo "재개 순서: postgres·redis·chroma 먼저 → wait → 앱"
               exit 0
             fi
 
@@ -86,50 +235,139 @@ jobs:
             done
             kubectl delete deployment --all 2>/dev/null || true
             kubectl delete svc --all 2>/dev/null || true
-            echo "--- PVC 삭제 (EBS 해제의 유일한 경로)"
+            echo "--- PVC 삭제 (EBS 해제의 유일한 경로 — 클러스터가 살아 있을 때만 가능하다)"
             kubectl delete pvc --all --timeout=180s 2>/dev/null || true
+            sleep 20
             kubectl get pv --no-headers 2>/dev/null | head -5
 
-      # ── 2. AWS 측 정리 (이름으로 자동 탐색) ─────────────────
-      - name: AWS resources
-        if: ${{ github.event.inputs.mode == 'destroy' }}
+      # ── 3. ALB · 타깃그룹 (destroy · nuke) ──────────────────────
+      - name: Delete ALB and target groups
+        if: ${{ contains('destroy nuke', github.event.inputs.mode) }}
         run: |
-          set -e
+          set +e
           echo "=============== ALB · 타깃그룹 ==============="
-          # 이름을 하드코딩하지 않는다 — 태그/이름 패턴으로 찾는다
           ALB=$(aws elbv2 describe-load-balancers \
-                 --query "LoadBalancers[?contains(LoadBalancerName,'nexus')].LoadBalancerArn" \
-                 --output text 2>/dev/null || true)
+                 --query "LoadBalancers[?contains(LoadBalancerName,'nexus')].LoadBalancerArn" --output text)
           if [ -n "$ALB" ]; then
             for A in $ALB; do echo "  삭제: $A"; aws elbv2 delete-load-balancer --load-balancer-arn "$A"; done
             echo "  ALB 삭제 전파 대기 30초"; sleep 30
           else
-            echo "  (nexus 이름의 ALB 없음 — 수동 확인 필요)"
+            echo "  (nexus 이름의 ALB 없음)"
           fi
-
           TGS=$(aws elbv2 describe-target-groups \
-                 --query "TargetGroups[?contains(TargetGroupName,'nexus')].TargetGroupArn" \
-                 --output text 2>/dev/null || true)
-          for T in $TGS; do echo "  타깃그룹 삭제: $T"; aws elbv2 delete-target-group --target-group-arn "$T" || true; done
+                 --query "TargetGroups[?contains(TargetGroupName,'nexus')].TargetGroupArn" --output text)
+          for T in $TGS; do echo "  타깃그룹 삭제: $T"; aws elbv2 delete-target-group --target-group-arn "$T"; done
+          exit 0
 
-          echo ""
-          echo "=============== 잔존 EBS (available = 아무도 안 쓰는데 과금 중) ==============="
-          VOLS=$(aws ec2 describe-volumes --filters Name=status,Values=available \
-                  --query 'Volumes[].VolumeId' --output text 2>/dev/null || true)
-          if [ -n "$VOLS" ]; then
-            for V in $VOLS; do echo "  삭제: $V"; aws ec2 delete-volume --volume-id "$V" || true; done
-          else
-            echo "  없음 ✅"
+      # ── 4. EC2 종료 (nuke 전용) — 비용의 73%가 여기 있다 ────────
+      - name: Terminate EC2 instances
+        if: ${{ github.event.inputs.mode == 'nuke' }}
+        run: |
+          set -e
+          echo "=============== EC2 종료 ==============="
+          # 이름 태그와 IAM 인스턴스 프로파일 두 경로로 찾는다.
+          BY_TAG=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*nexus*,*wms*,*Nexus*,*WMS*" Name=instance-state-name,Values=running,stopped \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          BY_ROLE=$(aws ec2 describe-instances \
+            --filters "Name=iam-instance-profile.arn,Values=*nexus*" Name=instance-state-name,Values=running,stopped \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          IDS=$(printf '%s\n%s\n' "$BY_TAG" "$BY_ROLE" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
+          N=$(echo $IDS | wc -w)
+          echo "  대상: ${IDS:-(없음)}  (${N}대)"
+          if [ "$N" -eq 0 ]; then
+            echo "::warning::자동 탐색이 인스턴스를 찾지 못했다. 태그가 없을 수 있다 — 콘솔에서 직접 종료하고 최종 감사로 확인한다."
+            exit 0
           fi
+          if [ "$N" -gt 3 ]; then
+            echo "::error::${N}대가 탐색됐다 — 무관한 인스턴스가 섞였을 수 있으므로 중단한다. 콘솔에서 직접 종료한다."
+            exit 1
+          fi
+          aws ec2 terminate-instances --instance-ids $IDS
+          echo "  종료 대기..."
+          aws ec2 wait instance-terminated --instance-ids $IDS || true
+          echo "  종료 완료"
+
+      # ── 5. 잔존 EBS (destroy · nuke) ───────────────────────────
+      - name: Delete leftover EBS
+        if: ${{ contains('destroy nuke', github.event.inputs.mode) }}
+        run: |
+          set +e
+          echo "=============== 잔존 EBS (available = 아무도 안 쓰는데 과금 중) ==============="
+          # 종료 직후에는 detaching 상태가 남는다. 세 번 훑는다.
+          for i in 1 2 3; do
+            VOLS=$(aws ec2 describe-volumes --filters Name=status,Values=available \
+                    --query 'Volumes[].VolumeId' --output text)
+            if [ -z "$VOLS" ]; then break; fi
+            for V in $VOLS; do echo "  삭제: $V"; aws ec2 delete-volume --volume-id "$V"; done
+            sleep 15
+          done
+          REST=$(aws ec2 describe-volumes --query 'Volumes[].[VolumeId,State]' --output text)
+          echo "  남은 볼륨: ${REST:-없음}"
+          exit 0
+
+      # ── 6. EIP · ECR (nuke 전용) ───────────────────────────────
+      - name: Release Elastic IPs and purge ECR
+        if: ${{ github.event.inputs.mode == 'nuke' }}
+        run: |
+          set +e
+          echo "=============== 미연결 Elastic IP 해제 ==============="
+          aws ec2 describe-addresses --query 'Addresses[].[AllocationId,InstanceId]' --output text |
+          while read -r ALLOC INST; do
+            if [ -z "$ALLOC" ]; then continue; fi
+            if [ -z "$INST" ] || [ "$INST" = "None" ]; then
+              aws ec2 release-address --allocation-id "$ALLOC" && echo "  해제: $ALLOC"
+            else
+              echo "  유지(연결됨): $ALLOC → $INST"
+            fi
+          done
 
           echo ""
-          echo "=============== 최종 확인 ==============="
-          echo "--- 남은 ALB"; aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text || true
-          echo "--- 남은 available 볼륨"; aws ec2 describe-volumes --filters Name=status,Values=available --query 'Volumes[].VolumeId' --output text || true
-          echo "--- EC2 인스턴스 (직접 중지/종료 필요)"
-          aws ec2 describe-instances --filters Name=instance-state-name,Values=running \
-            --query 'Reservations[].Instances[].{ID:InstanceId,Name:Tags[?Key==`Name`]|[0].Value,State:State.Name}' \
-            --output table || true
+          echo "=============== ECR 이미지 삭제 (저장소는 유지 — 빈 저장소는 무료) ==============="
+          for R in $(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text); do
+            # batch-delete-image는 1회 100개가 상한이다.
+            for round in 1 2 3 4 5; do
+              IDS=$(aws ecr list-images --repository-name "$R" --query 'imageIds[0:100]' --output json)
+              if [ "$IDS" = "[]" ] || [ -z "$IDS" ]; then break; fi
+              aws ecr batch-delete-image --repository-name "$R" --image-ids "$IDS" >/dev/null
+              echo "  $R 이미지 일괄 삭제 (${round}회차)"
+            done
+          done
+          exit 0
+
+      # ── 7. S3 (별도 확인 문구 필요) ────────────────────────────
+      - name: Purge S3 buckets
+        if: ${{ github.event.inputs.purge_s3 == 'PURGE-S3' }}
+        run: |
+          set +e
+          echo "=============== S3 검수 이미지 삭제 ==============="
+          echo "로컬 회수(aws s3 sync)를 마쳤다는 전제로 진행한다."
+          for B in "$VISION_BUCKET" "$ATTACH_BUCKET"; do
+            if aws s3api head-bucket --bucket "$B" 2>/dev/null; then
+              aws s3 rm "s3://$B" --recursive >/dev/null && echo "  $B 비움"
+            else
+              echo "  $B (없음 또는 접근 불가)"
+            fi
+          done
+          echo "  ※ 버킷 자체는 남긴다 — 빈 버킷은 무료이고 이름을 선점해 둔다."
+          exit 0
+
+      # ── 8. 최종 감사 ───────────────────────────────────────────
+      - name: Final audit
+        run: |
+          set +e
+          echo "=================== 최종 감사 ==================="
+          echo "--- 실행/중지 중 EC2"
+          aws ec2 describe-instances --filters Name=instance-state-name,Values=running,stopped \
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text
+          echo "--- EBS 전체"
+          aws ec2 describe-volumes --query 'Volumes[].[VolumeId,Size,State]' --output text
+          echo "--- ALB"
+          aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text
+          echo "--- Elastic IP"
+          aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text
           echo ""
-          echo "⚠ EC2는 이 워크플로가 종료하지 않는다 — 재시연 예정이면 '중지', 완전 종료면 '종료'를 직접 선택한다."
-          echo "⚠ ECR 이미지는 유지 권장 (스토리지 \$0.10/GB/월)."
+          echo "위 네 항목이 모두 빈 출력이면 시간당 과금이 0원이다."
+          echo "무료로 남는 것: ACM 인증서 · 보안그룹 · 키페어 · IAM 역할 · 빈 ECR/S3 버킷"
+          echo "재구축: cluster-rebuild.yml 워크플로 1회 실행 (약 15분)"
+          exit 0

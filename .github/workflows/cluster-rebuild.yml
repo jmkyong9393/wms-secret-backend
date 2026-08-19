@@ -1,0 +1,458 @@
+# 원클릭 재구축 — nuke로 지운 인프라를 빈 계정 상태에서 되살린다.
+#
+# 전제: teardown이 남긴 무료 자산이 그대로 있어야 한다.
+#   보안그룹(nexus-node-sg / nexus-alb-sg) · 키페어 · IAM 역할(nexus-node-role)
+#   · ACM 인증서 · 빈 ECR 저장소 · 백업 아티팩트(nexus-db-backup)
+# 이 중 하나라도 없으면 resolve 단계가 무엇이 없는지 알려주고 멈춘다.
+#
+# 수동으로 남는 것은 두 가지뿐이다:
+#   ① EC2_HOST 시크릿 갱신 (GH_PAT가 있으면 자동)
+#   ② 도메인 CNAME을 새 ALB DNS 이름으로 변경 ('내 도메인 한국'은 API가 없다)
+name: Cluster Rebuild (1-Click)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "all | resolve | provision | bootstrap | deploy | alb"
+        required: true
+        default: "all"
+      restore_db:
+        description: "백업 아티팩트에서 DB를 복원한다 (true/false)"
+        required: false
+        default: "true"
+      instance_type:
+        description: "인스턴스 타입"
+        required: false
+        default: "t3.medium"
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ap-northeast-2
+      STAGE: ${{ github.event.inputs.stage }}
+      ITYPE: ${{ github.event.inputs.instance_type }}
+      DOMAIN: nexus-wms.p-e.kr
+      NODE_SG_NAME: nexus-node-sg
+      ALB_SG_NAME: nexus-alb-sg
+      NODE_ROLE: nexus-node-role
+      K8S_MINOR: v1.30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      # ── 1. 전제 자산 확인 ────────────────────────────────────
+      - name: Resolve prerequisites
+        id: res
+        run: |
+          set -e
+          MISSING=""
+          echo "=================== 전제 자산 확인 ==================="
+
+          AMI=$(aws ssm get-parameter \
+            --name /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id \
+            --query 'Parameter.Value' --output text)
+          echo "  AMI (Ubuntu 22.04)     : $AMI"
+
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
+          echo "  VPC (기본)             : $VPC"
+
+          # 노드는 같은 AZ에 둔다 — EBS는 AZ에 묶이므로 노드가 흩어지면 PVC 파드가 이동 불가다.
+          SUBNET=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC \
+                   --query 'Subnets|sort_by(@,&AvailabilityZone)[0].SubnetId' --output text)
+          AZ=$(aws ec2 describe-subnets --subnet-ids $SUBNET --query 'Subnets[0].AvailabilityZone' --output text)
+          # ALB는 서로 다른 AZ의 서브넷 2개 이상을 요구한다.
+          SUBNET2=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC \
+                    --query "Subnets[?AvailabilityZone!='$AZ']|[0].SubnetId" --output text)
+          echo "  노드 서브넷            : $SUBNET ($AZ)"
+          echo "  ALB 보조 서브넷        : $SUBNET2"
+
+          NODE_SG=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$NODE_SG_NAME \
+                    --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+          ALB_SG=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$ALB_SG_NAME \
+                   --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+          echo "  노드 보안그룹          : $NODE_SG"
+          echo "  ALB 보안그룹           : $ALB_SG"
+          [ "$NODE_SG" = "None" ] && MISSING="$MISSING $NODE_SG_NAME"
+          [ "$ALB_SG" = "None" ]  && MISSING="$MISSING $ALB_SG_NAME"
+
+          PROFILE=$(aws iam list-instance-profiles \
+                    --query "InstanceProfiles[?contains(InstanceProfileName,'nexus')].InstanceProfileName|[0]" \
+                    --output text 2>/dev/null)
+          echo "  인스턴스 프로파일      : $PROFILE"
+          [ "$PROFILE" = "None" ] && MISSING="$MISSING $NODE_ROLE"
+
+          KEY=$(aws ec2 describe-key-pairs --query 'KeyPairs[0].KeyName' --output text 2>/dev/null)
+          echo "  키페어                 : $KEY"
+          [ "$KEY" = "None" ] && MISSING="$MISSING keypair"
+
+          CERT=$(aws acm list-certificates --certificate-statuses ISSUED \
+                 --query "CertificateSummaryList[?contains(DomainName,'p-e.kr')].CertificateArn|[0]" --output text)
+          echo "  ACM 인증서             : $CERT"
+          [ "$CERT" = "None" ] && MISSING="$MISSING ACM인증서"
+
+          for R in nexus-backend-repo nexus-frontend-repo; do
+            if aws ecr describe-repositories --repository-names "$R" >/dev/null 2>&1; then
+              echo "  ECR $R : 존재"
+            else
+              echo "  ECR $R : 없음 → 생성"
+              aws ecr create-repository --repository-name "$R" >/dev/null
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::전제 자산 누락 —$MISSING . 콘솔에서 만들고 다시 실행한다."
+            exit 1
+          fi
+
+          {
+            echo "ami=$AMI"; echo "subnet=$SUBNET"; echo "subnet2=$SUBNET2"; echo "az=$AZ"
+            echo "node_sg=$NODE_SG"; echo "alb_sg=$ALB_SG"; echo "profile=$PROFILE"
+            echo "key=$KEY"; echo "cert=$CERT"; echo "vpc=$VPC"
+          } >> "$GITHUB_OUTPUT"
+          echo "전제 자산 확인 완료"
+
+      # ── 2. EC2 2대 기동 ──────────────────────────────────────
+      - name: Provision EC2
+        if: ${{ contains('all provision', github.event.inputs.stage) }}
+        run: |
+          set -e
+          echo "=================== EC2 기동 ==================="
+          EXIST=$(aws ec2 describe-instances \
+            --filters Name=tag:Project,Values=nexus-wms Name=instance-state-name,Values=running,pending \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$EXIST" ]; then
+            echo "이미 실행 중이다: $EXIST — 기동을 건너뛴다."
+            exit 0
+          fi
+
+          # user-data: 두 노드 공통 사전 준비. kubeadm init/join은 bootstrap 단계가 SSH로 수행한다.
+          cat > /tmp/userdata.sh <<'UD'
+          #!/bin/bash
+          set -e
+          exec > /var/log/nexus-init.log 2>&1
+          swapoff -a && sed -i '/ swap / s/^/#/' /etc/fstab
+          echo br_netfilter > /etc/modules-load.d/k8s.conf
+          modprobe br_netfilter
+          printf 'net.bridge.bridge-nf-call-iptables=1\nnet.bridge.bridge-nf-call-ip6tables=1\nnet.ipv4.ip_forward=1\n' > /etc/sysctl.d/k8s.conf
+          sysctl --system
+          apt-get update
+          apt-get install -y containerd curl ca-certificates gpg unzip
+          mkdir -p /etc/containerd
+          containerd config default > /etc/containerd/config.toml
+          sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+          systemctl restart containerd
+          mkdir -p /etc/apt/keyrings
+          curl -fsSL https://pkgs.k8s.io/core:/stable:/K8SMINOR/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+          echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/K8SMINOR/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+          apt-get update
+          apt-get install -y kubelet kubeadm kubectl
+          apt-mark hold kubelet kubeadm kubectl
+          curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscli.zip
+          unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install
+          touch /var/log/nexus-init.done
+          UD
+          sed -i "s/K8SMINOR/${K8S_MINOR}/g" /tmp/userdata.sh
+          sed -i 's/^          //' /tmp/userdata.sh
+          UD64=$(base64 -w0 /tmp/userdata.sh)
+
+          launch() {
+            NAME=$1; ROLE=$2
+            aws ec2 run-instances \
+              --image-id "${{ steps.res.outputs.ami }}" \
+              --instance-type "$ITYPE" \
+              --key-name "${{ steps.res.outputs.key }}" \
+              --subnet-id "${{ steps.res.outputs.subnet }}" \
+              --security-group-ids "${{ steps.res.outputs.node_sg }}" \
+              --iam-instance-profile Name="${{ steps.res.outputs.profile }}" \
+              --associate-public-ip-address \
+              --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=20,VolumeType=gp3,DeleteOnTermination=true}' \
+              --user-data "$UD64" \
+              --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME},{Key=Project,Value=nexus-wms},{Key=Role,Value=$ROLE}]" \
+              --query 'Instances[0].InstanceId' --output text
+          }
+          M=$(launch nexus-master master)
+          W=$(launch nexus-ai-worker worker)
+          echo "  마스터: $M / 워커: $W"
+          aws ec2 wait instance-status-ok --instance-ids "$M" "$W"
+          echo "  상태 검사 통과"
+
+      # ── 3. 호스트 확인 (provision 이후 모든 단계 공통) ────────
+      - name: Resolve hosts
+        id: hosts
+        if: ${{ contains('all bootstrap deploy alb', github.event.inputs.stage) }}
+        run: |
+          set -e
+          get() { aws ec2 describe-instances \
+            --filters "Name=tag:Role,Values=$1" Name=instance-state-name,Values=running \
+            --query "Reservations[].Instances[].$2" --output text | head -1; }
+          MIP=$(get master PublicIpAddress);  MPRIV=$(get master PrivateIpAddress)
+          WIP=$(get worker PublicIpAddress)
+          if [ -z "$MIP" ] || [ -z "$WIP" ]; then
+            echo "::error::노드를 찾지 못했다 — provision 단계를 먼저 실행한다."; exit 1
+          fi
+          echo "  마스터 $MIP (내부 $MPRIV) / 워커 $WIP"
+          { echo "master=$MIP"; echo "master_priv=$MPRIV"; echo "worker=$WIP"; } >> "$GITHUB_OUTPUT"
+
+      # ── 4. 클러스터 부팅 ─────────────────────────────────────
+      - name: Bootstrap cluster
+        if: ${{ contains('all bootstrap', github.event.inputs.stage) }}
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          M: ${{ steps.hosts.outputs.master }}
+          W: ${{ steps.hosts.outputs.worker }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+          SSH="ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=20"
+
+          echo "--- SSH 및 user-data 완료 대기 (최대 10분)"
+          for h in "$M" "$W"; do
+            for i in $(seq 1 60); do
+              if $SSH ubuntu@"$h" 'test -f /var/log/nexus-init.done' 2>/dev/null; then
+                echo "  $h 준비 완료"; break
+              fi
+              [ "$i" = "60" ] && { echo "::error::$h 초기화 미완료"; $SSH ubuntu@"$h" 'tail -30 /var/log/nexus-init.log' || true; exit 1; }
+              sleep 10
+            done
+          done
+
+          echo "--- 마스터 kubeadm init"
+          $SSH ubuntu@"$M" 'bash -s' <<'EOS'
+          set -e
+          if [ -f /etc/kubernetes/admin.conf ]; then echo "이미 초기화됨"; exit 0; fi
+          sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+          mkdir -p $HOME/.kube && sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+          sudo chown $(id -u):$(id -g) $HOME/.kube/config
+          kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+          # 마스터에도 FE/API/DB를 배치하므로 taint를 푼다. AI 격리는 라벨로 한다.
+          kubectl taint nodes --all node-role.kubernetes.io/control-plane- || true
+          kubectl apply -k "github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/overlays/stable/?ref=release-1.30"
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm repo add kedacore https://kedacore.github.io/charts && helm repo update
+          helm install keda kedacore/keda --namespace keda --create-namespace --wait
+          EOS
+
+          echo "--- 워커 조인"
+          JOIN=$($SSH ubuntu@"$M" 'sudo kubeadm token create --print-join-command')
+          $SSH ubuntu@"$W" "sudo kubeadm reset -f >/dev/null 2>&1 || true; sudo $JOIN"
+
+          echo "--- 노드 라벨 (AI 격리 · 앱 티어)"
+          $SSH ubuntu@"$M" 'bash -s' <<'EOS'
+          set -e
+          for i in $(seq 1 30); do
+            [ "$(kubectl get nodes --no-headers | wc -l)" -ge 2 ] && break
+            sleep 10
+          done
+          MASTER=$(kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[0].metadata.name}')
+          WORKER=$(kubectl get nodes --no-headers | awk -v m="$MASTER" '$1!=m{print $1}' | head -1)
+          kubectl label node "$WORKER" workload-type=ai-worker --overwrite
+          kubectl label node "$MASTER" workload-type=app --overwrite
+          kubectl get nodes -L workload-type
+          EOS
+          echo "클러스터 부팅 완료"
+
+      # ── 5. 시크릿 · 매니페스트 · DB 복원 ─────────────────────
+      - name: Download backup artifact
+        if: ${{ contains('all deploy', github.event.inputs.stage) }}
+        continue-on-error: true
+        run: |
+          gh run download -n nexus-db-backup -D restore 2>/dev/null && ls -R restore || \
+            echo "::warning::백업 아티팩트가 없다 — 매니페스트는 리포본, DB는 seed로 진행해야 한다."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Apply secrets and manifests
+        if: ${{ contains('all deploy', github.event.inputs.stage) }}
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          M: ${{ steps.hosts.outputs.master }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          APP_AWS_AK: ${{ secrets.APP_AWS_ACCESS_KEY_ID }}
+          APP_AWS_SK: ${{ secrets.APP_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+          SSH="ssh -n -o StrictHostKeyChecking=no"
+          SCP="scp -o StrictHostKeyChecking=no"
+
+          for v in OPENAI_API_KEY POSTGRES_PASSWORD JWT_SECRET_KEY; do
+            if [ -z "${!v}" ]; then echo "::error::GitHub Secret $v 가 없다"; exit 1; fi
+          done
+
+          echo "--- 애플리케이션 시크릿"
+          $SSH ubuntu@"$M" "kubectl create secret generic wms-backend-secret \
+            --from-literal=OPENAI_API_KEY='$OPENAI_API_KEY' \
+            --from-literal=POSTGRES_PASSWORD='$POSTGRES_PASSWORD' \
+            --from-literal=JWT_SECRET_KEY='$JWT_SECRET_KEY' \
+            --from-literal=AWS_ACCESS_KEY_ID='$APP_AWS_AK' \
+            --from-literal=AWS_SECRET_ACCESS_KEY='$APP_AWS_SK' \
+            --dry-run=client -o yaml | kubectl apply -f -"
+
+          echo "--- ECR pull 시크릿 + 6시간 갱신 cron (토큰은 12시간 만료)"
+          $SSH ubuntu@"$M" 'bash -s' <<'EOS'
+          set -e
+          mkdir -p ~/scripts
+          cat > ~/scripts/refresh_ecr_secret.sh <<'INNER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          REGION=ap-northeast-2
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          kubectl create secret docker-registry ecr-secret \
+            --docker-server="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com" \
+            --docker-username=AWS \
+            --docker-password="$(aws ecr get-login-password --region $REGION)" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          INNER
+          sed -i 's/^          //' ~/scripts/refresh_ecr_secret.sh
+          chmod +x ~/scripts/refresh_ecr_secret.sh
+          ~/scripts/refresh_ecr_secret.sh
+          ( crontab -l 2>/dev/null | grep -v refresh_ecr_secret; \
+            echo '0 */6 * * * /home/ubuntu/scripts/refresh_ecr_secret.sh >> /home/ubuntu/scripts/ecr_refresh.log 2>&1' ) | crontab -
+          EOS
+
+          echo "--- 매니페스트 적용"
+          if [ -f restore/manifests/k8s-manifests-v31.yaml ]; then
+            $SCP restore/manifests/k8s-manifests-v31.yaml ubuntu@"$M":~/
+            $SSH ubuntu@"$M" 'kubectl apply -f ~/k8s-manifests-v31.yaml'
+            if [ -f restore/manifests/keda-scaler.yaml ]; then
+              $SCP restore/manifests/keda-scaler.yaml ubuntu@"$M":~/
+              $SSH ubuntu@"$M" 'kubectl apply -f ~/keda-scaler.yaml'
+            fi
+          else
+            echo "::error::회수된 운영 매니페스트가 없다. 리포의 k8s/ 는 실제와 값이 다르므로 그대로 쓰지 않는다."
+            exit 1
+          fi
+          $SSH ubuntu@"$M" 'kubectl wait --for=condition=available deployment/postgres --timeout=300s'
+
+      - name: Restore database
+        if: ${{ contains('all deploy', github.event.inputs.stage) && github.event.inputs.restore_db == 'true' }}
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          M: ${{ steps.hosts.outputs.master }}
+        run: |
+          set -e
+          DUMP=$(ls restore/nexus-db-*.sql.gz 2>/dev/null | head -1)
+          if [ -z "$DUMP" ]; then
+            echo "::warning::덤프가 없다 — 복원을 건너뛴다. seed로 초기화해야 한다."; exit 0
+          fi
+          echo "복원: $DUMP"
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+          # 덤프는 pg_dumpall 산출물이라 CREATE ROLE/DATABASE를 포함한다. postgres DB에 붙여 실행한다.
+          CMD='POD=$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}"); kubectl exec -i "$POD" -- sh -c "psql -U \$POSTGRES_USER -d postgres"'
+          gunzip -c "$DUMP" | ssh -o StrictHostKeyChecking=no ubuntu@"$M" \
+            "echo $(printf '%s' "$CMD" | base64 -w0) | base64 -d | bash" 2>&1 | tail -20
+          echo "복원 완료 — 행 수 확인"
+          ssh -n -o StrictHostKeyChecking=no ubuntu@"$M" \
+            'POD=$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}"); kubectl exec "$POD" -- sh -c "psql -U \$POSTGRES_USER -d wms_db -tAc \"SELECT (SELECT count(*) FROM books)||\x27 books / \x27||(SELECT count(*) FROM users)||\x27 users\x27\""'
+
+      # ── 6. ALB · 타깃그룹 ────────────────────────────────────
+      - name: Create ALB
+        if: ${{ contains('all alb', github.event.inputs.stage) }}
+        id: alb
+        run: |
+          set -e
+          echo "=================== ALB 구성 ==================="
+          VPC=${{ steps.res.outputs.vpc }}
+          MID=$(aws ec2 describe-instances --filters Name=tag:Role,Values=master Name=instance-state-name,Values=running \
+                --query 'Reservations[].Instances[].InstanceId' --output text | head -1)
+          WID=$(aws ec2 describe-instances --filters Name=tag:Role,Values=worker Name=instance-state-name,Values=running \
+                --query 'Reservations[].Instances[].InstanceId' --output text | head -1)
+
+          mktg() {
+            NAME=$1; PORT=$2; HC=$3
+            ARN=$(aws elbv2 describe-target-groups --names "$NAME" --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
+            if [ -z "$ARN" ] || [ "$ARN" = "None" ]; then
+              ARN=$(aws elbv2 create-target-group --name "$NAME" --protocol HTTP --port "$PORT" \
+                    --vpc-id "$VPC" --target-type instance --health-check-path "$HC" \
+                    --health-check-interval-seconds 30 --healthy-threshold-count 2 \
+                    --query 'TargetGroups[0].TargetGroupArn' --output text)
+            fi
+            aws elbv2 register-targets --target-group-arn "$ARN" \
+              --targets Id=$MID Id=$WID >/dev/null 2>&1 || true
+            echo "$ARN"
+          }
+          TG_FE=$(mktg nexus-fe-tg 30080 /)
+          TG_API=$(mktg nexus-api-tg 30081 /health)
+          echo "  프론트 TG: $TG_FE"
+          echo "  API TG   : $TG_API"
+
+          ALB=$(aws elbv2 describe-load-balancers --names nexus-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || true)
+          if [ -z "$ALB" ] || [ "$ALB" = "None" ]; then
+            ALB=$(aws elbv2 create-load-balancer --name nexus-alb --type application --scheme internet-facing \
+                  --subnets ${{ steps.res.outputs.subnet }} ${{ steps.res.outputs.subnet2 }} \
+                  --security-groups ${{ steps.res.outputs.alb_sg }} \
+                  --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+            aws elbv2 wait load-balancer-available --load-balancer-arns "$ALB"
+          fi
+          # 검수 파이프라인이 길어 기본 60초로는 응답 전에 끊긴다.
+          aws elbv2 modify-load-balancer-attributes --load-balancer-arn "$ALB" \
+            --attributes Key=idle_timeout.timeout_seconds,Value=1200 >/dev/null
+
+          LIS=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB" \
+                --query "Listeners[?Port==\`443\`].ListenerArn|[0]" --output text 2>/dev/null || true)
+          if [ -z "$LIS" ] || [ "$LIS" = "None" ]; then
+            LIS=$(aws elbv2 create-listener --load-balancer-arn "$ALB" --protocol HTTPS --port 443 \
+                  --certificates CertificateArn=${{ steps.res.outputs.cert }} \
+                  --default-actions Type=forward,TargetGroupArn=$TG_FE \
+                  --query 'Listeners[0].ListenerArn' --output text)
+            aws elbv2 create-rule --listener-arn "$LIS" --priority 10 \
+              --conditions 'Field=path-pattern,Values=["/api/*","/docs","/openapi.json","/health"]' \
+              --actions Type=forward,TargetGroupArn=$TG_API >/dev/null
+          fi
+          # 80 → 443 리다이렉트
+          L80=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB" \
+                --query "Listeners[?Port==\`80\`].ListenerArn|[0]" --output text 2>/dev/null || true)
+          if [ -z "$L80" ] || [ "$L80" = "None" ]; then
+            aws elbv2 create-listener --load-balancer-arn "$ALB" --protocol HTTP --port 80 \
+              --default-actions '[{"Type":"redirect","RedirectConfig":{"Protocol":"HTTPS","Port":"443","StatusCode":"HTTP_301"}}]' >/dev/null
+          fi
+
+          DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB" \
+                --query 'LoadBalancers[0].DNSName' --output text)
+          echo "alb_dns=$DNS" >> "$GITHUB_OUTPUT"
+          echo "  ALB DNS: $DNS"
+
+      # ── 7. 마무리 안내 ───────────────────────────────────────
+      - name: Update EC2_HOST secret
+        if: ${{ contains('all bootstrap deploy alb', github.event.inputs.stage) }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          M: ${{ steps.hosts.outputs.master }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            gh secret set EC2_HOST --body "$M" --repo "${{ github.repository }}" && echo "EC2_HOST 자동 갱신: $M"
+          else
+            echo "::notice::GH_PAT가 없어 자동 갱신을 건너뛴다."
+          fi
+
+      - name: Next steps
+        if: ${{ always() }}
+        run: |
+          echo "=================== 남은 수동 작업 2가지 ==================="
+          echo ""
+          echo "① EC2_HOST 시크릿 갱신 (GH_PAT가 없을 때만)"
+          echo "   gh secret set EC2_HOST --body '${{ steps.hosts.outputs.master }}'"
+          echo "   두 리포 모두에 적용한다 (backend / frontend)."
+          echo ""
+          echo "② 도메인 CNAME 변경 — '내 도메인 한국'은 API가 없어 웹에서 직접 바꾼다."
+          echo "   $DOMAIN  →  ${{ steps.alb.outputs.alb_dns }}"
+          echo ""
+          echo "그 다음 이미지 빌드·배포를 돌린다 (ECR을 비웠다면 필수):"
+          echo "   gh workflow run deploy.yml --ref main"
+          echo ""
+          echo "검증: curl -o /dev/null -w '%{http_code}' https://$DOMAIN"
