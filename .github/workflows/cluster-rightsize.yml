@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "worker | apps | stateful | beat | verify"
+        description: "worker | apps | stateful | beat | chroma | verify"
         required: true
         default: "worker"
       apply:
@@ -131,6 +131,15 @@ jobs:
               kubectl patch deployment wms-beat -p \
                 '{"spec":{"template":{"spec":{"nodeSelector":{"workload-type":"app"}}}}}'
               kubectl rollout status deployment/wms-beat --timeout=300s
+              ;;
+
+            chroma)
+              echo "=============== E. chroma 마스터로 (PVC · Recreate) ==============="
+              # nodeSelector가 없어 스케줄러가 워커노드로 재배치했다. 설계상 워커노드는 AI 전용이다.
+              # 이미 Recreate 전략이라 RWO 교착 위험은 없다. RAG 조회가 수초 끊긴다.
+              [ "$APPLY" = "true" ] || { echo "[계획만] 종료"; exit 0; }
+              kubectl patch deployment chroma-server -p                 '{"spec":{"template":{"spec":{"nodeSelector":{"workload-type":"app"}}}}}'
+              kubectl rollout status deployment/chroma-server --timeout=420s
               ;;
 
             verify)
