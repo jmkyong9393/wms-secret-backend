@@ -11,6 +11,14 @@ on:
         description: "wms-ai-worker requests.memory (예: 768Mi). limits는 변경하지 않음"
         required: true
         default: "768Mi"
+      api_cpu_request:
+        description: "wms-api requests.cpu (예: 50m). 빈 값이면 변경 안 함"
+        required: false
+        default: ""
+      frontend_cpu_request:
+        description: "wms-frontend requests.cpu (예: 50m). 빈 값이면 변경 안 함"
+        required: false
+        default: ""
       apply:
         description: "true여야 실제 적용. false면 현재 상태만 출력(dry-run)"
         required: true
@@ -51,6 +59,19 @@ jobs:
               echo "[dry-run] apply=false 이므로 변경하지 않고 종료합니다."
               exit 0
             fi
+
+            API_CPU="${{ github.event.inputs.api_cpu_request }}"
+            FE_CPU="${{ github.event.inputs.frontend_cpu_request }}"
+
+            # CPU 예약 조정 — 실사용 대비 과다 예약이 스케줄 자리를 막을 때 쓴다.
+            # limits는 건드리지 않으므로 파드가 실제로 쓸 수 있는 상한은 그대로다.
+            for PAIR in "wms-api:$API_CPU" "wms-frontend:$FE_CPU"; do
+              D="${PAIR%%:*}"; V="${PAIR##*:}"
+              [ -n "$V" ] || continue
+              echo "적용: $D requests.cpu -> $V"
+              kubectl patch deployment "$D" --type=json                 -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/requests/cpu\",\"value\":\"$V\"}]"
+              kubectl rollout status deployment/"$D" --timeout=300s
+            done
 
             echo ""
             echo "=============== 적용: wms-ai-worker requests.memory -> $NEW_MEM ==============="
