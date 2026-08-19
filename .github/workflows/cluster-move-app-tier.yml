@@ -45,12 +45,19 @@ jobs:
             backup)
               echo "=============== DB 백업 (되돌릴 수 없는 단계 전 필수) ==============="
               PG=$(kubectl get pods -l app=postgres -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | awk '{print $1}')
+              # 계정명을 하드코딩하지 않는다 — 파드 환경변수가 정본이다 (admin/wms_db)
+              PGU=$(kubectl exec "$PG" -- printenv POSTGRES_USER 2>/dev/null | tr -d '\r')
+              PGD=$(kubectl exec "$PG" -- printenv POSTGRES_DB 2>/dev/null | tr -d '\r')
+              echo "계정=$PGU / DB=$PGD"
+              [ -n "$PGU" ] || { echo "POSTGRES_USER를 읽지 못했다"; exit 1; }
+
               TS=$(date +%Y%m%d_%H%M%S)
               mkdir -p ~/db_backups
-              kubectl exec "$PG" -- pg_dumpall -U postgres > ~/db_backups/all_${TS}.sql
+              kubectl exec "$PG" -- pg_dumpall -U "$PGU" > ~/db_backups/all_${TS}.sql
               ls -lh ~/db_backups/all_${TS}.sql
-              echo "행 수 확인:"
-              grep -c "" ~/db_backups/all_${TS}.sql
+              echo "덤프 줄 수: $(grep -c '' ~/db_backups/all_${TS}.sql)"
+              echo "테이블 수: $(kubectl exec "$PG" -- psql -U "$PGU" -d "$PGD" -t -c \
+                "select count(*) from information_schema.tables where table_schema='public';" | tr -d ' \r')"
               echo "✅ 백업 완료 — 이 파일이 있어야 다음 단계로 간다"
               ;;
 
