@@ -148,8 +148,8 @@ jobs:
               echo "   requests(예약)만 낮추고 limits는 두지 않으므로 실사용 상한은 불변이다."
               echo ""
               echo "--- 현재 선언값"
-              kubectl -n kube-system get deploy coredns -o custom-columns=            'D:.metadata.name,REPLICAS:.spec.replicas,CPU:.spec.template.spec.containers[0].resources.requests.cpu,MEM:.spec.template.spec.containers[0].resources.requests.memory' 2>/dev/null
-              kubectl -n keda get deploy -o custom-columns=            'D:.metadata.name,CPU:.spec.template.spec.containers[0].resources.requests.cpu,MEM:.spec.template.spec.containers[0].resources.requests.memory' 2>/dev/null
+              echo -n '  coredns : replicas='; kubectl -n kube-system get deploy coredns -o jsonpath='{.spec.replicas}'; echo -n ' cpu='; kubectl -n kube-system get deploy coredns -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}'; echo ''
+              for KD in $(kubectl -n keda get deploy -o jsonpath='{.items[*].metadata.name}'); do echo -n "  $KD : cpu="; kubectl -n keda get deploy $KD -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}'; echo ''; done
 
               echo ""
               echo "--- 실사용 (cpu.stat 10초 델타)"
