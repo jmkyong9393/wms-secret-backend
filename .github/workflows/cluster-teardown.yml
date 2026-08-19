@@ -126,7 +126,10 @@ jobs:
 
           if [ -n "$IID" ] && [ "$IID" != "None" ]; then
             probe "ec2:TerminateInstances (nuke)" aws ec2 terminate-instances --instance-ids "$IID" --dry-run
-            probe "ec2:RunInstances (rebuild)"    aws ec2 run-instances --image-id ami-00000000000000000 --instance-type t3.medium --dry-run
+            AMI=$(aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id --query 'Parameter.Value' --output text 2>/dev/null)
+            if [ -n "$AMI" ] && [ "$AMI" != "None" ]; then
+              probe "ec2:RunInstances (rebuild)" aws ec2 run-instances --image-id "$AMI" --instance-type t3.medium --dry-run
+            fi
           fi
           if [ -n "$VID" ] && [ "$VID" != "None" ]; then
             probe "ec2:DeleteVolume (destroy)" aws ec2 delete-volume --volume-id "$VID" --dry-run
@@ -139,7 +142,7 @@ jobs:
           fi
 
           # ECR은 dry-run이 없다. 존재하지 않는 대상으로 호출해 권한 오류와 대상 오류를 구분한다.
-          O=$(aws ecr delete-repository --repository-name __perm_probe_nonexistent__ 2>&1)
+          O=$(aws ecr delete-repository --repository-name perm-probe-nonexistent 2>&1)
           if echo "$O" | grep -qi "RepositoryNotFound"; then
             printf "  %-40s OK\n" "ecr:DeleteRepository (nuke)"
           elif echo "$O" | grep -qiE "AccessDenied|not authorized"; then
@@ -305,11 +308,38 @@ jobs:
           echo "--- 결과"
           aws ec2 describe-addresses --query 'Addresses[].[PublicIp,InstanceId]' --output text
 
+      # 현재 배포된 이미지를 지우면 파드가 재시작될 때 pull에 실패해 장애가 난다.
+      # 클러스터가 실제로 쓰는 태그를 먼저 모아 삭제 대상에서 뺀다.
+      - name: Collect in-use image tags
+        if: ${{ github.event.inputs.mode == 'trim' && env.EC2_HOST != '' }}
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set +e
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+          JP='{range .items[*]}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}'
+          ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@"$EC2_HOST" \
+            "kubectl get deploy -o jsonpath='$JP'" 2>/dev/null \
+            | sed 's|.*:||' | grep -v '^$' | sort -u > /tmp/inuse.txt
+          if [ ! -s /tmp/inuse.txt ]; then
+            echo "::warning::사용 중 태그를 수집하지 못했다 — 안전을 위해 ECR 정리를 건너뛴다"
+            echo "SKIP_ECR=1" >> "$GITHUB_ENV"
+          else
+            echo "보호할 태그 $(wc -l < /tmp/inuse.txt)개:"
+            sed 's/^/  /' /tmp/inuse.txt
+          fi
+          exit 0
+
       - name: Trim ECR images
         if: ${{ github.event.inputs.mode == 'trim' }}
         run: |
           set -e
-          echo "=================== ECR 이미지 정리 (최신 ${KEEP}개 유지) ==================="
+          if [ "${SKIP_ECR:-0}" = "1" ]; then
+            echo "사용 중 태그를 확인하지 못했다 — 정리하지 않는다 (안전 우선)"; exit 0
+          fi
+          [ -f /tmp/inuse.txt ] || : > /tmp/inuse.txt
+          PROT=$(jq -R . /tmp/inuse.txt | jq -s 'map(select(. != ""))')
+          echo "=================== ECR 이미지 정리 (최신 ${KEEP}개 + 사용중 유지) ==================="
           for R in $(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text); do
             echo "--- $R"
             # 페이지마다 JSON 문서가 따로 나오므로 jq -s 로 이어붙인다.
@@ -319,11 +349,29 @@ jobs:
             if [ "$TOTAL" -le "$KEEP" ]; then
               echo "    ${TOTAL}개 — 보존 기준 이하라 건드리지 않는다"; continue
             fi
-            jq -r --argjson k "$KEEP" \
-              'sort_by(.imagePushedAt) | .[0:(length - $k)] | .[].imageDigest' \
-              /tmp/imgs.json > /tmp/del.txt
+            # 사용 중 태그를 가진 이미지는 후보에서 빼고, 남은 것 중 오래된 것부터 지운다.
+            jq -r --argjson k "$KEEP" --argjson prot "$PROT" '
+              (length - $k) as $n
+              | map(select(any((.imageTags // [])[]; . as $t | $prot | index($t)) | not))
+              | sort_by(.imagePushedAt)
+              | .[0:$n]
+              | .[].imageDigest
+            ' /tmp/imgs.json > /tmp/del.txt
             DEL=$(wc -l < /tmp/del.txt)
-            echo "    전체 ${TOTAL}개 → ${DEL}개 삭제, 최신 ${KEEP}개 유지"
+            echo "    전체 ${TOTAL}개 → ${DEL}개 삭제, ${KEEP}개 유지"
+
+            # 안전 확인 — 위 필터 로직과 독립적으로 다시 검사한다.
+            # 배포 중인 이미지가 삭제 목록에 들어가면 파드 재시작 시 pull에 실패한다.
+            while read -r TAG; do
+              [ -z "$TAG" ] && continue
+              D=$(aws ecr describe-images --repository-name "$R" --image-ids imageTag="$TAG" \
+                  --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)
+              if [ -n "$D" ] && [ "$D" != "None" ] && grep -qx "$D" /tmp/del.txt; then
+                echo "::error::사용 중 이미지 $TAG ($D)가 삭제 목록에 있다 — 중단한다"
+                exit 1
+              fi
+            done < /tmp/inuse.txt
+            echo "    사용 중 이미지 보호 확인 완료"
             # batch-delete-image는 1회 100개가 상한이다.
             rm -f /tmp/chunk_*
             split -l 100 /tmp/del.txt /tmp/chunk_
