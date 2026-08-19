@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "worker | apps | stateful | beat | chroma | system | verify"
+        description: "worker | apps | stateful | beat | chroma | system | pin-system | verify"
         required: true
         default: "worker"
       apply:
@@ -193,6 +193,34 @@ jobs:
               kubectl -n kube-system get pods -l k8s-app=kube-dns --no-headers
               kubectl -n keda get pods --no-headers
               ;;
+
+            pin-system)
+              echo "=============== G. KEDA · coredns를 마스터로 고정 ==============="
+              # 이 둘은 Deployment라 재생성 때마다 스케줄러가 여유 있는 노드로 옮긴다.
+              # 워커노드는 AI 워커의 변동 부하(105Mi->1224Mi) 구간이므로 클러스터 DNS를 두지 않는다.
+              # DaemonSet(flannel·kube-proxy·ebs-csi-node)은 노드마다 필요하므로 대상이 아니다.
+              [ "$APPLY" = "true" ] || { echo "[계획만] 종료"; exit 0; }
+
+              echo "--- coredns"
+              kubectl -n kube-system patch deployment coredns -p '{"spec":{"template":{"spec":{"nodeSelector":{"workload-type":"app"}}}}}'
+              kubectl -n kube-system rollout status deployment/coredns --timeout=300s
+              echo "--- DNS 확인 (가장 중요)"
+              kubectl run dnschk-$RANDOM --rm -i --restart=Never --image=busybox:1.36 --timeout=90s -- nslookup kubernetes.default.svc.cluster.local 2>&1 | head -5 || echo "  확인 파드 실패"
+
+              echo ""
+              echo "--- KEDA"
+              for D in $(kubectl -n keda get deploy -o jsonpath='{.items[*].metadata.name}'); do
+                kubectl -n keda patch deployment "$D" -p '{"spec":{"template":{"spec":{"nodeSelector":{"workload-type":"app"}}}}}' >/dev/null && echo "  $D 고정"
+              done
+              for D in $(kubectl -n keda get deploy -o jsonpath='{.items[*].metadata.name}'); do
+                kubectl -n keda rollout status deployment/"$D" --timeout=300s || true
+              done
+
+              echo ""
+              echo "--- 워커노드 잔류 확인 (기대: wms-ai-worker + DaemonSet만)"
+              kubectl get pods -A -o wide --no-headers | grep "$WORKER" | awk '{print "  " $1 " " $2}'
+              ;;
+
 
             verify)
               echo "=============== 최종 검증 ==============="
