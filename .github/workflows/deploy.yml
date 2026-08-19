@@ -1,6 +1,15 @@
 name: Nexus Backend CI/CD (v3.1)
 on:
-  push: { branches: [main] }
+  # 앱 산출물과 무관한 변경(문서·운영 워크플로)은 빌드하지 않는다.
+  # 실측 2026-08-19: 워크플로 파일 수정 푸시가 풀 빌드를 19회 유발해 165분을 소비했다.
+  # 운영 워크플로는 workflow_dispatch로 따로 실행하므로 배포가 필요 없다.
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/cluster-*.yml'
+  workflow_dispatch:        # 문서만 바꾼 뒤에도 수동 배포는 언제든 가능
 permissions: { id-token: write, contents: read }
 
 jobs:
