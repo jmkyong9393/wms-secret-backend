@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "plan(현황) | backup(DB덤프) | suspend(중지) | destroy(k8s+ALB+EBS) | nuke(요금 0원)"
+        description: "plan | trim(낭비정리) | backup | suspend | destroy | nuke(요금 0원)"
         required: true
         default: "plan"
       confirm:
@@ -23,6 +23,10 @@ on:
         description: "S3 검수 이미지까지 삭제 — 로컬 회수 완료 후에만. 정확히 PURGE-S3 입력"
         required: false
         default: ""
+      keep_images:
+        description: "trim: 저장소당 남길 최신 이미지 수"
+        required: false
+        default: "10"
 
 permissions:
   id-token: write
@@ -37,13 +41,14 @@ jobs:
       MODE: ${{ github.event.inputs.mode }}
       CONFIRM: ${{ github.event.inputs.confirm }}
       PURGE_S3: ${{ github.event.inputs.purge_s3 }}
+      KEEP: ${{ github.event.inputs.keep_images }}
       VISION_BUCKET: wms-secret-vision-assets
       ATTACH_BUCKET: wms-secret-board-attachments
     steps:
       - name: Guard
         run: |
           case "$MODE" in
-            plan|backup|suspend|destroy|nuke) : ;;
+            plan|trim|backup|suspend|destroy|nuke) : ;;
             *) echo "::error::알 수 없는 모드: $MODE"; exit 1 ;;
           esac
           if [ "$MODE" = "destroy" ] || [ "$MODE" = "nuke" ]; then
@@ -57,7 +62,8 @@ jobs:
           if [ "$PURGE_S3" = "PURGE-S3" ] && [ "$MODE" != "nuke" ]; then
             echo "::error::S3 삭제는 nuke 모드에서만 가능합니다"; exit 1
           fi
-          echo "모드=$MODE / S3삭제=${PURGE_S3:-아니오}"
+          case "$KEEP" in ''|*[!0-9]*) echo "::error::keep_images는 숫자여야 합니다"; exit 1 ;; esac
+          echo "모드=$MODE / S3삭제=${PURGE_S3:-아니오} / 이미지보존=$KEEP"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -81,12 +87,12 @@ jobs:
               printf "  %-42s 거부\n" "$LABEL"; DENY=$((DENY+1))
             fi
           }
-          chk "ec2:DescribeInstances"        aws ec2 describe-instances --max-items 1
-          chk "ec2:DescribeVolumes"          aws ec2 describe-volumes --max-items 1
-          chk "ec2:DescribeAddresses"        aws ec2 describe-addresses
+          chk "ec2:DescribeInstances"         aws ec2 describe-instances --max-items 1
+          chk "ec2:DescribeVolumes"           aws ec2 describe-volumes --max-items 1
+          chk "ec2:DescribeAddresses"         aws ec2 describe-addresses
           chk "elasticloadbalancing:Describe" aws elbv2 describe-load-balancers
-          chk "ecr:DescribeRepositories"     aws ecr describe-repositories --max-items 1
-          chk "s3:ListBucket(vision)"        aws s3api head-bucket --bucket "$VISION_BUCKET"
+          chk "ecr:DescribeRepositories"      aws ecr describe-repositories --max-items 1
+          chk "s3:ListBucket(vision)"         aws s3api head-bucket --bucket "$VISION_BUCKET"
           echo ""
           if [ "$DENY" -gt 0 ]; then
             echo "::warning::권한 ${DENY}건 거부 — 해당 리소스는 조회·삭제가 불가능하다."
@@ -94,7 +100,7 @@ jobs:
             echo "        IAM 역할 github-actions-nexus-role 에 연결한다."
             echo "  연결 전에는 destroy/nuke가 EC2·EBS·ALB를 지우지 못하고 요금이 계속 나간다."
           else
-            echo "  전 항목 통과 — destroy/nuke 실행 가능"
+            echo "  전 항목 통과 — 모든 모드 실행 가능"
           fi
           exit 0
 
@@ -124,9 +130,22 @@ jobs:
           ALBN=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn' --output text | wc -w)
 
           echo ""
-          echo "--- Elastic IP (인스턴스에 안 붙어 있어도 과금된다)"
+          echo "--- 퍼블릭 IPv4 : 주소 1개당 약 \$0.12/일 (2024-02부터 연결 여부 무관 과금)"
           aws ec2 describe-addresses --query 'Addresses[].[PublicIp,AllocationId,InstanceId]' --output text
           EIPN=$(aws ec2 describe-addresses --query 'Addresses[].AllocationId' --output text | wc -w)
+          IDLE=$(aws ec2 describe-addresses --query 'Addresses[].[AllocationId,InstanceId]' --output text \
+                 | awk '$2=="None"||$2==""' | wc -l)
+          # 인스턴스가 EIP 없이 쓰는 auto-assign 주소도 같은 요금이다.
+          AUTO=$(aws ec2 describe-instances --filters Name=instance-state-name,Values=running \
+                 --query 'Reservations[].Instances[].PublicIpAddress' --output text | wc -w)
+          ATTACHED=$((EIPN - IDLE))
+          AUTO_ONLY=$((AUTO - ATTACHED))
+          if [ "$AUTO_ONLY" -lt 0 ]; then AUTO_ONLY=0; fi
+          IPN=$((EIPN + AUTO_ONLY))
+          echo "  EIP ${EIPN}개 (연결 ${ATTACHED} / 미연결 ${IDLE}) + auto-assign ${AUTO_ONLY}개 = 과금 주소 ${IPN}개"
+          if [ "$IDLE" -gt 0 ]; then
+            echo "  ::미연결 ${IDLE}개는 순수 낭비다 — trim 모드가 인스턴스에 붙이거나 해제한다."
+          fi
 
           echo ""
           echo "--- S3 검수 이미지 (지우면 시연 복원 불가) : 약 \$0.023/GB/월"
@@ -141,26 +160,134 @@ jobs:
           for R in $(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text); do
             CNT=$(aws ecr list-images --repository-name "$R" --query 'length(imageIds)' --output text \
                   | awk '{s+=$1} END{print s+0}')
+            UNT=$(aws ecr list-images --repository-name "$R" --filter tagStatus=UNTAGGED \
+                  --query 'length(imageIds)' --output text | awk '{s+=$1} END{print s+0}')
             GB=$(aws ecr describe-images --repository-name "$R" \
                  --query 'sum(imageDetails[].imageSizeInBytes)' --output text 2>/dev/null \
                  | awk '{s+=$1} END{printf "%.1f", s/1073741824}')
-            printf "  %-24s 이미지 %4d개 / 논리합 %s GB\n" "$R" "$CNT" "$GB"
+            printf "  %-24s 이미지 %4d개 (태그없음 %3d) / 논리합 %s GB\n" "$R" "$CNT" "$UNT" "$GB"
           done
           echo "  ※ 논리합은 레이어 공유를 무시한 단순 합이라 실제 청구 용량보다 크다."
-          echo "  ※ 이미지가 수백 개면 수명주기 정책(예: 최근 10개만 유지)을 검토한다."
+          echo "  ※ 수백 개가 쌓였으면 trim 모드로 최신 N개만 남긴다."
 
           echo ""
           echo "=================== 개략 일 비용 (시간 과금분) ==================="
-          awk -v e="$EC2N" -v g="$EBSGB" -v a="$ALBN" 'BEGIN{
-            ec=e*1.25; eb=g*0.004; al=a*0.66; t=ec+eb+al;
-            printf "  EC2  %2d대   $%.2f/일\n", e, ec;
-            printf "  EBS  %3dGB  $%.2f/일\n", g, eb;
-            printf "  ALB  %2d대   $%.2f/일\n", a, al;
-            printf "  ------------------------------\n";
-            printf "  합계        $%.2f/일  (약 %d원/일 · 월 %d원)\n", t, t*1390, t*1390*30;
+          awk -v e="$EC2N" -v g="$EBSGB" -v a="$ALBN" -v p="$IPN" 'BEGIN{
+            ec=e*1.25; eb=g*0.004; al=a*0.66; ip=p*0.12; t=ec+eb+al+ip;
+            printf "  EC2      %2d대   $%.2f/일\n", e, ec;
+            printf "  EBS      %3dGB  $%.2f/일\n", g, eb;
+            printf "  ALB      %2d대   $%.2f/일\n", a, al;
+            printf "  퍼블릭IP %2d개   $%.2f/일\n", p, ip;
+            printf "  ----------------------------------\n";
+            printf "  합계            $%.2f/일  (약 %d원/일 · 월 %d원)\n", t, t*1390, t*1390*30;
           }'
           echo "  ※ S3·ECR 스토리지는 위 합계에 미포함 (소액이지만 0원은 아니다)"
-          echo "  ※ Elastic IP ${EIPN}개 — nuke가 미연결분을 해제한다"
+          echo "  ※ 프리티어 적용 여부에 따라 실제 청구는 다를 수 있다 — Billing 콘솔로 대조한다"
+          exit 0
+
+      # ── 0-3. 낭비 정리 (trim 전용) ─────────────────────────────
+      # 운영 중인 리소스는 건드리지 않는다. 안 쓰이는 것만 정리한다.
+      - name: Trim idle Elastic IPs
+        if: ${{ github.event.inputs.mode == 'trim' }}
+        run: |
+          set -e
+          echo "=================== 미연결 EIP 정리 ==================="
+          # 인스턴스당 퍼블릭 IPv4는 하나뿐이다. EIP를 붙이면 auto-assign 주소가 반납되므로
+          # 비용은 그대로이고 "중지·시작해도 IP가 안 바뀐다"는 이득만 남는다.
+          aws ec2 describe-addresses --query 'Addresses[].[AllocationId,InstanceId]' --output text \
+            | awk '$2=="None"||$2==""{print $1}' > /tmp/free_eip.txt
+          if [ ! -s /tmp/free_eip.txt ]; then
+            echo "  미연결 EIP 없음 — 할 일이 없다"; exit 0
+          fi
+          echo "  미연결 EIP $(wc -l < /tmp/free_eip.txt)개"
+
+          # 이미 EIP를 가진 인스턴스는 대상에서 뺀다.
+          aws ec2 describe-addresses --query 'Addresses[].InstanceId' --output text \
+            | tr '\t' '\n' | grep -v '^None$' | grep -v '^$' > /tmp/taken.txt || true
+          aws ec2 describe-instances --filters Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text \
+            | tr '\t' '\n' | grep -v '^$' > /tmp/running.txt
+
+          echo ""
+          while read -r IID; do
+            [ -z "$IID" ] && continue
+            if grep -qx "$IID" /tmp/taken.txt 2>/dev/null; then
+              echo "  $IID : 이미 EIP 보유 — 건너뜀"; continue
+            fi
+            ALLOC=$(head -1 /tmp/free_eip.txt)
+            if [ -z "$ALLOC" ]; then echo "  남은 EIP 없음"; break; fi
+            sed -i '1d' /tmp/free_eip.txt
+            OLDIP=$(aws ec2 describe-instances --instance-ids "$IID" \
+                    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+            aws ec2 associate-address --instance-id "$IID" --allocation-id "$ALLOC" >/dev/null
+            NEWIP=$(aws ec2 describe-addresses --allocation-ids "$ALLOC" \
+                    --query 'Addresses[0].PublicIp' --output text)
+            echo "  연결: $IID   $OLDIP -> $NEWIP"
+            if [ "$OLDIP" = "$EC2_HOST" ]; then
+              echo ""
+              echo "  ★ 이 인스턴스가 마스터다. EC2_HOST 시크릿을 갱신한다 (양 레포):"
+              echo "      gh secret set EC2_HOST --body $NEWIP"
+              echo ""
+            fi
+          done < /tmp/running.txt
+
+          # 붙일 인스턴스가 없어 남은 EIP는 순수 낭비이므로 해제한다.
+          while read -r ALLOC; do
+            [ -z "$ALLOC" ] && continue
+            aws ec2 release-address --allocation-id "$ALLOC"
+            echo "  해제(붙일 곳 없음): $ALLOC"
+          done < /tmp/free_eip.txt
+
+          echo ""
+          echo "--- 결과"
+          aws ec2 describe-addresses --query 'Addresses[].[PublicIp,InstanceId]' --output text
+
+      - name: Trim ECR images
+        if: ${{ github.event.inputs.mode == 'trim' }}
+        run: |
+          set -e
+          echo "=================== ECR 이미지 정리 (최신 ${KEEP}개 유지) ==================="
+          for R in $(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text); do
+            echo "--- $R"
+            # 페이지마다 JSON 문서가 따로 나오므로 jq -s 로 이어붙인다.
+            aws ecr describe-images --repository-name "$R" --output json \
+              | jq -s '[.[].imageDetails[]]' > /tmp/imgs.json
+            TOTAL=$(jq 'length' /tmp/imgs.json)
+            if [ "$TOTAL" -le "$KEEP" ]; then
+              echo "    ${TOTAL}개 — 보존 기준 이하라 건드리지 않는다"; continue
+            fi
+            jq -r --argjson k "$KEEP" \
+              'sort_by(.imagePushedAt) | .[0:(length - $k)] | .[].imageDigest' \
+              /tmp/imgs.json > /tmp/del.txt
+            DEL=$(wc -l < /tmp/del.txt)
+            echo "    전체 ${TOTAL}개 → ${DEL}개 삭제, 최신 ${KEEP}개 유지"
+            # batch-delete-image는 1회 100개가 상한이다.
+            rm -f /tmp/chunk_*
+            split -l 100 /tmp/del.txt /tmp/chunk_
+            for f in /tmp/chunk_*; do
+              IDS=$(awk '{printf "imageDigest=%s ", $1}' "$f")
+              aws ecr batch-delete-image --repository-name "$R" --image-ids $IDS \
+                --query 'length(imageIds)' --output text | awk '{print "      삭제 "$1"개"}'
+            done
+            LEFT=$(aws ecr list-images --repository-name "$R" --query 'length(imageIds)' --output text \
+                   | awk '{s+=$1} END{print s+0}')
+            echo "    남은 이미지: ${LEFT}개"
+          done
+
+      - name: Trim unattached EBS
+        if: ${{ github.event.inputs.mode == 'trim' }}
+        run: |
+          set +e
+          echo "=================== 미연결 EBS 정리 ==================="
+          VOLS=$(aws ec2 describe-volumes --filters Name=status,Values=available \
+                  --query 'Volumes[].[VolumeId,Size]' --output text)
+          if [ -z "$VOLS" ]; then
+            echo "  available 볼륨 없음 — 할 일이 없다"; exit 0
+          fi
+          echo "$VOLS" | while read -r V SZ; do
+            [ -z "$V" ] && continue
+            aws ec2 delete-volume --volume-id "$V" && echo "  삭제: $V (${SZ}GB)"
+          done
           exit 0
 
       # ── 1. DB 백업 (backup · destroy · nuke) ───────────────────
@@ -344,32 +471,29 @@ jobs:
           echo "  남은 볼륨: ${REST:-없음}"
           exit 0
 
-      # ── 6. EIP · ECR (nuke 전용) ───────────────────────────────
-      - name: Release Elastic IPs and purge ECR
+      # ── 6. EIP 해제 · ECR 저장소 삭제 (nuke 전용) ───────────────
+      - name: Release Elastic IPs and delete ECR
         if: ${{ github.event.inputs.mode == 'nuke' }}
         run: |
           set +e
-          echo "=============== 미연결 Elastic IP 해제 ==============="
+          echo "=============== Elastic IP 전량 해제 ==============="
+          # EC2가 종료됐으므로 전부 미연결 상태다. 남기면 주소당 계속 과금된다.
           aws ec2 describe-addresses --query 'Addresses[].[AllocationId,InstanceId]' --output text |
           while read -r ALLOC INST; do
             if [ -z "$ALLOC" ]; then continue; fi
             if [ -z "$INST" ] || [ "$INST" = "None" ]; then
               aws ec2 release-address --allocation-id "$ALLOC" && echo "  해제: $ALLOC"
             else
-              echo "  유지(연결됨): $ALLOC → $INST"
+              echo "  ::warning::$ALLOC 이 $INST 에 아직 연결됨 — 종료가 덜 됐다"
             fi
           done
 
           echo ""
-          echo "=============== ECR 이미지 삭제 (저장소는 유지 — 빈 저장소는 무료) ==============="
+          echo "=============== ECR 저장소 삭제 (--force = 이미지째) ==============="
+          # 저장소를 통째로 지운다. 재구축(cluster-rebuild.yml)이 없으면 새로 만든다.
           for R in $(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text); do
-            # batch-delete-image는 1회 100개가 상한이다.
-            for round in 1 2 3 4 5; do
-              IDS=$(aws ecr list-images --repository-name "$R" --query 'imageIds[0:100]' --output json)
-              if [ "$IDS" = "[]" ] || [ -z "$IDS" ]; then break; fi
-              aws ecr batch-delete-image --repository-name "$R" --image-ids "$IDS" >/dev/null
-              echo "  $R 이미지 일괄 삭제 (${round}회차)"
-            done
+            aws ecr delete-repository --repository-name "$R" --force >/dev/null \
+              && echo "  삭제: $R" || echo "  실패: $R"
           done
           exit 0
 
@@ -387,7 +511,7 @@ jobs:
               echo "  $B (없음 또는 접근 불가)"
             fi
           done
-          echo "  ※ 버킷 자체는 남긴다 — 빈 버킷은 무료이고 이름을 선점해 둔다."
+          echo "  ※ 버킷 자체는 남긴다 — 이름이 전역 고유라 지우면 되찾지 못할 수 있다. 빈 버킷은 무료다."
           exit 0
 
       # ── 8. 최종 감사 ───────────────────────────────────────────
@@ -404,8 +528,10 @@ jobs:
           aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text
           echo "--- Elastic IP"
           aws ec2 describe-addresses --query 'Addresses[].PublicIp' --output text
+          echo "--- ECR 저장소"
+          aws ecr describe-repositories --query 'repositories[].repositoryName' --output text
           echo ""
-          echo "위 네 항목이 모두 빈 출력이면 시간당 과금이 0원이다."
-          echo "무료로 남는 것: ACM 인증서 · 보안그룹 · 키페어 · IAM 역할 · 빈 ECR/S3 버킷"
-          echo "재구축: cluster-rebuild.yml 워크플로 1회 실행 (약 15분)"
+          echo "위 다섯 항목이 모두 빈 출력이면 과금이 0원이다."
+          echo "무료로 남는 것: ACM 인증서 · 보안그룹 · 키페어 · IAM 역할 · S3 버킷(비어 있으면)"
+          echo "재구축: cluster-rebuild.yml 워크플로 1회 실행"
           exit 0
