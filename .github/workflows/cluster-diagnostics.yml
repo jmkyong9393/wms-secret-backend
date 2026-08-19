@@ -64,3 +64,26 @@ jobs:
             echo "=============== 6. 최근 축출/스케줄 실패 이벤트 ==============="
             kubectl get events --field-selector type=Warning \
               --sort-by=.lastTimestamp -o wide 2>/dev/null | tail -15
+
+            echo ""
+            echo "=============== 7. 노드별 파드 요청 내역 (누가 예약을 붙잡고 있나) ==============="
+            # Requests는 '예약'이라 캐시 정리로 줄지 않는다. 실제 점유 주체를 본다.
+            kubectl get pods -A --field-selector status.phase=Running \
+              -o custom-columns='NODE:.spec.nodeName,NS:.metadata.namespace,POD:.metadata.name,MEM_REQ:.spec.containers[*].resources.requests.memory' \
+              --no-headers 2>/dev/null | sort | awk '{printf "%-20s %-14s %-42s %s\n", $1,$2,$3,$4}'
+
+            echo ""
+            echo "=============== 8. 정리 가능 대상 (Running 아님 = 예약 미점유) ==============="
+            echo "--- 비-Running 파드"
+            kubectl get pods -A --no-headers 2>/dev/null \
+              | awk '$4!="Running" {print "  ", $1, $2, $4}' | head -20
+            echo "--- 완료된 Job"
+            kubectl get jobs -A --no-headers 2>/dev/null | head -10
+            echo "--- 유휴 ReplicaSet (desired=0)"
+            kubectl get rs -A --no-headers 2>/dev/null | awk '$3=="0" && $4=="0" {c++} END {print "   개수:", c+0}'
+
+            echo ""
+            echo "=============== 9. 노드 실제 메모리 (예약이 아닌 호스트 실사용) ==============="
+            free -m | sed -n '1,2p'
+            echo "--- 컨테이너 이미지 점유"
+            sudo crictl images 2>/dev/null | tail -8 || echo "(crictl 조회 불가)"
