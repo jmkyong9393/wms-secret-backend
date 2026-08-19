@@ -9,6 +9,7 @@ on:
       - '**.md'
       - 'docs/**'
       - '.github/workflows/cluster-*.yml'
+      - 'deploy/**'
   workflow_dispatch:        # 문서만 바꾼 뒤에도 수동 배포는 언제든 가능
 permissions: { id-token: write, contents: read }
 
