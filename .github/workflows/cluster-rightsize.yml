@@ -1,0 +1,150 @@
+# 리소스 적정화(right-sizing) — 실측 기반 requests 재산정 + 노드 배치 정리.
+#
+# 목표 상태 (40번 §2-2 설계와 일치):
+#   마스터    = 컨트롤플레인 + 앱 6종 (api·frontend·redis·chroma·postgres·beat)
+#   워커노드  = AI 워커 전용
+#
+# 근거 실측 (2026-08-19, cgroup 직접 판독):
+#   api 3m/184Mi · frontend 7m/74Mi · redis 5m/4Mi · chroma 1m/28Mi
+#   postgres 0m/47Mi · beat 0m/99Mi · ai-worker 2m/105Mi(유휴) → 1224Mi(모델 적재 피크)
+#
+# 원칙: requests만 조정한다. limits는 건드리지 않으므로 파드가 쓸 수 있는 상한은 불변.
+name: Cluster Rightsize (Phased)
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "worker | apps | stateful | beat | verify"
+        required: true
+        default: "worker"
+      apply:
+        description: "true여야 실제 적용. false면 계획만 출력"
+        required: true
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  rightsize:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - name: Execute phase
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            set -e
+            PHASE="${{ github.event.inputs.phase }}"
+            APPLY="${{ github.event.inputs.apply }}"
+            echo "단계=$PHASE / 적용=$APPLY"
+
+            show() {
+              echo "--- 현재 선언값"
+              kubectl get deploy -o custom-columns=\
+            'DEPLOY:.metadata.name,CPU:.spec.template.spec.containers[0].resources.requests.cpu,MEM:.spec.template.spec.containers[0].resources.requests.memory,STRATEGY:.spec.strategy.type,NODE_SEL:.spec.template.spec.nodeSelector'
+              echo "--- 노드 예약"
+              for N in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+                echo "  $N"
+                kubectl describe node "$N" | grep -A5 'Allocated resources' | grep -wE "cpu|memory" | sed 's/^/    /'
+              done
+            }
+
+            # requests만 교체한다. cpu/mem 중 빈 값은 건너뛴다.
+            patch_req() {
+              D=$1; C=$2; M=$3
+              OPS=""
+              [ -n "$C" ] && OPS="{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/requests/cpu\",\"value\":\"$C\"}"
+              if [ -n "$M" ]; then
+                [ -n "$OPS" ] && OPS="$OPS,"
+                OPS="$OPS{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/resources/requests/memory\",\"value\":\"$M\"}"
+              fi
+              echo "  patch $D : cpu=${C:-유지} mem=${M:-유지}"
+              [ "$APPLY" = "true" ] || return 0
+              kubectl patch deployment "$D" --type=json -p="[$OPS]"
+              kubectl rollout status deployment/"$D" --timeout=420s
+            }
+
+            show
+            echo ""
+
+            case "$PHASE" in
+
+            worker)
+              echo "=============== A. AI 워커 메모리 정정 (768Mi → 1280Mi) ==============="
+              echo "사유: 실측 피크 1224Mi. 현재 768Mi는 피크 미달이라 노드 압박 시 축출 1순위다."
+              echo "워커노드 여유(38%)가 충분하므로 상향해도 문제없다."
+              patch_req wms-ai-worker "" "1280Mi"
+              ;;
+
+            apps)
+              echo "=============== B. 마스터 앱 requests 적정화 (무중단/짧은 재시작) ==============="
+              patch_req wms-api      "50m"  "256Mi"    # 실사용 3m/184Mi
+              patch_req wms-frontend "50m"  "128Mi"    # 실사용 7m/74Mi
+              patch_req redis        "25m"  "64Mi"     # 실사용 5m/4Mi
+              echo "--- chroma는 Recreate 전략(PVC RWO) — 짧은 RAG 중단 발생"
+              patch_req chroma-server "50m" "128Mi"    # 실사용 1m/28Mi
+              ;;
+
+            stateful)
+              echo "=============== C. postgres — 전략·requests·배치를 한 번에 ==============="
+              echo "🔴 RWO PVC + maxSurge=1 조합은 교착한다. Recreate로 먼저 바꾼다."
+              echo "🔴 이 단계는 DB 다운타임(EBS detach/attach, 30초~2분)이 발생한다."
+              echo "   백업 위치: ~/db_backups/ (phase=backup에서 생성)"
+              ls -lh ~/db_backups/ 2>/dev/null | tail -3 || echo "   ⚠ 백업 파일이 안 보인다"
+
+              PG=$(kubectl get pods -l app=postgres -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | awk '{print $1}')
+              PGU=$(kubectl exec "$PG" -- printenv POSTGRES_USER 2>/dev/null | tr -d '\r')
+              PGD=$(kubectl exec "$PG" -- printenv POSTGRES_DB 2>/dev/null | tr -d '\r')
+              echo "   이동 전 테이블 수: $(kubectl exec "$PG" -- psql -U "$PGU" -d "$PGD" -t -c \
+                "select count(*) from information_schema.tables where table_schema='public';" | tr -d ' \r')"
+
+              if [ "$APPLY" != "true" ]; then echo "[계획만] 종료"; exit 0; fi
+
+              # 전략·requests·nodeSelector를 한 패치로 — 재시작을 1회로 줄인다
+              kubectl patch deployment postgres -p '{
+                "spec":{
+                  "strategy":{"type":"Recreate","rollingUpdate":null},
+                  "template":{"spec":{
+                    "nodeSelector":{"workload-type":"app"},
+                    "containers":[{"name":"postgres","resources":{"requests":{"cpu":"50m","memory":"256Mi"}}}]
+                  }}
+                }}'
+              kubectl rollout status deployment/postgres --timeout=600s
+
+              PG2=$(kubectl get pods -l app=postgres -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | awk '{print $1}')
+              echo "   이동 후 테이블 수: $(kubectl exec "$PG2" -- psql -U "$PGU" -d "$PGD" -t -c \
+                "select count(*) from information_schema.tables where table_schema='public';" | tr -d ' \r')"
+              kubectl get pod "$PG2" -o wide --no-headers
+              ;;
+
+            beat)
+              echo "=============== D. wms-beat 마스터로 (무상태) ==============="
+              [ "$APPLY" = "true" ] || { echo "[계획만] 종료"; exit 0; }
+              kubectl patch deployment wms-beat -p \
+                '{"spec":{"template":{"spec":{"nodeSelector":{"workload-type":"app"}}}}}'
+              kubectl rollout status deployment/wms-beat --timeout=300s
+              ;;
+
+            verify)
+              echo "=============== 최종 검증 ==============="
+              echo "--- 배치 (기대: 워커노드에 wms-ai-worker만)"
+              kubectl get pods -o wide --no-headers | awk '{printf "  %-40s %-12s %s\n",$1,$3,$7}' | sort -k3
+              echo ""
+              echo "--- 최근 경고"
+              kubectl get events --field-selector type=Warning --sort-by=.lastTimestamp 2>/dev/null | tail -5
+              ;;
+
+            *) echo "알 수 없는 단계: $PHASE"; exit 1 ;;
+            esac
+
+            echo ""
+            echo "=============== 변경 후 ==============="
+            show
