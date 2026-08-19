@@ -93,6 +93,8 @@ jobs:
           chk "elasticloadbalancing:Describe" aws elbv2 describe-load-balancers
           chk "ecr:DescribeRepositories"      aws ecr describe-repositories --max-items 1
           chk "s3:ListBucket(vision)"         aws s3api head-bucket --bucket "$VISION_BUCKET"
+          chk "ec2:DescribeNetworkInterfaces" aws ec2 describe-network-interfaces --max-items 1
+          chk "ec2:DescribeNatGateways"       aws ec2 describe-nat-gateways --max-items 1
           echo ""
           if [ "$DENY" -gt 0 ]; then
             echo "::warning::권한 ${DENY}건 거부 — 해당 리소스는 조회·삭제가 불가능하다."
