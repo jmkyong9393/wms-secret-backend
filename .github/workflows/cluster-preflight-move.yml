@@ -1,0 +1,82 @@
+# 3a(앱 티어를 마스터로 이동) 사전 점검 — 읽기 전용.
+#
+# 되돌릴 수 없는 제약을 먼저 확인한다:
+#  ① EBS는 AZ에 묶인다. 두 노드가 다른 AZ면 PVC 파드는 물리적으로 이동 불가.
+#  ② PV에 nodeAffinity가 박혀 있으면 그 노드에서만 뜬다.
+#  ③ 마스터에 앱 티어를 받을 여유가 있는가.
+# 하나라도 걸리면 이동 계획 자체를 바꿔야 하므로, 아무것도 변경하지 않고 사실만 수집한다.
+name: Preflight — App Tier Move (Read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - name: Collect move constraints
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            echo "=============== 1. 노드 AZ · 라벨 (EBS 이동 가능성의 핵심) ==============="
+            kubectl get nodes -o custom-columns=\
+            'NODE:.metadata.name,ZONE:.metadata.labels.topology\.kubernetes\.io/zone,INSTANCE:.metadata.labels.node\.kubernetes\.io/instance-type,ROLE:.metadata.labels.node-role\.kubernetes\.io/control-plane'
+            echo "--- 사용자 지정 라벨 (workload-type 등)"
+            kubectl get nodes -o json 2>/dev/null \
+              | grep -oE '"(workload[^"]*|topology[^"]*zone)":\s*"[^"]*"' | sort -u
+
+            echo ""
+            echo "=============== 2. PV / PVC — 이동 제약 ==============="
+            kubectl get pvc -A -o custom-columns=\
+            'NS:.metadata.namespace,PVC:.metadata.name,STATUS:.status.phase,VOL:.spec.volumeName,SC:.spec.storageClassName' --no-headers
+            echo "--- PV의 nodeAffinity / AZ (여기 박히면 그 노드에서만 뜬다)"
+            for V in $(kubectl get pv -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+              Z=$(kubectl get pv "$V" -o jsonpath='{.spec.nodeAffinity.required.nodeSelectorTerms[*].matchExpressions[*].values[*]}' 2>/dev/null)
+              D=$(kubectl get pv "$V" -o jsonpath='{.spec.csi.volumeHandle}' 2>/dev/null)
+              echo "  $V : affinity=[${Z:-없음}] volume=${D:-N/A}"
+            done
+
+            echo ""
+            echo "=============== 3. 상태 유지 파드 식별 (이동 난이도) ==============="
+            kubectl get pods -o json 2>/dev/null | \
+              python3 -c "
+            import json,sys
+            d=json.load(sys.stdin)
+            for p in d['items']:
+                if p['status'].get('phase')!='Running': continue
+                n=p['metadata']['name']; node=p['spec'].get('nodeName','')
+                vols=[v for v in p['spec'].get('volumes',[]) if 'persistentVolumeClaim' in v]
+                kind='STATEFUL(PVC)' if vols else 'stateless'
+                pvc=','.join(v['persistentVolumeClaim']['claimName'] for v in vols) or '-'
+                print(f'  {kind:15} {n:36} node={node:18} pvc={pvc}')
+            " 2>/dev/null || kubectl get pods -o wide --no-headers
+
+            echo ""
+            echo "=============== 4. 마스터 여유 (앱 티어를 받을 수 있는가) ==============="
+            for N in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+              echo "--- $N"
+              kubectl describe node "$N" | grep -A5 'Allocated resources' | grep -wE "memory|cpu" || true
+              echo -n "    taint: "
+              kubectl get node "$N" -o jsonpath='{.spec.taints[*].key}' 2>/dev/null; echo ""
+            done
+
+            echo ""
+            echo "=============== 5. DB 백업 가능성 확인 ==============="
+            PG=$(kubectl get pods -l app=postgres -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | awk '{print $1}')
+            if [ -n "$PG" ]; then
+              echo "postgres 파드: $PG"
+              kubectl exec "$PG" -- sh -c 'which pg_dump && df -h /var/lib/postgresql/data | tail -1' 2>/dev/null \
+                || echo "  (pg_dump 확인 실패)"
+            else
+              echo "  실행 중인 postgres 파드 없음"
+            fi
