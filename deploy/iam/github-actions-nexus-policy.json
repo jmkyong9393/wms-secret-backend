@@ -51,7 +51,23 @@
         "elasticloadbalancing:CreateRule",
         "elasticloadbalancing:RegisterTargets",
         "elasticloadbalancing:ModifyLoadBalancerAttributes",
-        "elasticloadbalancing:AddTags"
+        "elasticloadbalancing:AddTags",
+        "ec2:AssociateAddress",
+        "ec2:DisassociateAddress",
+        "ec2:AllocateAddress"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcrLifecycleManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages",
+        "ecr:BatchDeleteImage",
+        "ecr:DeleteRepository",
+        "ecr:CreateRepository"
       ],
       "Resource": "*"
     },
@@ -60,12 +76,20 @@
       "Effect": "Allow",
       "Action": "iam:PassRole",
       "Resource": "arn:aws:iam::575509634988:role/nexus-node-role",
-      "Condition": { "StringEquals": { "iam:PassedToService": "ec2.amazonaws.com" } }
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
+        }
+      }
     },
     {
       "Sid": "S3PurgeAfterLocalSync",
       "Effect": "Allow",
-      "Action": ["s3:ListBucket", "s3:GetObject", "s3:DeleteObject"],
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetObject",
+        "s3:DeleteObject"
+      ],
       "Resource": [
         "arn:aws:s3:::wms-secret-vision-assets",
         "arn:aws:s3:::wms-secret-vision-assets/*",
