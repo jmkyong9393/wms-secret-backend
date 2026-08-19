@@ -1,0 +1,70 @@
+# 노드 디스크 정리 — 컨테이너 이미지 회수.
+# 배경: 백엔드 이미지가 커서 배포마다 새 태그가 쌓이고, kubelet imageGC가 목표치를
+# 회수하지 못하면 ephemeral-storage 축출로 파드가 죽는다(FreeDiskSpaceFailed).
+# crictl rmi --prune은 '어떤 컨테이너도 참조하지 않는' 이미지만 지운다 — 실행 중
+# 파드의 이미지는 대상이 아니다.
+name: Cluster Disk Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "true여야 실제 정리. false면 현황만 출력(dry-run)"
+        required: true
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - name: Inspect and prune node images
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            APPLY="${{ github.event.inputs.apply }}"
+
+            echo "=============== 1. 디스크 현황 (마스터) ==============="
+            df -h / | sed -n '1,2p'
+
+            echo ""
+            echo "=============== 2. 이미지 점유 상위 ==============="
+            sudo crictl images --digests 2>/dev/null \
+              | awk 'NR==1{print;next}{print}' | head -25 || echo "(crictl 조회 불가)"
+
+            echo ""
+            echo "=============== 3. 현재 사용 중인 이미지 (지우면 안 되는 것) ==============="
+            kubectl get pods -A -o jsonpath='{range .items[*]}{.status.containerStatuses[*].image}{"\n"}{end}' \
+              2>/dev/null | tr ' ' '\n' | sort -u | grep -v '^$' | head -20
+
+            echo ""
+            echo "=============== 4. kubelet imageGC 임계 ==============="
+            grep -E "imageGCHigh|imageGCLow|evictionHard" /var/lib/kubelet/config.yaml 2>/dev/null \
+              || echo "(기본값: High 85% / Low 80%)"
+
+            if [ "$APPLY" != "true" ]; then
+              echo ""
+              echo "[dry-run] apply=false 이므로 정리하지 않고 종료합니다."
+              exit 0
+            fi
+
+            echo ""
+            echo "=============== 5. 미참조 이미지 정리 (마스터) ==============="
+            sudo crictl rmi --prune 2>&1 | tail -20 || echo "(prune 실패 — 수동 확인 필요)"
+
+            echo ""
+            echo "=============== 6. 정리 후 디스크 ==============="
+            df -h / | sed -n '1,2p'
+
+            echo ""
+            echo "=============== 7. 파드 정상 확인 ==============="
+            kubectl get pods -o wide --no-headers | awk '{print "  ", $1, $2, $3}'
