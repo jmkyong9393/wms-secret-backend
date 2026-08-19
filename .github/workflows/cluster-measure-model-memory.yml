@@ -42,7 +42,8 @@ jobs:
 
             echo ""
             echo "=============== 2. 모델 3종 적재 + 추론 1회 ==============="
-            kubectl exec "$POD" -- python - <<'PY'
+            # -i 필수: 없으면 stdin이 전달되지 않아 python -가 즉시 EOF로 끝난다(출력 없음)
+            kubectl exec -i "$POD" -- python - <<'PY'
             import os, gc
 
             def ws():
