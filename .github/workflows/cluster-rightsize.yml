@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "worker | apps | stateful | beat | chroma | verify"
+        description: "worker | apps | stateful | beat | chroma | system | verify"
         required: true
         default: "worker"
       apply:
@@ -140,6 +140,52 @@ jobs:
               [ "$APPLY" = "true" ] || { echo "[계획만] 종료"; exit 0; }
               kubectl patch deployment chroma-server -p                 '{"spec":{"template":{"spec":{"nodeSelector":{"workload-type":"app"}}}}}'
               kubectl rollout status deployment/chroma-server --timeout=420s
+              ;;
+
+            system)
+              echo "=============== F. 시스템 컴포넌트 (KEDA · coredns) ==============="
+              echo "🔴 coredns는 클러스터 DNS다. 굶기면 이름 해석이 실패해 전체가 멈춘다."
+              echo "   requests(예약)만 낮추고 limits는 두지 않으므로 실사용 상한은 불변이다."
+              echo ""
+              echo "--- 현재 선언값"
+              kubectl -n kube-system get deploy coredns -o custom-columns=            'D:.metadata.name,REPLICAS:.spec.replicas,CPU:.spec.template.spec.containers[0].resources.requests.cpu,MEM:.spec.template.spec.containers[0].resources.requests.memory' 2>/dev/null
+              kubectl -n keda get deploy -o custom-columns=            'D:.metadata.name,CPU:.spec.template.spec.containers[0].resources.requests.cpu,MEM:.spec.template.spec.containers[0].resources.requests.memory' 2>/dev/null
+
+              echo ""
+              echo "--- 실사용 (cpu.stat 10초 델타)"
+              for NS in kube-system keda; do
+                for P in $(kubectl -n $NS get pods -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' 2>/dev/null); do
+                  case "$P" in coredns*|keda*) ;; *) continue ;; esac
+                  A=$(kubectl -n $NS exec "$P" -- sh -c 'grep -w usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"' 2>/dev/null)
+                  [ -n "$A" ] || { echo "  $NS/$P : 판독 불가(셸 없음)"; continue; }
+                  sleep 10
+                  B=$(kubectl -n $NS exec "$P" -- sh -c 'grep -w usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"' 2>/dev/null)
+                  echo "  $NS/$P : $(( (B - A) / 10000 ))m"
+                done
+              done
+
+              if [ "$APPLY" != "true" ]; then echo ""; echo "[계획만] 종료"; exit 0; fi
+
+              echo ""
+              echo "--- 적용: coredns 100m -> 50m (replicas 2 유지 — 이중화는 건드리지 않는다)"
+              kubectl -n kube-system patch deployment coredns --type=json                 -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":"50m"}]'
+              kubectl -n kube-system rollout status deployment/coredns --timeout=300s
+              echo "--- DNS 즉시 확인"
+              kubectl run dnstest --rm -i --restart=Never --image=busybox:1.36 --timeout=60s --                 nslookup kubernetes.default.svc.cluster.local 2>/dev/null | head -5 || echo "  (확인 파드 실패 — 아래 파드 상태로 판단)"
+
+              echo ""
+              echo "--- 적용: KEDA 100m -> 50m (3개)"
+              for D in $(kubectl -n keda get deploy -o jsonpath='{.items[*].metadata.name}'); do
+                kubectl -n keda patch deployment "$D" --type=json                   -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":"50m"}]' 2>/dev/null                   && echo "  $D 조정" || echo "  $D 건너뜀(requests 없음)"
+              done
+              for D in $(kubectl -n keda get deploy -o jsonpath='{.items[*].metadata.name}'); do
+                kubectl -n keda rollout status deployment/"$D" --timeout=300s || true
+              done
+
+              echo ""
+              echo "--- 최종 파드 상태"
+              kubectl -n kube-system get pods -l k8s-app=kube-dns --no-headers
+              kubectl -n keda get pods --no-headers
               ;;
 
             verify)
