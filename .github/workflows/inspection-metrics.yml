@@ -1,0 +1,56 @@
+# 검수 파이프라인 성능 지표 — 운영 DB 읽기 전용 집계.
+#
+# 발표에 쓸 수치를 로컬 실험값이 아니라 운영 실적으로 낸다.
+# 로컬 DB는 부하·카오스 테스트로 오염돼 있어 표본으로 쓸 수 없다.
+#
+# SELECT만 실행한다. 쿼리는 scripts/sql/inspection_metrics.sql 에 있고
+# 워크플로가 그 파일을 그대로 실어 보낸다 — 여기서 SQL을 만들지 않는다.
+name: Inspection Metrics (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — 쓰기 구문이 섞이지 않았는지 확인
+        run: |
+          set -e
+          F=scripts/sql/inspection_metrics.sql
+          if grep -inE '\b(insert|update|delete|drop|truncate|alter|create|grant)\b' "$F" \
+             | grep -v '^\s*[0-9]*:\s*--'; then
+            echo "::error::읽기 전용이어야 하는데 변경 구문이 발견됐다"; exit 1
+          fi
+          echo "읽기 전용 확인 완료"
+
+      - name: Run metrics on production DB
+        if: ${{ env.EC2_HOST != '' }}
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+          SQL64=$(base64 -w0 scripts/sql/inspection_metrics.sql)
+          # 계정은 admin이다. 파드 환경변수에서 읽어 하드코딩을 피한다.
+          # kubectl exec에 -i를 주지 않으면 stdin이 전달되지 않아 psql이 빈 입력으로 끝난다.
+          REMOTE='POD=$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}");
+                  echo "$SQL64" | base64 -d | kubectl exec -i "$POD" -- sh -c "psql -U \$POSTGRES_USER -d wms_db -f -"'
+          ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@"$EC2_HOST" \
+            "SQL64=$SQL64; $REMOTE" | tee metrics.txt
+
+      - name: Upload report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: inspection-metrics
+          path: metrics.txt
+          if-no-files-found: warn
+          retention-days: 30
