@@ -1,0 +1,94 @@
+# 모델 적재 메모리 실측 — requests 산정 근거 확보용.
+#
+# 왜 이 방식인가: 워커 메모리의 지배항은 판정 로직이 아니라 YOLO 3종 + torch 상주분이다.
+# 실제 검수를 돌리면 운영 DB에 판정 레코드가 쌓여 발표 정본 수치(자동승인률·중앙값)의
+# 분모가 바뀌고 되돌릴 수 없다. 그래서 모델만 적재해 증가분을 재고, DB와 OpenAI는 건드리지 않는다.
+#
+# 수행: 유휴 메모리 판독 → WBFBookDefectDetector() 생성(모델 3종 적재) → 더미 이미지 추론 1회
+#       → 피크 판독. DB 커넥션·LLM 호출·레코드 생성 없음.
+name: Measure Model Memory (No DB / No LLM)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - name: Measure resident memory of model load
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 15m
+          script: |
+            set -e
+            POD=$(kubectl get pods -l app=wms-ai-worker \
+              -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | awk '{print $1}')
+            [ -n "$POD" ] || { echo "실행 중인 워커 파드가 없습니다"; exit 1; }
+            echo "대상 파드: $POD"
+
+            echo ""
+            echo "=============== 1. 적재 전 (유휴) ==============="
+            kubectl exec "$POD" -- sh -c \
+              'echo "current=$(cat /sys/fs/cgroup/memory.current)"; grep -w inactive_file /sys/fs/cgroup/memory.stat'
+
+            echo ""
+            echo "=============== 2. 모델 3종 적재 + 추론 1회 ==============="
+            kubectl exec "$POD" -- python - <<'PY'
+            import os, gc
+
+            def ws():
+                """working_set = memory.current - inactive_file (MiB)"""
+                cur = int(open('/sys/fs/cgroup/memory.current').read().strip())
+                ina = 0
+                for line in open('/sys/fs/cgroup/memory.stat'):
+                    if line.startswith('inactive_file '):
+                        ina = int(line.split()[1]); break
+                return (cur - ina) / 1048576
+
+            base = ws()
+            print(f"[0] 시작 working_set        : {base:8.1f} Mi")
+
+            import numpy as np
+            print(f"[1] numpy import 후         : {ws():8.1f} Mi")
+
+            import torch
+            print(f"[2] torch import 후         : {ws():8.1f} Mi  (torch {torch.__version__})")
+
+            from app.ai.wbf_detector import WBFBookDefectDetector
+            print(f"[3] 모듈 import 후          : {ws():8.1f} Mi")
+
+            det = WBFBookDefectDetector()          # 모델 3종(+ROI) 적재
+            after_load = ws()
+            print(f"[4] 모델 적재 후            : {after_load:8.1f} Mi  (증가 {after_load-base:+.1f})")
+
+            # 더미 이미지 1회 추론 — 추론 버퍼가 얼마나 더 붙는지 본다 (DB·LLM 무관)
+            img = (np.random.rand(1024, 1024, 3) * 255).astype(np.uint8)
+            peak = after_load
+            for m, name in ((det.model_recall, 'recall'),
+                            (det.model_precision, 'precision'),
+                            (det.model_doodle, 'doodle')):
+                if m is None:
+                    print(f"    - {name}: 미적재(건너뜀)"); continue
+                m.predict(img, verbose=False, device='cpu')
+                cur = ws(); peak = max(peak, cur)
+                print(f"    - {name} 추론 후        : {cur:8.1f} Mi")
+
+            print(f"[5] 피크 working_set        : {peak:8.1f} Mi")
+            print("")
+            print(f"=> 유휴 대비 증가분          : {peak-base:8.1f} Mi")
+            print(f"=> 권장 requests (피크×1.3)  : {peak*1.3:8.0f} Mi")
+            PY
+
+            echo ""
+            echo "=============== 3. 종료 후 (파드 상태 확인) ==============="
+            kubectl get pod "$POD" -o wide --no-headers
+            kubectl get events --field-selector type=Warning --sort-by=.lastTimestamp 2>/dev/null | tail -3
