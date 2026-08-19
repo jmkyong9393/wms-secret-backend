@@ -1,0 +1,135 @@
+# 원클릭 정리 — 과금 원천 차단.
+#
+# 삭제 순서가 중요하다. 의존 관계를 거스르면 거부되거나 고아 리소스가 남아 계속 과금된다.
+#   ALB → 리스너/타깃그룹 → k8s 리소스(PVC 포함) → EBS 잔존 볼륨 → 노드
+# PVC를 지우지 않고 EC2만 종료하면 **EBS 볼륨이 남아 계속 과금된다** — 가장 흔한 누락이다.
+#
+# 안전장치: 기본이 dry-run이며, 실제 삭제에는 confirm 문구 입력이 필요하다.
+name: Cluster Teardown (1-Click)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan(현황만) | suspend(중지-데이터보존) | destroy(전체삭제)"
+        required: true
+        default: "plan"
+      confirm:
+        description: "destroy일 때만 — 정확히 DESTROY 입력"
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      AWS_REGION: ap-northeast-2
+    steps:
+      - name: Guard
+        run: |
+          M="${{ github.event.inputs.mode }}"
+          if [ "$M" = "destroy" ] && [ "${{ github.event.inputs.confirm }}" != "DESTROY" ]; then
+            echo "::error::destroy 모드에는 confirm=DESTROY 가 필요합니다"; exit 1
+          fi
+          echo "모드=$M"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+
+      # ── 1. 클러스터 측 정리 (SSH) ───────────────────────────
+      - name: Cluster resources
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
+          envs: MODE
+          script: |
+            MODE="${{ github.event.inputs.mode }}"
+
+            echo "=============== 현황 ==============="
+            kubectl get pods -o wide --no-headers | awk '{printf "  %-40s %-10s %s\n",$1,$3,$7}'
+            echo "--- PVC (삭제하지 않으면 EBS가 계속 과금된다)"
+            kubectl get pvc --no-headers 2>/dev/null | awk '{print "  ",$1,$2,$4}'
+
+            if [ "$MODE" = "plan" ]; then echo "[plan] 변경 없이 종료"; exit 0; fi
+
+            if [ "$MODE" = "suspend" ]; then
+              echo ""
+              echo "=============== 중지 (데이터 보존) ==============="
+              # 워크로드만 0으로 내린다. PVC·EBS·이미지는 유지되어 재개가 빠르다.
+              for D in wms-api wms-frontend wms-ai-worker wms-beat redis chroma-server postgres; do
+                kubectl scale deployment "$D" --replicas=0 2>/dev/null && echo "  $D → 0" || true
+              done
+              kubectl delete scaledobject --all 2>/dev/null || true
+              echo "✅ 파드 중지 완료. EBS·ECR은 유지된다(소액 과금 지속)."
+              echo "   재개: kubectl scale deployment <이름> --replicas=1"
+              exit 0
+            fi
+
+            echo ""
+            echo "=============== 전체 삭제 ==============="
+            kubectl delete scaledobject --all 2>/dev/null || true
+            helm uninstall keda -n keda 2>/dev/null || true
+            for F in keda-scaler.yaml k8s-manifests-v31.yaml; do
+              [ -f "$F" ] && kubectl delete -f "$F" --ignore-not-found || true
+            done
+            kubectl delete deployment --all 2>/dev/null || true
+            kubectl delete svc --all 2>/dev/null || true
+            echo "--- PVC 삭제 (EBS 해제의 유일한 경로)"
+            kubectl delete pvc --all --timeout=180s 2>/dev/null || true
+            kubectl get pv --no-headers 2>/dev/null | head -5
+
+      # ── 2. AWS 측 정리 (이름으로 자동 탐색) ─────────────────
+      - name: AWS resources
+        if: ${{ github.event.inputs.mode == 'destroy' }}
+        run: |
+          set -e
+          echo "=============== ALB · 타깃그룹 ==============="
+          # 이름을 하드코딩하지 않는다 — 태그/이름 패턴으로 찾는다
+          ALB=$(aws elbv2 describe-load-balancers \
+                 --query "LoadBalancers[?contains(LoadBalancerName,'nexus')].LoadBalancerArn" \
+                 --output text 2>/dev/null || true)
+          if [ -n "$ALB" ]; then
+            for A in $ALB; do echo "  삭제: $A"; aws elbv2 delete-load-balancer --load-balancer-arn "$A"; done
+            echo "  ALB 삭제 전파 대기 30초"; sleep 30
+          else
+            echo "  (nexus 이름의 ALB 없음 — 수동 확인 필요)"
+          fi
+
+          TGS=$(aws elbv2 describe-target-groups \
+                 --query "TargetGroups[?contains(TargetGroupName,'nexus')].TargetGroupArn" \
+                 --output text 2>/dev/null || true)
+          for T in $TGS; do echo "  타깃그룹 삭제: $T"; aws elbv2 delete-target-group --target-group-arn "$T" || true; done
+
+          echo ""
+          echo "=============== 잔존 EBS (available = 아무도 안 쓰는데 과금 중) ==============="
+          VOLS=$(aws ec2 describe-volumes --filters Name=status,Values=available \
+                  --query 'Volumes[].VolumeId' --output text 2>/dev/null || true)
+          if [ -n "$VOLS" ]; then
+            for V in $VOLS; do echo "  삭제: $V"; aws ec2 delete-volume --volume-id "$V" || true; done
+          else
+            echo "  없음 ✅"
+          fi
+
+          echo ""
+          echo "=============== 최종 확인 ==============="
+          echo "--- 남은 ALB"; aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text || true
+          echo "--- 남은 available 볼륨"; aws ec2 describe-volumes --filters Name=status,Values=available --query 'Volumes[].VolumeId' --output text || true
+          echo "--- EC2 인스턴스 (직접 중지/종료 필요)"
+          aws ec2 describe-instances --filters Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].{ID:InstanceId,Name:Tags[?Key==`Name`]|[0].Value,State:State.Name}' \
+            --output table || true
+          echo ""
+          echo "⚠ EC2는 이 워크플로가 종료하지 않는다 — 재시연 예정이면 '중지', 완전 종료면 '종료'를 직접 선택한다."
+          echo "⚠ ECR 이미지는 유지 권장 (스토리지 \$0.10/GB/월)."
