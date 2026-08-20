@@ -47,7 +47,7 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
    - 제본 중앙의 자연스러운 곡면(펼친 책의 가운데 골)은 접힘이 아닙니다.
 4. 좌표계:
    - 각 결함(defects[i])의 bbox 필드에 xmin, ymin, xmax, ymax를 이미지 0~1000 픽셀 상대 좌표로 채워서 반환하세요. confidence 필드에는 본인의 판독 확신도(0.0~1.0)를 적으세요.
-   - bbox는 **당신이 이미지에서 실제로 본 위치**여야 합니다. 결함은 보이는데 위치를 정확히 특정할 수 없으면 좌표를 지어내지 말고 bbox를 null로 두세요 (그 건은 관리자가 직접 위치를 그립니다). (50,50,150,150)처럼 규칙적인 예시형 좌표, 여러 결함에 같은 좌표 반복, 이미지 전체를 덮는 띠는 전부 "보지 않고 지어낸 좌표"로 간주되어 판독 전체가 반려됩니다.
+   - bbox는 **당신이 이미지에서 실제로 본 위치**여야 합니다. 결함은 보이는데 위치를 정확히 특정할 수 없으면 좌표를 지어내지 말고 bbox를 null로 두세요 (그 건은 관리자가 직접 위치를 그립니다). 여러 결함에 같은 좌표를 반복하거나, 자릿수가 맞아떨어지는 규칙적인 좌표를 만들어내거나, 이미지 전체를 덮는 띠를 치는 것은 전부 "보지 않고 지어낸 좌표"로 간주되어 판독 전체가 반려됩니다. YOLO 제보 목록에 있는 결함을 채택할 때는 그 제보의 좌표를 그대로 쓰세요.
    - 해당 결함이 도서 제목이나 본문 텍스트 영역을 가리거나 침범하면 text_overlap을 true로, 아니면 false로 설정하세요 (UBCI 1.5배 가중치 판정에 직접 사용됩니다).
    - image_index에는 결함이 발견된 이미지의 순서(0번째=정면, 1번째=후면, 2번째부터=내지/측면 등)를 정확히 기재하세요.
 5. 정성적 관찰(special_notes):
@@ -226,6 +226,18 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             res_vlm: VisionResult = structured_vlm.invoke([HumanMessage(content=content_list)])
             is_mint = res_vlm.is_mint
             defects = [d.model_dump() for d in res_vlm.defects]
+            # VLM이 min/max 순서를 뒤집어 반환하는 경우가 있다(실측: 후보 좌표를 채택하며
+            # xmin↔xmax 반전). LLM 출력의 순서는 신뢰 대상이 아니므로 여기서 정규화한다 -
+            # 뒤집힌 채 흘리면 크롭 검증이 빈 크롭을 심사하고 프론트가 0폭 박스를 그린다.
+            for _d in defects:
+                _b = _d.get("bbox")
+                if isinstance(_b, dict):
+                    for _lo, _hi in (("xmin", "xmax"), ("ymin", "ymax")):
+                        try:
+                            if _b.get(_lo) is not None and _b.get(_hi) is not None and _b[_lo] > _b[_hi]:
+                                _b[_lo], _b[_hi] = _b[_hi], _b[_lo]
+                        except TypeError:
+                            pass
             special_notes = res_vlm.special_notes
             # 범위를 벗어난 인덱스는 VLM 환각 신호이므로 버린다 (Critic의 image_index 검증과 동일 원칙)
             invalid_image_indexes = sorted({
