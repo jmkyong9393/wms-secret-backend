@@ -146,7 +146,7 @@ def _flag_ungrounded_bboxes(defects: List[Dict[str, Any]]) -> int:
         and d.get("conf_source") != "yolo"
         and not d.get("adopted_from_candidate")
     ]
-    if len(vlm_owned) < 2:
+    if not vlm_owned:
         return 0
 
     def key(d):
@@ -155,6 +155,24 @@ def _flag_ungrounded_bboxes(defects: List[Dict[str, Any]]) -> int:
                 int(b.get("xmax", 0)), int(b.get("ymax", 0)))
 
     flagged: set = set()
+
+    # R3: 국소 유형인데 프레임을 거의 전부 덮는 박스 (실측 A008 3차: 예시 좌표를 막자
+    # 오염·접힘에 이미지 전체 박스를 치기 시작했다 - "위치를 못 잡겠으니 전체"로 도피).
+    # 물젖음·황변은 지면 전체에 나타나는 것이 정상이라 제외한다. 단독 1건이어도 잡아야
+    # 하므로 R1·R2와 달리 건수 조건이 없다.
+    _FULLFRAME_OK = {"DMG_EXT_WET", "DMG_INT_DISCOLOR"}
+    for d in vlm_owned:
+        if str(d.get("type") or "") in _FULLFRAME_OK:
+            continue
+        x1, y1, x2, y2 = key(d)
+        if (x2 - x1) * (y2 - y1) >= 880_000:  # 0~1000 정규화 면적의 88%
+            flagged.add(id(d))
+
+    if len(vlm_owned) < 2:
+        for d in vlm_owned:
+            if id(d) in flagged:
+                d["bbox_ungrounded"] = True
+        return len(flagged)
 
     # R1: 같은 좌표 4값이 서로 다른 image_index에서 반복
     by_coord: Dict[tuple, List[Dict[str, Any]]] = {}
