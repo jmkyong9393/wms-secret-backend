@@ -9,6 +9,11 @@ name: Inspection Metrics (read-only)
 
 on:
   workflow_dispatch:
+    inputs:
+      sql_file:
+        description: "실행할 읽기 전용 SQL (scripts/sql/ 아래)"
+        required: false
+        default: "inspection_metrics.sql"
 
 permissions:
   contents: read
@@ -24,7 +29,7 @@ jobs:
       - name: Guard — 쓰기 구문이 섞이지 않았는지 확인
         run: |
           set -e
-          F=scripts/sql/inspection_metrics.sql
+          F="scripts/sql/${{ github.event.inputs.sql_file || 'inspection_metrics.sql' }}"
           if grep -inE '\b(insert|update|delete|drop|truncate|alter|create|grant)\b' "$F" \
              | grep -v '^\s*[0-9]*:\s*--'; then
             echo "::error::읽기 전용이어야 하는데 변경 구문이 발견됐다"; exit 1
@@ -38,7 +43,7 @@ jobs:
         run: |
           set -e
           mkdir -p ~/.ssh && printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
-          SQL64=$(base64 -w0 scripts/sql/inspection_metrics.sql)
+          SQL64=$(base64 -w0 "scripts/sql/${{ github.event.inputs.sql_file || 'inspection_metrics.sql' }}")
           # 계정은 admin이다. 파드 환경변수에서 읽어 하드코딩을 피한다.
           # kubectl exec에 -i를 주지 않으면 stdin이 전달되지 않아 psql이 빈 입력으로 끝난다.
           REMOTE='POD=$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}");
