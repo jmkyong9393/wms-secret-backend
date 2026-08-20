@@ -7,4 +7,4 @@ SELECT jsonb_build_object(
   'candidates', COALESCE(agent_logs->'yolo_candidates','[]'::jsonb),
   'defects', COALESCE(agent_logs->'defects','[]'::jsonb),
   'old_defect_count', jsonb_array_length(COALESCE(agent_logs->'defects','[]'::jsonb))
-) FROM return_jobs ORDER BY created_at DESC LIMIT 1;
+) FROM return_jobs ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1;
