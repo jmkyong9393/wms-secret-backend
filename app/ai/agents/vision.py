@@ -236,7 +236,7 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
         # 범위 밖 인덱스는 Critic이 환각으로 판정해 HITL로 보내므로, 프롬프트 탓에 매번 HITL이 걸리는 상태가 된다.
         # 라벨로 앵커를 박아 순서를 강제한다.
         content_list = [{"type": "text", "text": prompt_vlm}]
-        # 컷당 1회만 다운로드해 프레임·후보크롭·몽타주가 같은 로컬 파일을 재사용한다.
+        # 컷당 1회만 다운로드해 프레임·후보크롭이 같은 로컬 파일을 재사용한다.
         # 종전처럼 크롭마다 다시 받으면 최악 9회 왕복으로 지연이 눈에 띄게 는다.
         local_frames: Dict[int, str] = {}
         for i, path in enumerate(image_paths):
@@ -258,6 +258,9 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
         # 전례를 채택 단계에 적용한다 - 후보마다 그 부위를 잘라 보여주고, 채택/기각을
         # 그 크롭의 픽셀로 결정하게 한다.
         # 첨부 상한을 지킨다 - 크롭이 스무 장씩 붙으면 비용보다 주의력 분산이 문제다.
+        # 모서리 몽타주(후보 무관 고정 크롭)는 도입 당일 제거했다 - 책이 프레임에 작게
+        # 찍힌 컷에서 4칸 전부 책상이 잘렸고(실측 A034), 기여가 입증된 사례가 없다.
+        # 후보 없는 모서리 결함의 경계는 촬영 규격(책이 가이드박스를 채우게)과 HITL이 담당한다.
         # 겹치는 후보(IoU>0.55)는 확신도 높은 것 하나만 남긴다.
         def _iou(a, b):
             ax1, ay1, ax2, ay2 = a["xmin"], a["ymin"], a["xmax"], a["ymax"]
@@ -291,24 +294,6 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             )})
             content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{crop_b64}"}})
 
-        # --- 모서리 몽타주 (후보 무관, 컷당 1장) ---
-        # 탐지기가 놓친 모서리 결함은 후보 크롭으로 살릴 수 없고, 전체 프레임에서 VLM은
-        # 소면적 결함을 못 본다(실측 0.055% 면적 문제). 마모·찍힘·접힘이 사는 자리는
-        # 정해져 있으므로 네 모서리를 **한 장의 2x2 격자로 합성**해 컷당 1장만 첨부한다
-        # (장수 폭증 방지 - 개별 첨부 시 10장, 몽타주는 3장).
-        for ck in (range(min(len(image_paths), TRACK1_IMAGE_COUNT)) if _crops_enabled else []):
-            m_b64 = _corner_montage(local_frames.get(ck, image_paths[ck]), spine=(ck == 2))
-            if not m_b64:
-                continue
-            layout = ("위=책등 상단 끝 / 아래=책등 하단 끝" if ck == 2
-                      else "좌상단 사분면=책 좌상 모서리, 우상단=우상, 좌하단=좌하, 우하단=우하")
-            content_list.append({"type": "text", "text": (
-                f"[모서리 몽타주 - image_index={ck}의 모서리들을 확대해 격자로 합성한 참고 이미지 ({layout}). "
-                "새 image_index가 아님. 어느 사분면에서 마모·찍힘·접힘·찢어짐이 보이면 "
-                f"image_index={ck}의 해당 모서리 좌표(예: 좌하 모서리면 xmin 0~170·ymin 830~1000 부근)로 "
-                "결함을 보고할 것. 배경(책상)만 보이는 사분면은 무시할 것]"
-            )})
-            content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{m_b64}"}})
 
         special_notes = None
         vision_error = None
@@ -698,48 +683,6 @@ VERIFY_CROP_MAX_ASPECT = 3.0      # 띠 형태 결함의 짧은 축에 맥락을
 VERIFY_CROP_MIN_SHORT = 224       # 배율 기준축 (긴 변 기준이면 띠에서 확대가 안 된다.)
 VERIFY_CROP_MAX_LONG = 896
 VERIFY_CROP_MAX_UPSCALE = 4.0     # 원본에 없는 정보는 확대해도 생기지 않는다.
-
-
-def _corner_montage(path_or_url: str, spine: bool = False) -> Optional[str]:
-    """네 모서리(책등은 양끝)를 한 장의 격자로 합성해 base64로 돌려준다.
-
-    모서리를 개별 크롭으로 첨부하면 컷당 4장씩 불어나 주의력이 분산된다.
-    한 장으로 합치면 확대 배율은 유지하면서 첨부 수는 컷당 1장이다.
-    """
-    try:
-        import cv2
-        import numpy as np
-
-        local = _ensure_local_path(path_or_url)
-        if not local:
-            return None
-        img = cv2.imread(local)
-        if img is None:
-            return None
-        h, w = img.shape[:2]
-        cell = 256
-        if spine:
-            # 책등: 위/아래 끝단을 세로로 쌓는다 (각 셀 512x256)
-            top = cv2.resize(img[0:max(1, int(h * 0.12)), :], (cell * 2, cell))
-            bot = cv2.resize(img[int(h * 0.88):, :], (cell * 2, cell))
-            grid = np.vstack([top, bot])
-        else:
-            cw, chh = max(1, int(w * 0.17)), max(1, int(h * 0.17))
-            tl = cv2.resize(img[0:chh, 0:cw], (cell, cell))
-            tr = cv2.resize(img[0:chh, w - cw:], (cell, cell))
-            bl = cv2.resize(img[h - chh:, 0:cw], (cell, cell))
-            br = cv2.resize(img[h - chh:, w - cw:], (cell, cell))
-            grid = np.vstack([np.hstack([tl, tr]), np.hstack([bl, br])])
-        # 사분면 경계선 - 모델이 셀을 혼동하지 않게 한다
-        grid[cell - 1:cell + 1, :] = 255
-        grid[:, cell - 1:cell + 1] = 255
-        ok, buf = cv2.imencode(".jpg", grid, [cv2.IMWRITE_JPEG_QUALITY, 88])
-        if not ok:
-            return None
-        return base64.b64encode(buf.tobytes()).decode("utf-8")
-    except Exception as e:
-        print(f"[Vision Agent] 모서리 몽타주 실패 ({path_or_url}): {e}")
-        return None
 
 
 def _crop_around_bbox(
