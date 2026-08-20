@@ -28,11 +28,17 @@ from app.ai.agents.llm import llm_verify, llm_vlm
 from app.ai.agents.schemas import CriticVerdict, DefectEvidenceVerdict, VisionResult
 
 VISION_PROMPT_BASE = """당신은 WMS 디지털 품질 검수 센터의 수석 AI 비전(VLM) 검수원입니다.
-OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전처리가 완료된 도서 이미지(앞표지, 뒷표지, 속지)를 시각적으로 정밀 분석하여 결함 및 BBox(0~1000 상대좌표)를 100% 정밀 검출하세요.
+현장 작업자가 스마트폰으로 촬영한 도서 이미지(앞표지, 뒷표지, 속지)입니다. 별도 보정 없이 촬영 원본이므로 조명·기울기·초점 편차가 있을 수 있습니다. 이미지를 시각적으로 정밀 분석하여 결함 및 BBox(0~1000 상대좌표)를 검출하세요.
 
 [BBox 검출 및 결함 판정 4대 원칙]
 1. 표지 (Front/Back Cover):
    - 찌그러짐, 찢어짐, 심한 오염이 없는 깨끗한 표지는 결함 없음(Clean, []).
+1-1. 모서리/가장자리 마모 (DMG_EDGE_WEAR) — 표지·책등의 모서리와 능선을 확대해 보고 판단:
+   - 진한 색 표지에서 모서리·가장자리를 따라 드러난 **흰 띠/흰 점** — 코팅과 인쇄층이 벗겨져 속의 종이 심이 노출된 것입니다. 진한 표지일수록 명확하게 보입니다.
+   - 모서리 꼭짓점이 뾰족하지 않고 뭉툭하게 눌리거나 보풀이 일어난 상태.
+   - 책등 위·아래 끝단(머리·발)의 눌림과 해짐 — 책을 꽂고 뺄 때 가장 먼저 닳는 부위입니다.
+   - **조명 반사와 구별하세요**: 반사 하이라이트는 각도에 따라 면으로 넓게 퍼지지만, 마모는 모서리 능선을 따라 가늘고 불규칙하게 이어집니다.
+   - YOLO 제보 중 모서리·가장자리 위치의 WEAR 후보는 그 좌표 부위를 확대해 위 신호가 있는지 확인한 뒤 채택/기각을 결정하세요. 신호가 보이면 애매하다는 이유로 기각하지 말고 낮은 confidence로라도 채택하세요.
 2. 속지 필기/낙서 (DMG_INT_DOODLE):
    - 본문 지문, 보기 번호(①~④)에 친 연필/볼펜 동그라미 표기 -> DMG_INT_DOODLE.
    - 지문/쿼리문 하단에 그은 연필/볼펜 밑줄(Underline) -> DMG_INT_DOODLE.
@@ -230,11 +236,79 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
         # 범위 밖 인덱스는 Critic이 환각으로 판정해 HITL로 보내므로, 프롬프트 탓에 매번 HITL이 걸리는 상태가 된다.
         # 라벨로 앵커를 박아 순서를 강제한다.
         content_list = [{"type": "text", "text": prompt_vlm}]
+        # 컷당 1회만 다운로드해 프레임·후보크롭·몽타주가 같은 로컬 파일을 재사용한다.
+        # 종전처럼 크롭마다 다시 받으면 최악 9회 왕복으로 지연이 눈에 띄게 는다.
+        local_frames: Dict[int, str] = {}
         for i, path in enumerate(image_paths):
-            b64 = _load_image_as_base64(path)
+            lp = _ensure_local_path(path)
+            if lp:
+                local_frames[i] = lp
+            b64 = _load_image_as_base64(lp or path)
             if b64:
                 content_list.append({"type": "text", "text": f"[이미지 index={i}]"})
                 content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+
+        # 크롭 첨부 킬스위치 - 시연 중 지연이 문제되면 재배포 없이 끈다.
+        _crops_enabled = os.getenv("WMS_VLM_CROPS", "1") != "0"
+
+        # --- 후보별 확대 크롭 첨부 (채택 판단용) ---
+        # 전체 프레임만 주면 VLM은 후보 좌표를 픽셀로 환산하지 못해 "전건 승인 아니면
+        # 전건 기각"으로 흔들린다 (실측: 실마모 79%를 기각한 날, 프롬프트를 조이자
+        # 인쇄 제목 46%까지 승인). 증거 대조 검증이 같은 실패를 크롭 확대로 해결한
+        # 전례를 채택 단계에 적용한다 - 후보마다 그 부위를 잘라 보여주고, 채택/기각을
+        # 그 크롭의 픽셀로 결정하게 한다.
+        # 첨부 상한을 지킨다 - 크롭이 스무 장씩 붙으면 비용보다 주의력 분산이 문제다.
+        # 겹치는 후보(IoU>0.55)는 확신도 높은 것 하나만 남긴다.
+        def _iou(a, b):
+            ax1, ay1, ax2, ay2 = a["xmin"], a["ymin"], a["xmax"], a["ymax"]
+            bx1, by1, bx2, by2 = b["xmin"], b["ymin"], b["xmax"], b["ymax"]
+            ix = max(0, min(ax2, bx2) - max(ax1, bx1))
+            iy = max(0, min(ay2, by2) - max(ay1, by1))
+            inter = ix * iy
+            union = (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter
+            return inter / union if union > 0 else 0.0
+
+        picked: List[Dict[str, Any]] = []
+        for cand in (sorted(yolo_candidates, key=lambda c: -(c.get("confidence") or 0)) if _crops_enabled else []):
+            cb, ck = cand.get("bbox"), cand.get("image_index")
+            if not isinstance(cb, dict) or not isinstance(ck, int) or not (0 <= ck < len(image_paths)):
+                continue
+            if any(p.get("image_index") == ck and _iou(p["bbox"], cb) > 0.55 for p in picked):
+                continue
+            picked.append(cand)
+            if len(picked) >= 6:
+                break
+        for cand in picked:
+            cb, ck = cand["bbox"], cand["image_index"]
+            crop_b64 = _crop_around_bbox(local_frames.get(ck, image_paths[ck]), cb)
+            if not crop_b64:
+                continue
+            content_list.append({"type": "text", "text": (
+                f"[후보 확대 크롭 - image_index={ck}의 좌표 ({cb.get('xmin')},{cb.get('ymin')},"
+                f"{cb.get('xmax')},{cb.get('ymax')}) 부위, 제보유형 {cand.get('type')}. "
+                "판정 참고용 확대본이며 새 image_index가 아님. 이 후보의 채택/기각은 "
+                "전체 컷의 인상이 아니라 이 확대본에서 결함 신호가 실제로 보이는지로 결정할 것]"
+            )})
+            content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{crop_b64}"}})
+
+        # --- 모서리 몽타주 (후보 무관, 컷당 1장) ---
+        # 탐지기가 놓친 모서리 결함은 후보 크롭으로 살릴 수 없고, 전체 프레임에서 VLM은
+        # 소면적 결함을 못 본다(실측 0.055% 면적 문제). 마모·찍힘·접힘이 사는 자리는
+        # 정해져 있으므로 네 모서리를 **한 장의 2x2 격자로 합성**해 컷당 1장만 첨부한다
+        # (장수 폭증 방지 - 개별 첨부 시 10장, 몽타주는 3장).
+        for ck in (range(min(len(image_paths), TRACK1_IMAGE_COUNT)) if _crops_enabled else []):
+            m_b64 = _corner_montage(local_frames.get(ck, image_paths[ck]), spine=(ck == 2))
+            if not m_b64:
+                continue
+            layout = ("위=책등 상단 끝 / 아래=책등 하단 끝" if ck == 2
+                      else "좌상단 사분면=책 좌상 모서리, 우상단=우상, 좌하단=좌하, 우하단=우하")
+            content_list.append({"type": "text", "text": (
+                f"[모서리 몽타주 - image_index={ck}의 모서리들을 확대해 격자로 합성한 참고 이미지 ({layout}). "
+                "새 image_index가 아님. 어느 사분면에서 마모·찍힘·접힘·찢어짐이 보이면 "
+                f"image_index={ck}의 해당 모서리 좌표(예: 좌하 모서리면 xmin 0~170·ymin 830~1000 부근)로 "
+                "결함을 보고할 것. 배경(책상)만 보이는 사분면은 무시할 것]"
+            )})
+            content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{m_b64}"}})
 
         special_notes = None
         vision_error = None
@@ -624,6 +698,48 @@ VERIFY_CROP_MAX_ASPECT = 3.0      # 띠 형태 결함의 짧은 축에 맥락을
 VERIFY_CROP_MIN_SHORT = 224       # 배율 기준축 (긴 변 기준이면 띠에서 확대가 안 된다.)
 VERIFY_CROP_MAX_LONG = 896
 VERIFY_CROP_MAX_UPSCALE = 4.0     # 원본에 없는 정보는 확대해도 생기지 않는다.
+
+
+def _corner_montage(path_or_url: str, spine: bool = False) -> Optional[str]:
+    """네 모서리(책등은 양끝)를 한 장의 격자로 합성해 base64로 돌려준다.
+
+    모서리를 개별 크롭으로 첨부하면 컷당 4장씩 불어나 주의력이 분산된다.
+    한 장으로 합치면 확대 배율은 유지하면서 첨부 수는 컷당 1장이다.
+    """
+    try:
+        import cv2
+        import numpy as np
+
+        local = _ensure_local_path(path_or_url)
+        if not local:
+            return None
+        img = cv2.imread(local)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        cell = 256
+        if spine:
+            # 책등: 위/아래 끝단을 세로로 쌓는다 (각 셀 512x256)
+            top = cv2.resize(img[0:max(1, int(h * 0.12)), :], (cell * 2, cell))
+            bot = cv2.resize(img[int(h * 0.88):, :], (cell * 2, cell))
+            grid = np.vstack([top, bot])
+        else:
+            cw, chh = max(1, int(w * 0.17)), max(1, int(h * 0.17))
+            tl = cv2.resize(img[0:chh, 0:cw], (cell, cell))
+            tr = cv2.resize(img[0:chh, w - cw:], (cell, cell))
+            bl = cv2.resize(img[h - chh:, 0:cw], (cell, cell))
+            br = cv2.resize(img[h - chh:, w - cw:], (cell, cell))
+            grid = np.vstack([np.hstack([tl, tr]), np.hstack([bl, br])])
+        # 사분면 경계선 - 모델이 셀을 혼동하지 않게 한다
+        grid[cell - 1:cell + 1, :] = 255
+        grid[:, cell - 1:cell + 1] = 255
+        ok, buf = cv2.imencode(".jpg", grid, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode("utf-8")
+    except Exception as e:
+        print(f"[Vision Agent] 모서리 몽타주 실패 ({path_or_url}): {e}")
+        return None
 
 
 def _crop_around_bbox(
