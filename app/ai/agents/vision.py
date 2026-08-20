@@ -39,6 +39,12 @@ OpenCV CLAHE(Contrast Limited Adaptive Histogram Equalization) 동적 명암 전
    - 문제 박스 안이나 여백에 적힌 손글씨 메모(SQL 쿼리, outer join, 10:10:00, 숫적 메모 등) -> DMG_INT_DOODLE.
 3. 인쇄본 구별:
    - 교재 본문에 기본 인쇄된 텍스트, 표(Table), 인포그래픽 박스는 절대 결함으로 오탐하지 말 것.
+   - 조판된 본문 활자(균일한 잉크 농도, 일정한 행간·자간·정렬)는 DMG_INT_DOODLE이 아닙니다. 손글씨는 필압·기울기·크기가 불규칙하고 행에서 벗어납니다. 확신이 서지 않는 텍스트는 낙서로 보고하지 마세요.
+3-1. 페이지 접힘 (DMG_EXT_CRUSH) — 색이 아니라 종이의 기하학적 변형으로 판단:
+   - 모서리가 삼각형으로 접힌 자국(dog-ear): 접혔다 펴진 흔적(대각선 접힘선)도 포함합니다.
+   - 페이지나 표지를 가로지르는 접힘선(crease): 직선 형태의 음영/하이라이트 경계로 나타나며, 그 선을 기준으로 종이 평면이 꺾여 있습니다.
+   - 펼침 컷에서 특정 페이지가 평평하지 않고 들뜨거나 꺾여 있으면 접힘입니다.
+   - 제본 중앙의 자연스러운 곡면(펼친 책의 가운데 골)은 접힘이 아닙니다.
 4. 좌표계:
    - 각 결함(defects[i])의 bbox 필드에 xmin, ymin, xmax, ymax를 이미지 0~1000 픽셀 상대 좌표로 채워서 반환하세요. confidence 필드에는 본인의 판독 확신도(0.0~1.0)를 적으세요.
    - bbox는 **당신이 이미지에서 실제로 본 위치**여야 합니다. 결함은 보이는데 위치를 정확히 특정할 수 없으면 좌표를 지어내지 말고 bbox를 null로 두세요 (그 건은 관리자가 직접 위치를 그립니다). (50,50,150,150)처럼 규칙적인 예시형 좌표, 여러 결함에 같은 좌표 반복, 이미지 전체를 덮는 띠는 전부 "보지 않고 지어낸 좌표"로 간주되어 판독 전체가 반려됩니다.
@@ -331,6 +337,9 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
 
             hits = wbf_detector.detect_doodle_only(
                 crop,
+                # 기본 0.20에서는 조판 활자가 44~70%로 대량 오탐된다(실측 A008: 속지 1장 19건 전부 인쇄 텍스트).
+                # 실제 손글씨는 81% 이상으로 잡히므로 그 사이(0.75)를 기본 컷으로 둔다. 유하게 보는 쪽이 정책이다.
+                conf=float(os.getenv("WMS_DOODLE_INNER_CONF", "0.75")),
                 debug_tag=f"idx{idx}_inner",
                 debug_meta={
                     "source_image": os.path.basename(local_path),
