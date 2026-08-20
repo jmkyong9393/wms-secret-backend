@@ -123,6 +123,8 @@ class LangGraphInspectionWrapper:
                 "primary_reason_code": primary_reason_code,
                 # 감점 근거 조항 (RAG grounding). 보증서/상세화면이 "이 감점의 근거는 어느 조항인가"를 출처와 함께 제시할 수 있게 한다.
                 "deduction_basis": final_state.get("deduction_basis") or [],
+                # e8e22e4 주석 정리 때 이 줄만 함께 지워져 화면이 "(서술 미기록)"으로 표시됐다.
+                "detector_text": final_state.get("detector_text"),
                 "vision_text": final_state.get("vision_text"),
                 "policy_text": final_state.get("policy_text"),
                 "critic_text": final_state.get("critic_text"),
