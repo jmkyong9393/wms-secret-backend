@@ -1,0 +1,12 @@
+# 평가용 최소 인프라 - 빈 PostgreSQL 하나로 통합 스모크가 자급자족한다.
+# (저장소 루트의 docker-compose.yml은 개발용 시드 스키마를 포함하므로 평가는 이 파일 권장)
+#   docker compose -f tests/integration/docker-compose.eval.yml up -d
+services:
+  eval-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: wms_db
+    ports:
+      - "5432:5432"

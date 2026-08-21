@@ -3,25 +3,34 @@
 "모든 기능을 한 번씩 실제로 돌려볼 수 있는" 단일 진입점.
 쓰기 포함 전 도메인을 한 파일로 관통하고, 생성한 데이터는 마지막 테스트가 전부 회수한다.
 
-## 실행
+## 실행 (빈 환경에서 3개 명령으로 끝 - 클린룸 검증 완료)
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/integration -q
+# ① 평가용 빈 PostgreSQL (저장소 compose와 무관, 시드·스키마 파일 불필요)
+docker compose -f tests/integration/docker-compose.eval.yml up -d
+
+# ② 의존성 (Python 3.11+ · uv 사용. requirements.txt는 없고 pyproject.toml + uv.lock이 정본)
+pip install uv && uv sync
+
+# ③ 실행
+uv run pytest tests/integration -q
 ```
 
 기대 결과: **19 passed, 4~5초.** 반복 실행 가능(매 실행 고유 `ITEST<epoch>` 태그로 생성→전량 삭제).
 
-## 전제 조건 (필수)
+## 자급자족 부트스트랩 - 시드가 전혀 필요 없다
 
-| # | 항목 | 확인 방법 |
-|---|---|---|
-| 1 | 로컬 스택 기동 (PostgreSQL 필수) | `docker compose up -d` 후 `docker ps`에 postgres 컨테이너 |
-| 2 | 백엔드 루트에 `.env` | 아래 "필요한 .env 키" 참조 |
-| 3 | 가상환경 의존성 설치 | `.venv/Scripts/pip install -r requirements.txt` |
-| 4 | 시드 계정 존재 | ACTIVE 상태의 MASTER/ADMIN 1명 + WORKER 1명 (없으면 해당 테스트 skip) |
-| 5 | 로케이션 시드 존재 | `locations` 테이블 1행 이상 (시연 시드에 포함됨) |
+빈 DB면 테스트 세션이 스스로 준비한다 (전부 멱등 - 이미 있으면 건드리지 않음):
 
-Redis·Celery 워커·라벨 프린터·인터넷 연결은 **필요 없다** — 아래 경계 처리 참조.
+| 대상 | 방법 |
+|---|---|
+| 스키마 23테이블 | `SQLModel.metadata.create_all` (없는 테이블만 생성) |
+| MASTER 계정 | 앱 스타트업의 빈 DB 자동 시드 + `init-master` 정식 경로 (WM2608001/1234) |
+| WORKER 계정 | 직원 발급 서비스 정식 경로로 1명 생성 |
+| 로케이션 | A-01-01 1행 삽입 |
+
+`.env` 없이도 기본값(localhost:5432, admin/password)으로 동작한다. 별도 설정이 필요하면
+아래 "필요한 .env 키" 참조. Redis·Celery 워커·라벨 프린터·인터넷 연결은 **필요 없다**.
 
 ## 필요한 .env 키
 
