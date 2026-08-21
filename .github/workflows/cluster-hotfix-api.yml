@@ -1,0 +1,59 @@
+# API 가용성 핫픽스 — 502 플래핑 완화 전용.
+# 하는 일 2가지뿐: ① wms-api 2레플리카 복원 ② probe 타임아웃 현실화(기본 1초 → 3초).
+# 이미지·코드·리소스 limits는 건드리지 않는다.
+name: Cluster Hotfix - API Availability
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "true여야 실제 적용. false면 현재 상태만 출력(dry-run)"
+        required: true
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      APPLY: ${{ inputs.apply }}
+    steps:
+      - name: Scale API + fix probe timeouts
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: APPLY
+          script: |
+            echo "=== 현재 상태 ==="
+            kubectl get deploy wms-api -o jsonpath='{.spec.replicas} 레플리카 / readiness timeout {.spec.template.spec.containers[0].readinessProbe.timeoutSeconds}s (빈값=1s)'
+            echo ""
+            kubectl get pods -l app=wms-api -o wide
+
+            if [ "$APPLY" != "true" ]; then
+              echo "[dry-run] apply=true 로 재실행해야 변경된다"; exit 0
+            fi
+
+            echo "=== ① probe 타임아웃 현실화 (1초는 스레드풀이 잠깐만 차도 탈락한다) ==="
+            kubectl patch deploy wms-api --type=json -p '[
+              {"op":"add","path":"/spec/template/spec/containers/0/readinessProbe/timeoutSeconds","value":3},
+              {"op":"add","path":"/spec/template/spec/containers/0/readinessProbe/failureThreshold","value":5},
+              {"op":"add","path":"/spec/template/spec/containers/0/livenessProbe/timeoutSeconds","value":3},
+              {"op":"add","path":"/spec/template/spec/containers/0/livenessProbe/failureThreshold","value":5}
+            ]'
+
+            echo "=== ② 2레플리카 복원 (한 파드가 흔들려도 다른 파드가 502를 막는다) ==="
+            kubectl scale deploy wms-api --replicas=2
+            kubectl rollout status deploy/wms-api --timeout=300s
+
+            echo "=== 결과 검증 ==="
+            kubectl get pods -l app=wms-api -o wide
+            for i in 1 2 3 4 5; do
+              curl -s -o /dev/null -w "/health %{http_code} %{time_total}s\n" --max-time 10 http://localhost:30080/health || true
+              sleep 2
+            done
