@@ -25,6 +25,10 @@ COPY app/ai/*.pt ./app/ai/
 # 나머지 전체 프로젝트 복사 후 설치 (가중치 레이어는 위에서 이미 캐시됨)
 COPY --exclude=app/ai/*.pt . /app
 RUN uv sync --frozen --no-dev
+# CloudFront 서명 가속용 - 락 파일 밖 단일 wheel 설치.
+# (requires-python 3.11 ↔ xgboost 3.4 메타데이터 충돌로 전체 재잠금이 불가한 상태.
+#  cryptography는 의존 추가가 없는 독립 wheel이라 단독 설치가 안전하고, 미설치여도 rsa 폴백으로 동작.)
+RUN uv pip install "cryptography>=42,<46"
 
 # Stage 2: Runtime
 FROM python:3.11-slim AS runtime

@@ -65,18 +65,40 @@ def _is_cdn_url(url: str) -> bool:
 
 
 @lru_cache(maxsize=1)
+def _fast_sign_key():
+    """cryptography(OpenSSL) 키 객체. 순수 파이썬 rsa 서명은 1건당 30~100ms라
+    URL 수백 개짜리 응답에서 수십 초가 된다 - C 구현으로 서명한다 (~0.5ms/건)."""
+    raw = _raw_private_key()
+    if not raw or "mock" in raw:
+        return None
+    try:
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        return load_pem_private_key(raw.encode("utf-8"), password=None)
+    except Exception as exc:
+        print(f"[CloudFront] cryptography 키 로드 실패 - rsa 폴백: {exc}")
+        return None
+
+
+@lru_cache(maxsize=1)
 def _signer() -> Optional[CloudFrontSigner]:
     key = _load_private_key()
     if key is None:
         return None
-    # CloudFront 서명은 SHA-1 고정이다 (AWS 규격).
+    fast = _fast_sign_key()
+    if fast is not None:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        # CloudFront 서명은 SHA-1 고정이다 (AWS 규격).
+        return CloudFrontSigner(
+            _key_pair_id(),
+            lambda msg: fast.sign(msg, padding.PKCS1v15(), hashes.SHA1()),
+        )
     return CloudFrontSigner(_key_pair_id(), lambda msg: rsa.sign(msg, key, "SHA-1"))
 
 
-def sign_url(url: str, expire_minutes: int = DEFAULT_EXPIRE_MINUTES) -> str:
-    """CloudFront URL에 서명을 붙인다. 대상이 아니거나 키가 없으면 원본을 그대로 반환."""
-    if not _is_cdn_url(url) or "Signature=" in url:
-        return url
+@lru_cache(maxsize=8192)
+def _sign_cached(url: str, expire_minutes: int, _bucket: int) -> str:
     signer = _signer()
     if signer is None:
         return url
@@ -88,6 +110,18 @@ def sign_url(url: str, expire_minutes: int = DEFAULT_EXPIRE_MINUTES) -> str:
     except Exception as exc:
         print(f"[CloudFront] 서명 실패 - 원본 URL로 진행합니다 ({url}): {exc}")
         return url
+
+
+def sign_url(url: str, expire_minutes: int = DEFAULT_EXPIRE_MINUTES) -> str:
+    """CloudFront URL에 서명을 붙인다. 대상이 아니거나 키가 없으면 원본을 그대로 반환.
+
+    같은 URL은 30분 버킷 단위로 캐시해 재서명을 생략한다 - 유효기간이 60분이라
+    캐시에서 꺼낸 URL도 항상 30분 이상 남는다.
+    """
+    if not _is_cdn_url(url) or "Signature=" in url:
+        return url
+    bucket = int(datetime.datetime.now(datetime.timezone.utc).timestamp() // 1800)
+    return _sign_cached(url, expire_minutes, bucket)
 
 
 def sign_payload(obj: Any, expire_minutes: int = DEFAULT_EXPIRE_MINUTES) -> Any:
