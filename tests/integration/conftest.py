@@ -26,6 +26,34 @@ def pytest_sessionstart(session):
             returncode=3,
         )
 
+    # 빈 DB 자급자족 부트스트랩 - 평가자가 시드 없이 바로 돌릴 수 있게 한다.
+    # create_all은 없는 테이블만 만들고 기존 테이블은 건드리지 않는다(멱등).
+    from sqlmodel import SQLModel, Session, select
+    import app.models.wms as m
+
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as s:
+        if not s.exec(select(m.Location)).first():
+            s.add(m.Location(zone="A", rack="01", shelf="01", barcode="A-01-01"))
+            s.commit()
+        if not s.exec(select(m.User)).first():
+            # 최초 관리자(WM2608001/1234)는 서비스의 정식 경로로 생성한다
+            from fastapi.testclient import TestClient
+            from app.main import app as _app
+            with TestClient(_app) as c:
+                c.post("/api/v1/users/init-master")
+        # 워커 계정도 정식 발급 경로로 1명 확보 (없을 때만)
+        if not s.exec(select(m.User).where(m.User.role == "WORKER")).first():
+            master = s.exec(select(m.User).where(m.User.role.in_(["MASTER", "ADMIN"]))).first()
+            if master:
+                from app.domains.users.service import user_service
+                from app.domains.users.schemas import UserCreate
+                u, _pw = user_service.register_user(session=s, user_in=UserCreate(
+                    company_prefix="WM", name="평가용워커", role="WORKER"))
+                u.status = "ACTIVE"
+                s.add(u)
+                s.commit()
+
 
 @pytest.fixture(autouse=True)
 def _fresh_cookies(client):
