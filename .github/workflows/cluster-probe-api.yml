@@ -1,0 +1,55 @@
+# API 지연 경로 분리 프로브 (읽기 전용) - 파드 내부 vs 서비스 경유 vs 외부 응답시간 비교.
+name: Cluster Probe - API Latency Path
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+    steps:
+      - name: Probe latency at each hop
+        if: ${{ env.EC2_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            POD=$(kubectl get pods -l app=wms-api -o jsonpath='{.items[0].metadata.name}')
+            echo "대상 파드: $POD"
+
+            echo "=== 파드 내부에서 토큰 발급 ==="
+            TOKEN=$(kubectl exec "$POD" -- python -c "
+            import jwt, datetime as dt
+            from app.core.config import settings
+            from sqlmodel import Session, select, create_engine
+            from app.models.wms import User
+            eng = create_engine(settings.DATABASE_URL)
+            with Session(eng) as s:
+                u = s.exec(select(User).where(User.role.in_(['MASTER','ADMIN']))).first()
+            print(jwt.encode({'sub': u.employee_id, 'exp': dt.datetime.utcnow()+dt.timedelta(minutes=10)}, settings.SECRET_KEY, algorithm=settings.ALGORITHM))
+            " | tr -d '\r')
+            echo "토큰 길이: ${#TOKEN}"
+
+            echo "=== ① 파드 내부 (localhost:8000) ==="
+            for EP in /health /api/v1/admin/hitl/pending /api/v1/admin/hitl/completed /api/v1/inventory; do
+              kubectl exec "$POD" -- python -c "
+            import time, urllib.request
+            req = urllib.request.Request('http://localhost:8000$EP', headers={'Authorization': 'Bearer $TOKEN'})
+            t = time.time()
+            body = urllib.request.urlopen(req, timeout=120).read()
+            print(f'{time.time()-t:7.3f}s {len(body):>9}B  $EP')
+            "
+            done
+
+            echo "=== ② 노드에서 NodePort 경유 ==="
+            for EP in /api/v1/admin/hitl/completed /api/v1/inventory; do
+              curl -s -o /dev/null -H "Authorization: Bearer $TOKEN" \
+                -w "%{time_total}s %{size_download}B  $EP\n" --max-time 120 "http://localhost:30080$EP" || true
+            done
