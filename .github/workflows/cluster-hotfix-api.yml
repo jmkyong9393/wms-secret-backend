@@ -40,8 +40,8 @@ jobs:
             fi
 
             echo "=== ① probe 타임아웃 현실화 (1초는 스레드풀이 잠깐만 차도 탈락한다) ==="
-            # 컨테이너 이름 기준 병합이라 인덱스·기존 필드 유무에 흔들리지 않는다
-            kubectl patch deploy wms-api --type=strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","readinessProbe":{"timeoutSeconds":3,"failureThreshold":5},"livenessProbe":{"timeoutSeconds":3,"failureThreshold":5}}]}}}}'
+            # 라이브에는 livenessProbe가 아예 없어 부분 병합이 거부된다 - 핸들러 포함 완전 정의로 패치
+            kubectl patch deploy wms-api --type=strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","readinessProbe":{"httpGet":{"path":"/health","port":8000},"periodSeconds":10,"timeoutSeconds":3,"failureThreshold":5},"livenessProbe":{"httpGet":{"path":"/health","port":8000},"periodSeconds":15,"timeoutSeconds":3,"failureThreshold":5}}]}}}}'
             kubectl get deploy wms-api -o jsonpath='패치 후: readiness timeout {.spec.template.spec.containers[0].readinessProbe.timeoutSeconds}s / failureThreshold {.spec.template.spec.containers[0].readinessProbe.failureThreshold}'
             echo ""
 
