@@ -66,4 +66,6 @@ USER wms-user
 EXPOSE 8000
 
 # 컨테이너 실행 시 기본 엔트리포인트 (Celery 구동 시 command override 권장)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 워커 2개: 단일 프로세스는 무거운 직렬화 요청 하나가 파드 전체를 마비시킨다
+# (동시 측정 실증 - completed 24s 처리 중 같은 파드의 /health가 20s 동반 정지)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
