@@ -40,12 +40,10 @@ jobs:
             fi
 
             echo "=== ① probe 타임아웃 현실화 (1초는 스레드풀이 잠깐만 차도 탈락한다) ==="
-            kubectl patch deploy wms-api --type=json -p '[
-              {"op":"add","path":"/spec/template/spec/containers/0/readinessProbe/timeoutSeconds","value":3},
-              {"op":"add","path":"/spec/template/spec/containers/0/readinessProbe/failureThreshold","value":5},
-              {"op":"add","path":"/spec/template/spec/containers/0/livenessProbe/timeoutSeconds","value":3},
-              {"op":"add","path":"/spec/template/spec/containers/0/livenessProbe/failureThreshold","value":5}
-            ]'
+            # 컨테이너 이름 기준 병합이라 인덱스·기존 필드 유무에 흔들리지 않는다
+            kubectl patch deploy wms-api --type=strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","readinessProbe":{"timeoutSeconds":3,"failureThreshold":5},"livenessProbe":{"timeoutSeconds":3,"failureThreshold":5}}]}}}}'
+            kubectl get deploy wms-api -o jsonpath='패치 후: readiness timeout {.spec.template.spec.containers[0].readinessProbe.timeoutSeconds}s / failureThreshold {.spec.template.spec.containers[0].readinessProbe.failureThreshold}'
+            echo ""
 
             echo "=== ② 2레플리카 복원 (한 파드가 흔들려도 다른 파드가 502를 막는다) ==="
             kubectl scale deploy wms-api --replicas=2
