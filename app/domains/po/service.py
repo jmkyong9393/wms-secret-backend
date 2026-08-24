@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -11,6 +12,7 @@ from app.core.settings_service import (
 )
 from app.models.wms import (
     Book,
+    InventoryLog,
     InventoryUsedItem,
     Order,
     OrderItem,
@@ -217,9 +219,15 @@ class POService:
 
     def scan_safety_stock(self, db: Session) -> Dict[str, Any]:
         """
-        가용 재고(신품 virtual_stock + 중고 IN_STOCK)가 안전선 미만인 도서를 찾아
-        Restock 판정 그래프로 제안을 생성한다. 이미 PENDING 카드가 있는 도서는 건너뛰어
-        칸반 중복을 막고, 1회 스캔당 생성 수를 제한해 LLM 비용을 상한한다.
+        수요 이력이 있는 도서만 대상으로 Restock 판정 그래프로 제안을 생성한다.
+
+        1순위(최상단): 가용 재고 0 + 출고 이력 존재(기간 무관) - 품절로 출고가 끊겨
+          30일 윈도에서 수요 신호가 소멸한 도서. 판매 기회가 새는 중이므로 최우선.
+        2순위: 재고 >0 + 최근 30일 OUTBOUND 이력 + 안전선(수요 도서의 최소 보충선) 미만.
+        제외: 출고 이력이 전무한 도서(등록만 된 책) - 수요 근거가 없다.
+
+        이미 PENDING 카드가 있는 도서는 건너뛰어 칸반 중복을 막고,
+        1회 스캔당 생성 수를 제한해 LLM 비용을 상한한다.
         """
         from app.ai.agents.restock import generate_and_store_proposal
 
@@ -233,28 +241,48 @@ class POService:
             .group_by(InventoryUsedItem.book_id)
         ).all())
 
-        # 저재고 우선 정렬은 실보유 수량(Inventory 합)으로 한다. 종전 기준이던
-        # Book.virtual_stock은 위치 없는 중복 기록이라 실재고를 반영하지 못했다.
+        # 실보유 수량은 Inventory 합으로 계산한다. Book.virtual_stock은
+        # 위치 없는 중복 기록이라 실재고를 반영하지 못했다.
         from app.domains.inventory.service import get_new_stock_map
 
         new_stock_map = get_new_stock_map(db)
-        candidates = sorted(
-            db.exec(select(Book).where(Book.is_active == True)).all(),
-            key=lambda b: new_stock_map.get(b.id, 0) + int(used_counts.get(b.id, 0)),
-        )[:60]
+
+        since = now_kst() - timedelta(days=30)
+        recent_demand_ids = set(db.exec(
+            select(InventoryLog.book_id).distinct().where(
+                InventoryLog.transaction_type == "OUTBOUND",
+                InventoryLog.created_at >= since,
+            )
+        ).all())
+        ever_sold_ids = set(db.exec(
+            select(InventoryLog.book_id).distinct().where(
+                InventoryLog.transaction_type == "OUTBOUND",
+            )
+        ).all())
 
         safety_stock_threshold = get_int_setting(
             db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD
         )
 
+        def _available(book: Book) -> int:
+            return new_stock_map.get(book.id, 0) + int(used_counts.get(book.id, 0))
+
+        # 후보 = (재고 0 ∧ 전 기간 출고 이력) ∪ (30일 출고 이력 ∧ 안전선 미만).
+        # 품절 복구(전자)를 최상단에 두어 SCAN_LIMIT에 밀려나지 않게 한다.
+        candidates = []
+        for book in db.exec(select(Book).where(Book.is_active == True)).all():
+            available = _available(book)
+            if available == 0 and book.id in ever_sold_ids:
+                candidates.append((0, available, book))
+            elif book.id in recent_demand_ids and available < safety_stock_threshold:
+                candidates.append((1, available, book))
+        candidates.sort(key=lambda t: (t[0], t[1]))
+
         created = []
-        for book in candidates:
+        for _, _, book in candidates:
             if len(created) >= self.SCAN_LIMIT:
                 break
             if book.id in pending_book_ids:
-                continue
-            available = new_stock_map.get(book.id, 0) + int(used_counts.get(book.id, 0))
-            if available >= safety_stock_threshold:
                 continue
             proposal = generate_and_store_proposal(
                 db, book,
