@@ -6,6 +6,9 @@ import httpx
 from botocore.signers import CloudFrontSigner
 from app.core.config import settings
 from app.models.wms import now_kst
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # 알라딘 조회 실패 시 Book.title에 넣는 자리표시자. 이 값이 든 행은 정본이 아니므로
@@ -73,7 +76,7 @@ async def lookup_book_by_isbn_with_status(isbn: str) -> tuple[dict, str | None]:
             break
         except Exception as e:
             last_error = e
-            print(
+            logger.warning(
                 f"[Aladin API] 조회 실패 {attempt}/{_ALADIN_ATTEMPTS} (isbn={isbn}): {type(e).__name__}: {e}"
             )
 
@@ -82,7 +85,7 @@ async def lookup_book_by_isbn_with_status(isbn: str) -> tuple[dict, str | None]:
 
     items = data.get("item") or []
     if not items:
-        print(f"[Aladin API] 해당 ISBN 없음 (isbn={isbn})")
+        logger.info(f"[Aladin API] 해당 ISBN 없음 (isbn={isbn})")
         return {}, LOOKUP_NOT_FOUND
 
     item = items[0]
@@ -155,7 +158,7 @@ def rsa_signer(message: bytes) -> bytes:
     try:
         if "mock" in settings.CLOUDFRONT_PRIVATE_KEY:
             # 로컬 개발 및 테스트를 위한 Mock 서명 반환 - 실제 서명으로 착각하지 않도록 명시적으로 로그
-            print(
+            logger.warning(
                 "[MOCK MODE] CLOUDFRONT_PRIVATE_KEY 미설정 - 가짜 서명을 반환합니다 (실제 CloudFront 서명 아님)."
             )
             return b"mock_signature_bytes_for_local_dev"
@@ -165,7 +168,7 @@ def rsa_signer(message: bytes) -> bytes:
         )
         return rsa.sign(message, private_key, "SHA-1")
     except Exception as e:
-        print(f"[MOCK MODE] RSA 서명 실패, mock으로 폴백: {e}")
+        logger.warning(f"[MOCK MODE] RSA 서명 실패, mock으로 폴백: {e}")
         return b"mock_signature_bytes_for_local_dev"
 
 

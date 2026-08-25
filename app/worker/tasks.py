@@ -41,9 +41,9 @@ try:
     trace.set_tracer_provider(provider)
 
     CeleryInstrumentor().instrument()
-    print("OpenTelemetry Celery Instrumentation enabled.")
+    logger.info("OpenTelemetry Celery Instrumentation enabled.")
 except ImportError:
-    print("OpenTelemetry not installed. Skipping tracing setup.")
+    logger.info("OpenTelemetry not installed. Skipping tracing setup.")
 
 # Redis Client Setup (for DLQ and Redlock)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

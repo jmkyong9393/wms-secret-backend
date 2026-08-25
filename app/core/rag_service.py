@@ -16,6 +16,9 @@ from __future__ import annotations
 import os
 import threading
 from typing import Any, Dict, List, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "wms_policy_kb"
 
@@ -50,9 +53,11 @@ def get_client():
             client = chromadb.HttpClient(host=host, port=port)
             client.heartbeat()
             _client = client
-            print(f"[RAG] Chroma 서버 연결 완료 ({host}:{port})")
+            logger.info(f"[RAG] Chroma 서버 연결 완료 ({host}:{port})")
         except Exception as e:
-            print(f"[RAG] Chroma 서버 연결 실패({e}) - 근거 인용 없이 진행합니다.")
+            logger.warning(
+                f"[RAG] Chroma 서버 연결 실패({e}) - 근거 인용 없이 진행합니다."
+            )
             _unavailable = True
     return _client
 
@@ -83,7 +88,7 @@ def get_embedder():
                 else OpenAIEmbeddings(model="text-embedding-3-small")
             )
         except Exception as e:
-            print(f"[RAG] 임베딩 모델 초기화 실패({e})")
+            logger.warning(f"[RAG] 임베딩 모델 초기화 실패({e})")
     return _embedder
 
 
@@ -120,7 +125,7 @@ def search_policy(
             include=["documents", "metadatas", "distances"],
         )
     except Exception as e:
-        print(f"[RAG] 검색 실패({e})")
+        logger.warning(f"[RAG] 검색 실패({e})")
         return []
 
     docs = (res.get("documents") or [[]])[0]
@@ -269,7 +274,7 @@ def build_hitl_briefing(
 """
             recommendation = llm_mini.invoke(prompt).content
     except Exception as e:
-        print(f"[RAG] HITL 브리핑 생성 실패({e}) - 규정 조항만 반환합니다.")
+        logger.warning(f"[RAG] HITL 브리핑 생성 실패({e}) - 규정 조항만 반환합니다.")
 
     return {
         "related_clauses": clauses,

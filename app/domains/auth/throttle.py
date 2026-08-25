@@ -24,6 +24,9 @@ from typing import Optional, Tuple
 import redis
 
 from app.core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "auth:fail:"
 
@@ -32,7 +35,7 @@ def _get_client() -> Optional[redis.Redis]:
     try:
         return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
     except Exception as e:
-        print(
+        logger.warning(
             f"[LoginThrottle] Redis 연결 실패({e}) - 스로틀 비활성 상태로 진행(fail-open)"
         )
         return None
@@ -67,7 +70,7 @@ def get_throttle_state(employee_id: str) -> Tuple[bool, int, int]:
             ttl = settings.LOGIN_FAIL_WINDOW_SECONDS
         return (True, 0, int(ttl))
     except Exception as e:
-        print(f"[LoginThrottle] 상태 조회 실패({e}) - fail-open")
+        logger.warning(f"[LoginThrottle] 상태 조회 실패({e}) - fail-open")
         return (False, settings.LOGIN_FAIL_MAX_ATTEMPTS, 0)
 
 
@@ -85,7 +88,7 @@ def register_failure(employee_id: str) -> int:
             client.expire(key, settings.LOGIN_FAIL_WINDOW_SECONDS)
         return max(0, settings.LOGIN_FAIL_MAX_ATTEMPTS - int(fails))
     except Exception as e:
-        print(f"[LoginThrottle] 실패 기록 실패({e}) - fail-open")
+        logger.warning(f"[LoginThrottle] 실패 기록 실패({e}) - fail-open")
         return settings.LOGIN_FAIL_MAX_ATTEMPTS
 
 
@@ -97,4 +100,4 @@ def clear(employee_id: str) -> None:
     try:
         client.delete(_key(employee_id))
     except Exception as e:
-        print(f"[LoginThrottle] 카운터 초기화 실패({e}) - 무시")
+        logger.warning(f"[LoginThrottle] 카운터 초기화 실패({e}) - 무시")
