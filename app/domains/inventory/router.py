@@ -148,18 +148,22 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     output = []
 
     # 1. 패스트트랙 신품 재고 (Inventory 테이블) 조회
+    # 출고로 0권이 된 행은 재고 현황이 아니므로 API에서 원천 차단한다.
     new_inv_stmt = (
         select(Inventory, Book, Location)
         .outerjoin(Book, Inventory.book_id == Book.id)
         .outerjoin(Location, Inventory.location_id == Location.id)
+        .where(Inventory.quantity > 0)
     )
     new_results = db.exec(new_inv_stmt).all()
 
-    # 신품 입고 작업자. 신품은 ReturnJob을 타지 않으므로 입고 원장(InventoryLog)에서 읽는다.
-    # 같은 책이 여러 번 입고되면 가장 최근 입고를 그 재고 행의 작업자로 본다.
+    # 신품 입고 작업자·입고 일시. 신품은 ReturnJob을 타지 않으므로 입고 원장(InventoryLog)에서 읽는다.
+    # 같은 책이 여러 번 입고되면 가장 최근 입고를 그 재고 행의 작업자·입고 일시로 본다.
+    # (Inventory.updated_at은 출고 차감 시에도 갱신되므로 입고 일시로 쓸 수 없다.)
     from app.models.wms import InventoryLog, User as _User
 
     new_worker_by_book: Dict[Any, str] = {}
+    new_inbound_at_by_book: Dict[Any, Any] = {}
     new_book_ids = [inv.book_id for inv, _b, _l in new_results if inv.book_id]
     if new_book_ids:
         log_rows = db.exec(
@@ -168,12 +172,13 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
                 InventoryLog.transaction_type == "INBOUND",
                 InventoryLog.condition_grade == "NEW",
                 InventoryLog.book_id.in_(set(new_book_ids)),
-                InventoryLog.worker_id.is_not(None),
             )
             .order_by(InventoryLog.created_at.desc())
         ).all()
         for lg in log_rows:
-            new_worker_by_book.setdefault(lg.book_id, lg.worker_id)  # 최신순이라 첫 값이 최근
+            new_inbound_at_by_book.setdefault(lg.book_id, lg.created_at)  # 최신순이라 첫 값이 최근
+            if lg.worker_id:  # 작업자 미기록 로그(레거시)는 일시만 취한다
+                new_worker_by_book.setdefault(lg.book_id, lg.worker_id)
 
     new_name_by_emp: Dict[str, str] = {}
     if new_worker_by_book:
@@ -210,7 +215,8 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             ),
             "track": "신품",
             "worker_id": "신품 Fast-track (무검수 입고)",
-            "date": to_kst_str(inv.updated_at or inv.created_at)
+            # 입고 일시 = 최근 INBOUND 원장 시각. 로그 도입 전 레거시 행은 created_at 폴백.
+            "date": to_kst_str(new_inbound_at_by_book.get(inv.book_id) or inv.created_at)
         })
 
     # 2. 중고/반품 검수 LPN 품목 (InventoryUsedItem 테이블) 조회
@@ -584,6 +590,17 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
         book = db.query(Book).filter(Book.id == new_inv.book_id).first()
         loc = db.query(Location).filter(Location.id == new_inv.location_id).first()
         zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone-A-4-2 (신품존)"
+        # 입고 일시 = 최근 INBOUND 원장 시각 (목록 API와 동일 원칙 — updated_at은 출고 시에도 갱신됨)
+        from app.models.wms import InventoryLog as _Log
+        last_inbound = db.exec(
+            select(_Log)
+            .where(
+                _Log.transaction_type == "INBOUND",
+                _Log.condition_grade == "NEW",
+                _Log.book_id == new_inv.book_id,
+            )
+            .order_by(_Log.created_at.desc())
+        ).first()
         return {
             "id": str(new_inv.id),
             "lpn_barcode": "LPN 미발급 (신품)",
@@ -598,7 +615,8 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
             "grade": "NEW_FASTTRACK",
             "ubci_score": None,
             "zone": zone_str,
-            "quantity": new_inv.quantity or 1,
+            # 0권을 1권으로 위장하지 않는다 — 실수량 그대로 노출 (quantity는 NOT NULL, 폴백 불필요)
+            "quantity": new_inv.quantity,
             "worker_id": "신품 Fast-track (무검수 입고)",
             "inspector": {
                 "inspection_source": "NEW_FASTTRACK",
@@ -607,7 +625,7 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
                 "inbound_worker_id": None,
                 "label": "신품 Fast-track (무검수 입고)",
             },
-            "date": to_kst_str(new_inv.updated_at or new_inv.created_at),
+            "date": to_kst_str((last_inbound.created_at if last_inbound else None) or new_inv.created_at),
             "image_urls": [],
             "agent_logs": {},
             "final_report": None,
