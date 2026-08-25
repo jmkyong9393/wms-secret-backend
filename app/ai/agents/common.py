@@ -4,6 +4,7 @@
 노드 두 개 이상이 함께 쓰는 것만 여기 둔다. 한 노드만 쓰는 헬퍼는 그 노드 파일에 있다
 (예: BBox 크롭은 vision, 마모 부위 집계는 policy).
 """
+
 import base64
 import io
 import os
@@ -20,6 +21,7 @@ _KST = timezone(timedelta(hours=9))
 def now_kst() -> datetime:
     """한국 표준시 현재 시각 (tz 정보 없는 naive datetime)."""
     return datetime.now(_KST).replace(tzinfo=None)
+
 
 # WBF YOLO 클래스명 -> UBCI_Specification_v2.0.0.0.md 결함 코드 매핑
 # 속지(Track 2·3) 컷에서 **제외**하는 결함 유형.
@@ -44,6 +46,7 @@ def _is_inner_page(image_index) -> bool:
         return int(image_index) >= TRACK1_IMAGE_COUNT
     except (TypeError, ValueError):
         return False
+
 
 YOLO_TO_UBCI_TYPE = {
     "Wornout": "DMG_EDGE_WEAR",
@@ -106,13 +109,19 @@ def _load_image_as_base64(path_or_url: str) -> Optional[str]:
     전송 직전 _downscale_for_vlm으로 긴 변 1536px 상한을 적용한다 (원본 파일은 불변).
     """
     import base64
+
     try:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             import urllib.request
             from app.core.cloudfront_signing import sign_url
-            req = urllib.request.Request(sign_url(path_or_url), headers={"User-Agent": "Mozilla/5.0"})
+
+            req = urllib.request.Request(
+                sign_url(path_or_url), headers={"User-Agent": "Mozilla/5.0"}
+            )
             with urllib.request.urlopen(req, timeout=10) as response:
-                return base64.b64encode(_downscale_for_vlm(response.read())).decode("utf-8")
+                return base64.b64encode(_downscale_for_vlm(response.read())).decode(
+                    "utf-8"
+                )
         with open(path_or_url, "rb") as f:
             return base64.b64encode(_downscale_for_vlm(f.read())).decode("utf-8")
     except Exception as e:
@@ -128,7 +137,10 @@ def _ensure_local_path(path_or_url: str) -> Optional[str]:
         import urllib.request
         import tempfile
         from app.core.cloudfront_signing import sign_url
-        req = urllib.request.Request(sign_url(path_or_url), headers={"User-Agent": "Mozilla/5.0"})
+
+        req = urllib.request.Request(
+            sign_url(path_or_url), headers={"User-Agent": "Mozilla/5.0"}
+        )
         with urllib.request.urlopen(req, timeout=10) as response:
             data = response.read()
         suffix = os.path.splitext(path_or_url)[1] or ".jpg"
@@ -138,4 +150,3 @@ def _ensure_local_path(path_or_url: str) -> Optional[str]:
     except Exception as e:
         print(f"[Vision Agent] WBF용 로컬 다운로드 실패 ({path_or_url}): {e}")
         return None
-

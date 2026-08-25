@@ -39,6 +39,7 @@ _KST = timezone(timedelta(hours=9))
 def _now_kst() -> datetime:
     return datetime.now(_KST).replace(tzinfo=None)
 
+
 # 모델 파일 절대 경로
 AI_DIR = Path(__file__).parent
 MODEL_RECALL_PATH = AI_DIR / "yolov8_high_recall_best.pt"
@@ -92,7 +93,7 @@ PAGE_REGION_CONF = float(os.getenv("WMS_PAGE_REGION_CONF", "0.10"))
 
 # WBF 융합 후 후보로 내보낼 최소 신뢰도.
 # 0.20 -> 0.40 상향. 모델별 conf(0.12/0.25/0.20)는 미탐 방지를 위해 낮게 유지하되, 밖으로 나가는 후보만 이 선에서 끊는다.
-# 0.20에서는 결함이 없는 배경·인쇄물에 후보가 다수 찍혀(실측: 한 건에 15개) VLM 판독을 흐리고 HITL 검수자가 엉뚱한 좌표를 확인하는 비용이 컸다. 
+# 0.20에서는 결함이 없는 배경·인쇄물에 후보가 다수 찍혀(실측: 한 건에 15개) VLM 판독을 흐리고 HITL 검수자가 엉뚱한 좌표를 확인하는 비용이 컸다.
 # 실촬영에서 진짜 모서리 마모는 0.59로 잡혔다.
 # 환경변수로 되돌릴 수 있게 두어, 재현율이 필요한 실험에서는 낮춰 쓸 수 있다.
 CANDIDATE_MIN_CONF = float(os.getenv("WMS_YOLO_CANDIDATE_MIN_CONF", "0.40"))
@@ -106,12 +107,17 @@ def _get_page_region_model():
     if _page_region_model is None:
         try:
             from ultralytics import YOLOWorld
+
             m = YOLOWorld(PAGE_REGION_MODEL)
             m.set_classes([PAGE_REGION_PROMPT])
             _page_region_model = m
-            print(f"[Page Region] YOLO-World 로드 완료 ({PAGE_REGION_MODEL}, prompt='{PAGE_REGION_PROMPT}')")
+            print(
+                f"[Page Region] YOLO-World 로드 완료 ({PAGE_REGION_MODEL}, prompt='{PAGE_REGION_PROMPT}')"
+            )
         except Exception as e:
-            print(f"[Page Region] YOLO-World 로드 실패({type(e).__name__}) - VLM 좌표로 폴백: {e}")
+            print(
+                f"[Page Region] YOLO-World 로드 실패({type(e).__name__}) - VLM 좌표로 폴백: {e}"
+            )
             _page_region_model = False  # 재시도 방지
     return _page_region_model or None
 
@@ -132,7 +138,9 @@ def _get_page_region_model():
 # 다만 현재 관측된 doodle 오탐은 전부 인쇄 본문 위에 있었고 손 위가 아니었으므로, 손 제거의 실익이 확인되지 않은 상태다. 필요해지면 그때 검토한다.
 
 
-def detect_page_region(image_bgr: np.ndarray) -> Optional[Tuple[float, float, float, float]]:
+def detect_page_region(
+    image_bgr: np.ndarray,
+) -> Optional[Tuple[float, float, float, float]]:
     """
     이미지에서 책 지면 영역을 찾아 정규화 좌표 (x1, y1, x2, y2)를 반환한다.
     여러 개가 잡히면 신뢰도가 가장 높은 박스를 채택하고, 손이 가장자리에 얕게 걸쳐있으면 그 띠를 잘라낸다.
@@ -156,7 +164,9 @@ def detect_page_region(image_bgr: np.ndarray) -> Optional[Tuple[float, float, fl
         # (위 '손 제거 철회 이력' 주석 참조).
         return (max(0.0, x1), max(0.0, y1), min(1.0, x2), min(1.0, y2))
     except Exception as e:
-        print(f"[Page Region] 지면 검출 실패({type(e).__name__}) - VLM 좌표로 폴백: {e}")
+        print(
+            f"[Page Region] 지면 검출 실패({type(e).__name__}) - VLM 좌표로 폴백: {e}"
+        )
         return None
 
 
@@ -183,7 +193,9 @@ def save_vlm_crop(
         safe_tag = re.sub(r"[^0-9A-Za-z가-힣_.-]", "_", str(tag))[:60]
         base = VLM_CROP_DIR / f"{stamp}_{safe_tag}"
 
-        cv2.imwrite(str(base.with_suffix(".jpg")), image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        cv2.imwrite(
+            str(base.with_suffix(".jpg")), image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 92]
+        )
 
         # 탐지 박스를 그린 사본. bbox는 0~1000 정규화이므로 픽셀로 환산해 그린다.
         if detections:
@@ -196,11 +208,21 @@ def save_vlm_crop(
                 x2 = int(b.get("xmax", 0) / 1000 * w)
                 y2 = int(b.get("ymax", 0) / 1000 * h)
                 cv2.rectangle(boxed, (x1, y1), (x2, y2), (0, 200, 255), 2)
-                cv2.putText(boxed, f"{d.get('defect_type')} {d.get('confidence')}",
-                            (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                            (0, 200, 255), 1, cv2.LINE_AA)
-            cv2.imwrite(str(base.parent / f"{base.name}_boxed.jpg"), boxed,
-                        [cv2.IMWRITE_JPEG_QUALITY, 92])
+                cv2.putText(
+                    boxed,
+                    f"{d.get('defect_type')} {d.get('confidence')}",
+                    (x1, max(14, y1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 200, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+            cv2.imwrite(
+                str(base.parent / f"{base.name}_boxed.jpg"),
+                boxed,
+                [cv2.IMWRITE_JPEG_QUALITY, 92],
+            )
 
         payload = {
             "saved_at": _now_kst().isoformat(timespec="seconds"),
@@ -214,7 +236,9 @@ def save_vlm_crop(
         )
         return base.with_suffix(".jpg")
     except Exception as e:
-        print(f"[WBF Detector] VLM 크롭 저장 실패({type(e).__name__}) - 검수는 계속 진행: {e}")
+        print(
+            f"[WBF Detector] VLM 크롭 저장 실패({type(e).__name__}) - 검수는 계속 진행: {e}"
+        )
         return None
 
 
@@ -227,7 +251,13 @@ def ensure_model_weights() -> None:
     Celery 태스크 입장에서는 이 예외가 그대로 올라가 재시도(추후 DLQ)로 이어진다.
     """
     missing = [
-        p for p in (MODEL_RECALL_PATH, MODEL_PRECISION_PATH, MODEL_DOODLE_PATH, MODEL_BOOK_ROI_PATH)
+        p
+        for p in (
+            MODEL_RECALL_PATH,
+            MODEL_PRECISION_PATH,
+            MODEL_DOODLE_PATH,
+            MODEL_BOOK_ROI_PATH,
+        )
         if not p.exists()
     ]
     if not missing:
@@ -252,17 +282,24 @@ def ensure_model_weights() -> None:
 
     for path in missing:
         s3_key = f"models/{path.name}"
-        print(f"[WBF Detector] {path.name} 로컬에 없음 - s3://{settings.AWS_S3_BUCKET}/{s3_key} 에서 다운로드 중...")
+        print(
+            f"[WBF Detector] {path.name} 로컬에 없음 - s3://{settings.AWS_S3_BUCKET}/{s3_key} 에서 다운로드 중..."
+        )
         try:
             s3_client.download_file(settings.AWS_S3_BUCKET, s3_key, str(path))
-            print(f"  - {path.name} 다운로드 완료 ({path.stat().st_size / 1024 / 1024:.1f}MB)")
+            print(
+                f"  - {path.name} 다운로드 완료 ({path.stat().st_size / 1024 / 1024:.1f}MB)"
+            )
         except Exception as e:
             # ROI 게이트 모델은 없어도 풀프레임 폴백으로 검수가 가능하므로 fail-open.
             # 결함 3모델은 없으면 검수 자체가 불가능하므로 기존대로 fail-hard 유지.
             if path == MODEL_BOOK_ROI_PATH:
-                print(f"  [Warning] ROI 게이트 모델 다운로드 실패({e}) - 풀프레임 폴백으로 서빙 계속")
+                print(
+                    f"  [Warning] ROI 게이트 모델 다운로드 실패({e}) - 풀프레임 폴백으로 서빙 계속"
+                )
                 continue
             raise RuntimeError(f"S3에서 {s3_key} 다운로드 실패: {e}") from e
+
 
 def calculate_iou(box1: np.ndarray, box2: np.ndarray) -> float:
     """[x1, y1, x2, y2] 포맷의 두 BBox 간 IoU(Intersection over Union) 계산"""
@@ -284,6 +321,7 @@ def calculate_iou(box1: np.ndarray, box2: np.ndarray) -> float:
 
     return float(inter_area / union_area)
 
+
 def weighted_boxes_fusion_pure(
     boxes_list: List[np.ndarray],
     scores_list: List[np.ndarray],
@@ -291,7 +329,7 @@ def weighted_boxes_fusion_pure(
     weights: List[float] = [1.0, 1.5, 2.0],
     iou_thr: float = 0.5,
     skip_box_thr: float = 0.05,
-    selection_mode: str = "precision_first"
+    selection_mode: str = "precision_first",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     순수 NumPy WBF 알고리즘 구현 (3대 모델 멀티 앙상블)
@@ -301,67 +339,80 @@ def weighted_boxes_fusion_pure(
     :return: (fused_boxes, fused_scores, fused_labels)
     """
     overall_boxes = []
-    
+
     # 1. 모든 모델의 박스를 가중치 스코어로 통합
-    for model_idx, (boxes, scores, labels) in enumerate(zip(boxes_list, scores_list, labels_list)):
+    for model_idx, (boxes, scores, labels) in enumerate(
+        zip(boxes_list, scores_list, labels_list)
+    ):
         weight = weights[model_idx] if model_idx < len(weights) else 1.0
         for box, score, label in zip(boxes, scores, labels):
             if score < skip_box_thr:
                 continue
-            overall_boxes.append({
-                'box': np.array(box, dtype=np.float32),
-                'score': float(score),
-                'weighted_score': float(score * weight),
-                'label': int(label),
-                'model_idx': model_idx
-            })
+            overall_boxes.append(
+                {
+                    "box": np.array(box, dtype=np.float32),
+                    "score": float(score),
+                    "weighted_score": float(score * weight),
+                    "label": int(label),
+                    "model_idx": model_idx,
+                }
+            )
 
     if not overall_boxes:
         return np.empty((0, 4)), np.empty((0,)), np.empty((0,), dtype=int)
 
     # 스코어 높은 순 정렬
-    overall_boxes = sorted(overall_boxes, key=lambda x: x['score'], reverse=True)
+    overall_boxes = sorted(overall_boxes, key=lambda x: x["score"], reverse=True)
 
     clusters = []  # [{boxes: [], label: int}]
     for b in overall_boxes:
         matched = False
         for c in clusters:
             # 동일 레이블이거나 WBF 융합 대상일 때 IoU 계산
-            if c['label'] == b['label']:
-                iou = calculate_iou(c['boxes'][0]['box'], b['box'])
+            if c["label"] == b["label"]:
+                iou = calculate_iou(c["boxes"][0]["box"], b["box"])
                 if iou >= iou_thr:
-                    c['boxes'].append(b)
+                    c["boxes"].append(b)
                     matched = True
                     break
         if not matched:
-            clusters.append({'label': b['label'], 'boxes': [b]})
+            clusters.append({"label": b["label"], "boxes": [b]})
 
     fused_boxes = []
     fused_scores = []
     fused_labels = []
 
     for c in clusters:
-        boxes = c['boxes']
-        total_weight = sum(weights[b['model_idx']] if b['model_idx'] < len(weights) else 1.0 for b in boxes)
-        
+        boxes = c["boxes"]
+        total_weight = sum(
+            weights[b["model_idx"]] if b["model_idx"] < len(weights) else 1.0
+            for b in boxes
+        )
+
         # 가중 평균 박스 계산
         weighted_box = np.zeros(4, dtype=np.float32)
         for b in boxes:
-            w = weights[b['model_idx']] if b['model_idx'] < len(weights) else 1.0
-            weighted_box += b['box'] * w
+            w = weights[b["model_idx"]] if b["model_idx"] < len(weights) else 1.0
+            weighted_box += b["box"] * w
         weighted_box /= total_weight
 
         # 최고 스코어 선택
-        max_score = max(b['score'] for b in boxes)
+        max_score = max(b["score"] for b in boxes)
 
         fused_boxes.append(weighted_box)
         fused_scores.append(max_score)
-        fused_labels.append(c['label'])
+        fused_labels.append(c["label"])
 
-    return np.array(fused_boxes), np.array(fused_scores), np.array(fused_labels, dtype=int)
+    return (
+        np.array(fused_boxes),
+        np.array(fused_scores),
+        np.array(fused_labels, dtype=int),
+    )
+
 
 class WBFBookDefectDetector:
     """WBF 앙상블 도서 결함 픽셀 추론 엔진 (3-Model Hybrid Ensemble)"""
+
     def __init__(self):
         print(f"[WBF Detector] Loading 3-Model Ensemble Pipeline...")
         ensure_model_weights()
@@ -383,21 +434,31 @@ class WBFBookDefectDetector:
 
         if MODEL_DOODLE_PATH.exists():
             self.model_doodle = YOLO(str(MODEL_DOODLE_PATH))
-            print(f"  - Model 3 (Stage 2 Doodle OCR): {MODEL_DOODLE_PATH.name} Loaded (mAP50 84.2%)")
+            print(
+                f"  - Model 3 (Stage 2 Doodle OCR): {MODEL_DOODLE_PATH.name} Loaded (mAP50 84.2%)"
+            )
         else:
-            print(f"  [Warning] Stage 2 Doodle OCR model missing at {MODEL_DOODLE_PATH}")
+            print(
+                f"  [Warning] Stage 2 Doodle OCR model missing at {MODEL_DOODLE_PATH}"
+            )
 
         # Stage 0: 책 ROI 게이트 (COCO 사전학습, 결함 판정에는 관여하지 않음)
         self.model_roi = None
         if MODEL_BOOK_ROI_PATH.exists():
             self.model_roi = YOLO(str(MODEL_BOOK_ROI_PATH))
-            print(f"  - Stage 0 (Book ROI Gate): {MODEL_BOOK_ROI_PATH.name} Loaded (COCO cls 73)")
+            print(
+                f"  - Stage 0 (Book ROI Gate): {MODEL_BOOK_ROI_PATH.name} Loaded (COCO cls 73)"
+            )
         else:
-            print(f"  [Warning] Book ROI gate model missing at {MODEL_BOOK_ROI_PATH} - 풀프레임 폴백 서빙")
+            print(
+                f"  [Warning] Book ROI gate model missing at {MODEL_BOOK_ROI_PATH} - 풀프레임 폴백 서빙"
+            )
 
         self.class_names = {0: "Wornout", 1: "ripped", 2: "doodle_scribble"}
 
-    def _detect_book_roi(self, image_bgr: np.ndarray) -> Optional[Tuple[float, float, float, float]]:
+    def _detect_book_roi(
+        self, image_bgr: np.ndarray
+    ) -> Optional[Tuple[float, float, float, float]]:
         """
         COCO book 클래스로 프레임 내 책 영역을 찾아 정규화 좌표 (x1, y1, x2, y2)를 반환한다.
 
@@ -409,7 +470,11 @@ class WBFBookDefectDetector:
             return None
         try:
             r = self.model_roi(
-                image_bgr, conf=0.25, classes=[COCO_BOOK_CLASS_ID], imgsz=640, verbose=False
+                image_bgr,
+                conf=0.25,
+                classes=[COCO_BOOK_CLASS_ID],
+                imgsz=640,
+                verbose=False,
             )[0]
         except Exception as e:
             print(f"[WBF Detector] ROI 게이트 추론 실패({e}) - 풀프레임 폴백")
@@ -470,7 +535,9 @@ class WBFBookDefectDetector:
 
         # Model 1 (High Recall) 추론
         if self.model_recall is not None:
-            r1 = self.model_recall(infer_img, conf=conf_recall, imgsz=DEFECT_IMGSZ, verbose=False)[0]
+            r1 = self.model_recall(
+                infer_img, conf=conf_recall, imgsz=DEFECT_IMGSZ, verbose=False
+            )[0]
             if len(r1.boxes) > 0:
                 boxes_list.append(r1.boxes.xyxyn.cpu().numpy())
                 scores_list.append(r1.boxes.conf.cpu().numpy())
@@ -483,7 +550,9 @@ class WBFBookDefectDetector:
 
         # Model 2 (High Precision) 추론
         if self.model_precision is not None:
-            r2 = self.model_precision(infer_img, conf=conf_precision, imgsz=DEFECT_IMGSZ, verbose=False)[0]
+            r2 = self.model_precision(
+                infer_img, conf=conf_precision, imgsz=DEFECT_IMGSZ, verbose=False
+            )[0]
             if len(r2.boxes) > 0:
                 boxes_list.append(r2.boxes.xyxyn.cpu().numpy())
                 scores_list.append(r2.boxes.conf.cpu().numpy())
@@ -497,7 +566,9 @@ class WBFBookDefectDetector:
         # Model 3 (Stage 2 Doodle OCR - 전담 손글씨/낙서) 추론
         # weight 2.0 -> 1.0 하향. AIHub 손글씨 패치 도메인 모델이라 실물 도서 인쇄물(일러스트/본문)에 대한 오탐이 잦은데, 최고 가중치를 주면 그 오탐이 융합 결과를 지배한다. ROI 크롭으로 입력 도메인을 맞춘 뒤에도 인쇄물 오탐은 남으므로 물리 결함 2모델과 동률(1.0)로 재조정.
         if self.model_doodle is not None:
-            r3 = self.model_doodle(infer_img, conf=conf_doodle, imgsz=640, verbose=False)[0]
+            r3 = self.model_doodle(
+                infer_img, conf=conf_doodle, imgsz=640, verbose=False
+            )[0]
             if len(r3.boxes) > 0:
                 boxes_list.append(r3.boxes.xyxyn.cpu().numpy())
                 scores_list.append(r3.boxes.conf.cpu().numpy())
@@ -515,11 +586,7 @@ class WBFBookDefectDetector:
 
         # WBF 융합 연산 실행
         f_boxes, f_scores, f_labels = weighted_boxes_fusion_pure(
-            boxes_list,
-            scores_list,
-            labels_list,
-            weights=weights,
-            iou_thr=iou_thr
+            boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr
         )
 
         results = []
@@ -536,27 +603,32 @@ class WBFBookDefectDetector:
             if roi is not None:
                 rx1, ry1, rx2, ry2 = roi
                 rw, rh = (rx2 - rx1), (ry2 - ry1)
-                box = np.array([
-                    rx1 + box[0] * rw,
-                    ry1 + box[1] * rh,
-                    rx1 + box[2] * rw,
-                    ry1 + box[3] * rh,
-                ], dtype=np.float32)
+                box = np.array(
+                    [
+                        rx1 + box[0] * rw,
+                        ry1 + box[1] * rh,
+                        rx1 + box[2] * rw,
+                        ry1 + box[3] * rh,
+                    ],
+                    dtype=np.float32,
+                )
 
             # 0~1000 정규화 BBox 스케일로 변환
             xmin, ymin, xmax, ymax = (box * 1000).astype(int)
             class_name = self.class_names.get(int(label), "Unknown")
 
-            results.append({
-                "defect_type": class_name,
-                "confidence": round(float(score), 4),
-                "bbox": {
-                    "ymin": int(ymin),
-                    "xmin": int(xmin),
-                    "ymax": int(ymax),
-                    "xmax": int(xmax)
+            results.append(
+                {
+                    "defect_type": class_name,
+                    "confidence": round(float(score), 4),
+                    "bbox": {
+                        "ymin": int(ymin),
+                        "xmin": int(xmin),
+                        "ymax": int(ymax),
+                        "xmax": int(xmax),
+                    },
                 }
-            })
+            )
 
         return results
 
@@ -591,7 +663,9 @@ class WBFBookDefectDetector:
             r = self.model_doodle(image_bgr, conf=conf, imgsz=640, verbose=False)[0]
         except Exception as e:
             # 부가 탐지이므로 실패가 파이프라인을 멈추게 하지 않는다 (fail-open).
-            print(f"[WBF Detector] doodle 단독 추론 실패({type(e).__name__}) - 낙서 탐지 생략: {e}")
+            print(
+                f"[WBF Detector] doodle 단독 추론 실패({type(e).__name__}) - 낙서 탐지 생략: {e}"
+            )
             return []
 
         if len(r.boxes) == 0:
@@ -605,16 +679,18 @@ class WBFBookDefectDetector:
             if (box[2] - box[0]) * (box[3] - box[1]) > max_box_area_ratio:
                 continue
             xmin, ymin, xmax, ymax = (np.asarray(box) * 1000).astype(int)
-            results.append({
-                "defect_type": self.class_names.get(2, "doodle_scribble"),
-                "confidence": round(float(score), 4),
-                "bbox": {
-                    "ymin": int(ymin),
-                    "xmin": int(xmin),
-                    "ymax": int(ymax),
-                    "xmax": int(xmax),
-                },
-            })
+            results.append(
+                {
+                    "defect_type": self.class_names.get(2, "doodle_scribble"),
+                    "confidence": round(float(score), 4),
+                    "bbox": {
+                        "ymin": int(ymin),
+                        "xmin": int(xmin),
+                        "ymax": int(ymax),
+                        "xmax": int(xmax),
+                    },
+                }
+            )
 
         if debug_tag:
             save_vlm_crop(image_bgr, debug_tag, detections=results, meta=debug_meta)

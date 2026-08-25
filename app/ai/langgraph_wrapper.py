@@ -7,6 +7,7 @@ def _summarize_cost(timings, tokens) -> Dict[str, Any]:
     """계측 집계. 계측이 실패해도 검수 결과 저장을 막지 않는다."""
     try:
         from app.ai.instrumentation import summarize
+
         return summarize(timings, tokens)
     except Exception:
         return {}
@@ -39,29 +40,22 @@ class LangGraphInspectionWrapper:
             "book_title": book_title,
             # is_workbook 판정의 2차 신호 (book_title과 같은 이유로 State 미선언이라 버려지고 있었음)
             "book_category": book_category,
-
-            #Vision Agent가 채울 값
+            # Vision Agent가 채울 값
             "is_mint": None,
             "defects": None,
             "special_notes": None,
-
-            #Policy Agent가 채울 값
+            # Policy Agent가 채울 값
             "ubci_score": None,
-
             # Critic Agent가 채울 값
             "reason_code": None,
             "repair_directive": None,
             "revision_count": 0,
-
             # Human-In-The-Loop에서 사용할 값
             "human_feedback": None,
-
             # 최종 Report Agent가 채울 값
-            "final_report" : None,
-
+            "final_report": None,
             # 실행 노드 추적 (operator.add 리듀서 - 초기값은 반드시 빈 리스트)
             "executed_agents": [],
-
             # 노드 계측 (operator.add 리듀서 - 초기값은 반드시 빈 리스트)
             "node_timings": [],
             "node_tokens": [],
@@ -75,24 +69,32 @@ class LangGraphInspectionWrapper:
 
         # human_node가 그래프를 조기 종료시키는 HITL 이관 케이스를 여기서 먼저 걸러내지 않으면, 아래 로직이 reason_code != "OK"라는 이유만으로 무조건 REJECT를 반환해버려서 - 사람 검토를 기다려야 할 애매한 건이 사람 개입 없이 자동 반려되고 있었다. (HITL_REQUIRED 상태 자체가 파이프라인에서 한 번도 만들어지지 않던 원인)
         # Supervisor의 지휘 결정(supervisor_decision)을 1순위 신호로 삼는다 - 지휘 책임이 Supervisor에 있으므로, 그 결정이 하위 노드의 reason_code보다 우선한다.
-        if final_state.get("supervisor_decision") == "ESCALATE_HUMAN" or reason_code == "AWAITING_HUMAN_REVIEW":
+        if (
+            final_state.get("supervisor_decision") == "ESCALATE_HUMAN"
+            or reason_code == "AWAITING_HUMAN_REVIEW"
+        ):
             return "HITL"
 
         if is_mint is True:
             return "APPROVE"
 
-        if reason_code == "OK" and ubci_score is not None and ubci_score>=70: # 문서상 B급 이상으로 되어있음. 수치 수정 필요
+        if (
+            reason_code == "OK" and ubci_score is not None and ubci_score >= 70
+        ):  # 문서상 B급 이상으로 되어있음. 수치 수정 필요
             return "APPROVE"
         return "REJECT"
 
-
     # LangGraph 최종 WMSInspectionState를 dict 형태로 변환
-    def convert_final_state_to_worker_result(self, final_state: Dict[str,Any]) -> Dict[str,Any]:
+    def convert_final_state_to_worker_result(
+        self, final_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
         from app.models.wms import ubci_grade_from_score
 
         decision = self.convert_state_to_decision(final_state)
         ubci_score = final_state.get("ubci_score")
-        final_grade = "MINT" if final_state.get("is_mint") else ubci_grade_from_score(ubci_score)
+        final_grade = (
+            "MINT" if final_state.get("is_mint") else ubci_grade_from_score(ubci_score)
+        )
 
         defects = final_state.get("defects") or []
         primary_reason_code = (
@@ -160,7 +162,9 @@ class LangGraphInspectionWrapper:
 
     # 이미지 인덱스별 BBox 묶음으로 정규화
     @staticmethod
-    def build_defect_coordinates(defects: List[Dict[str, Any]], display_image_urls: List[str]) -> List[Dict[str, Any]]:
+    def build_defect_coordinates(
+        defects: List[Dict[str, Any]], display_image_urls: List[str]
+    ) -> List[Dict[str, Any]]:
         """
         Vision Agent가 낸 평면 defects 배열(각 원소에 image_index와 bbox가 들어있음)을 프론트 오버레이가 기대하는 이미지별 묶음 형태로 변환한다.
 
@@ -183,29 +187,35 @@ class LangGraphInspectionWrapper:
                 idx,
                 {
                     "image_index": idx,
-                    "image_url": display_image_urls[idx] if idx < len(display_image_urls) else None,
+                    "image_url": display_image_urls[idx]
+                    if idx < len(display_image_urls)
+                    else None,
                     "bboxes": [],
                 },
             )
-            entry["bboxes"].append({
-                "xmin": bbox.get("xmin"),
-                "ymin": bbox.get("ymin"),
-                "xmax": bbox.get("xmax"),
-                "ymax": bbox.get("ymax"),
-                # Vision Agent 프롬프트가 0~1000 상대좌표를 요구하므로 스케일을 명시해 프론트가 좌표계를 추측하지 않게 한다.
-                "coord_space": 1000,
-                "type": dtype,
-                "label": DEFECT_TRANSLATION_MAP.get(dtype, dtype or "상태 결함"),
-                "confidence": d.get("confidence"),
-                # 확신도 출처. "yolo"=탐지 모델 실측값, "vlm"=VLM 자기 신고(추정치).
-                # 화면이 둘을 구분해 표기해야 근거 없는 수치가 근거처럼 보이지 않는다.
-                "conf_source": d.get("conf_source"),
-                "conf_flat_selfreported": d.get("conf_flat_selfreported"),
-                # Policy가 실제 적용한 감점. preliminary_deduction(Vision 예비값)은 그룹 산정·Cap·오탐 제외를 반영하지 않아 화면에 쓰면 총점과 어긋난다.
-                "deduction": d.get("applied_deduction", d.get("preliminary_deduction")),
-                "deduction_scope": d.get("deduction_scope"),
-                "deduction_note": d.get("deduction_note"),
-            })
+            entry["bboxes"].append(
+                {
+                    "xmin": bbox.get("xmin"),
+                    "ymin": bbox.get("ymin"),
+                    "xmax": bbox.get("xmax"),
+                    "ymax": bbox.get("ymax"),
+                    # Vision Agent 프롬프트가 0~1000 상대좌표를 요구하므로 스케일을 명시해 프론트가 좌표계를 추측하지 않게 한다.
+                    "coord_space": 1000,
+                    "type": dtype,
+                    "label": DEFECT_TRANSLATION_MAP.get(dtype, dtype or "상태 결함"),
+                    "confidence": d.get("confidence"),
+                    # 확신도 출처. "yolo"=탐지 모델 실측값, "vlm"=VLM 자기 신고(추정치).
+                    # 화면이 둘을 구분해 표기해야 근거 없는 수치가 근거처럼 보이지 않는다.
+                    "conf_source": d.get("conf_source"),
+                    "conf_flat_selfreported": d.get("conf_flat_selfreported"),
+                    # Policy가 실제 적용한 감점. preliminary_deduction(Vision 예비값)은 그룹 산정·Cap·오탐 제외를 반영하지 않아 화면에 쓰면 총점과 어긋난다.
+                    "deduction": d.get(
+                        "applied_deduction", d.get("preliminary_deduction")
+                    ),
+                    "deduction_scope": d.get("deduction_scope"),
+                    "deduction_note": d.get("deduction_note"),
+                }
+            )
             # HITL 관리자 편집 이력 표식. 파이프라인 정상 산출 시에는 없는 키라 하위 호환.
             last = entry["bboxes"][-1]
             if d.get("hitl_excluded"):
@@ -234,14 +244,14 @@ class LangGraphInspectionWrapper:
         graph = app_graph or build_supervisor_graph()
 
         initial_state = self.build_initial_inspection_state(
-            order_id = order_id,
-            image_urls = image_urls,
-            display_image_urls = display_image_urls,
-            book_title = book_title,
-            book_category = book_category,
+            order_id=order_id,
+            image_urls=image_urls,
+            display_image_urls=display_image_urls,
+            book_title=book_title,
+            book_category=book_category,
         )
         config = {
-            "configurable" : {
+            "configurable": {
                 # return_job_id(항상 고유)로 키를 잡는다. order_id는 None이거나 여러 검수 건에서 재사용될 수 있어 MemorySaver 체크포인트가 충돌할 위험이 있다.
                 "thread_id": f"inspection-{return_job_id}"
             }
@@ -253,4 +263,3 @@ class LangGraphInspectionWrapper:
         )
 
         return self.convert_final_state_to_worker_result(final_state)
-
