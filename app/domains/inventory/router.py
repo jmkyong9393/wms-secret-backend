@@ -221,13 +221,16 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
 
     # 2. 중고/반품 검수 LPN 품목 (InventoryUsedItem 테이블) 조회
     #
-    # 검수가 끝나 랙에 적재된 품목만 재고 현황에 넣는다. 아래 상태는 실물 추적용 row는
-    # 있지만 아직 등급이 확정되지 않았으므로 제외한다.
-    #   - PENDING_INSPECTION : LPN 라벨만 선부착된 상태 (버퍼 로케이션, 등급 PENDING)
-    #   - HITL_PENDING / HITL_REQUIRED : 사람 결재 대기. HITL 대시보드가 전담한다.
-    # item_status가 NULL인 레거시 row는 노출을 유지한다 (NOT IN의 NULL 삼단논리 주의).
+    # 창고에 실물이 있고 등급이 확정된 품목만 재고 현황에 넣는다.
+    # 제외 사유는 두 갈래이며, 실물 추적용 row 자체는 남는다.
+    #   [적재 전] PENDING_INSPECTION : LPN 라벨만 선부착 (버퍼 로케이션, 등급 PENDING)
+    #   [적재 전] HITL_PENDING / HITL_REQUIRED : 사람 결재 대기. HITL 대시보드가 전담한다.
+    #   [출고 후] SHIPPED : 창고에 없다. 신품 재고의 quantity > 0 필터와 같은 취지.
+    # REJECTED(Zone E 격리·폐기분)는 실물이 남아 있어 노출을 유지한다.
+    # item_status가 NULL인 레거시 row도 노출을 유지한다 (NOT IN의 NULL 삼단논리 주의).
     from sqlalchemy import or_
     NOT_YET_STOCKED = ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
+    NO_LONGER_STOCKED = ["SHIPPED"]
     used_stmt = (
         select(InventoryUsedItem, Book, Location)
         .outerjoin(Book, InventoryUsedItem.book_id == Book.id)
@@ -235,7 +238,7 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
         .where(
             or_(
                 InventoryUsedItem.item_status.is_(None),
-                InventoryUsedItem.item_status.notin_(NOT_YET_STOCKED),
+                InventoryUsedItem.item_status.notin_(NOT_YET_STOCKED + NO_LONGER_STOCKED),
             )
         )
     )

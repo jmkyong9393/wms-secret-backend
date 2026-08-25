@@ -311,8 +311,9 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     #
     # 도서 마스터(Book) 종수가 아니라 실제로 창고에 있는 수량을 센다. 재고가 0인
     # 카테고리도 마스터에는 존재하므로, 종수를 세면 보유 현황이 부풀려진다.
-    #   - 중고: LPN 단위 1권 = 1행. 검수·결재 대기 건은 아직 적재 전이라 제외한다.
-    #   - 신품: Fast-track 입고분으로 수량(quantity) 합계.
+    #   - 중고: LPN 단위 1권 = 1행. 검수·결재 대기 건(적재 전)과 SHIPPED(출고되어 창고에
+    #     없음)를 제외한다. 재고 목록 API와 같은 기준을 쓴다.
+    #   - 신품: Fast-track 입고분으로 수량(quantity) 합계. 출고분은 quantity가 0이라 자동 제외.
     used_rows = session.exec(
         select(Book.category_type, func.count(InventoryUsedItem.id))
         .join(Book, InventoryUsedItem.book_id == Book.id)
@@ -320,7 +321,7 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
             or_(
                 InventoryUsedItem.item_status.is_(None),
                 InventoryUsedItem.item_status.notin_(
-                    ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
+                    ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION", "SHIPPED"]
                 ),
             )
         )
