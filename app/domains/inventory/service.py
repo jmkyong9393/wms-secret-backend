@@ -272,7 +272,9 @@ def assign_rack_location_after_inspection(
     db: Session,
     lpn_barcode: str,
     final_grade: str,
-    final_status: str = "COMPLETED",
+    # 재고 집계(발주 저재고 스캔·Restock 에이전트)는 IN_STOCK만 센다. 기본값이
+    # COMPLETED면 검수를 통과해 랙까지 배정된 재고가 가용 재고에서 누락된다.
+    final_status: str = "IN_STOCK",
     book_id = None,
     ubci_score: int = 85,
     source_job_id: str = None,
