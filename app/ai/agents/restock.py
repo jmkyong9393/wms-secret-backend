@@ -39,9 +39,9 @@ from app.models.wms import (
 logger = logging.getLogger(__name__)
 
 # 발주 판단 상수 (결정론적 산식의 근거 - 문서/발표 시 그대로 인용)
-LEAD_TIME_DAYS = 7      # 도매처 발주 → 입고 리드타임 가정
-SAFETY_DAYS = 7         # 리드타임 외 추가 안전 버퍼 (일 단위)
-WHOLESALE_RATE = 0.6    # 도매 매입가 = 정가의 60%
+LEAD_TIME_DAYS = 7  # 도매처 발주 → 입고 리드타임 가정
+SAFETY_DAYS = 7  # 리드타임 외 추가 안전 버퍼 (일 단위)
+WHOLESALE_RATE = 0.6  # 도매 매입가 = 정가의 60%
 # po/service.py의 저재고 스캔 대상 선정 기준(SAFETY_STOCK_THRESHOLD, 당시 5)과 서로 다른 값으로 따로 노는 걸 뒤늦게 발견했다.
 # 둘 다 "안전재고"라는 같은 개념을 가리켜야 하므로 system_settings 테이블의 단일 값(safety_stock_threshold)으로 통합했다 - collect_restock_context()가 매 호출마다 조회한다. GET/PUT /api/v1/admin/settings로 조회/변경.
 
@@ -54,14 +54,20 @@ except Exception:
 
 class RestockDecision(BaseModel):
     """Restock Agent의 구조화 출력 스키마 (with_structured_output 강제)."""
+
     reorder_quantity: int = Field(description="최적 대체 발주 수량 (양의 정수)")
-    urgency: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"] = Field(description="발주 시급도")
-    reasoning: str = Field(description="추천 사유 2~3문장 (한국어, 입력 수치를 반드시 인용)")
+    urgency: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"] = Field(
+        description="발주 시급도"
+    )
+    reasoning: str = Field(
+        description="추천 사유 2~3문장 (한국어, 입력 수치를 반드시 인용)"
+    )
 
 
 # ==========================================
 # ① Collector - 결정론적 데이터 수집 + 기준 수량 산식
 # ==========================================
+
 
 def collect_restock_context(
     db: Session,
@@ -77,8 +83,7 @@ def collect_restock_context(
     """
     since = now_kst() - timedelta(days=30)
     outbound_sum = db.exec(
-        select(func.coalesce(func.sum(InventoryLog.quantity_change), 0))
-        .where(
+        select(func.coalesce(func.sum(InventoryLog.quantity_change), 0)).where(
             InventoryLog.book_id == book.id,
             InventoryLog.transaction_type == "OUTBOUND",
             InventoryLog.created_at >= since,
@@ -109,7 +114,9 @@ def collect_restock_context(
 
     # min_safety_stock은 "수요 도서의 최소 보충선"이다 - 수요 이력이 없는 도서에는
     # 적용하지 않는다 (그런 도서는 제안 자체를 생성하지 않는다, 아래 has_sales_history).
-    min_safety_stock = get_int_setting(db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD)
+    min_safety_stock = get_int_setting(
+        db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD
+    )
 
     # 품절 복구 후보: 재고 0 + 출고 이력 존재(기간 무관). 판매 기회가 새는 중이므로
     # 긴급도를 CRITICAL로 고정한다 (Validator에서도 강제).
@@ -117,11 +124,15 @@ def collect_restock_context(
 
     # 안전재고 산식: (리드타임+버퍼) 기간의 예상 수요를 커버할 목표 재고를 잡고, 부족분 + 이번 반려로 소실된 수량을 기준 발주량으로 삼는다.
     daily_velocity = sales_30d / 30.0
-    demand_cover = max(math.ceil(daily_velocity * (LEAD_TIME_DAYS + SAFETY_DAYS)), min_safety_stock)
+    demand_cover = max(
+        math.ceil(daily_velocity * (LEAD_TIME_DAYS + SAFETY_DAYS)), min_safety_stock
+    )
     baseline = max(demand_cover - current_stock, 0) + max(0, int(rejected_quantity))
 
     # 재고 소진 예상일 기반 긴급도 (LLM 폴백 및 프롬프트 앵커 겸용)
-    days_of_stock = (current_stock / daily_velocity) if daily_velocity > 0 else float("inf")
+    days_of_stock = (
+        (current_stock / daily_velocity) if daily_velocity > 0 else float("inf")
+    )
     if stockout_recovery or current_stock <= 2 or days_of_stock < LEAD_TIME_DAYS:
         urgency = "CRITICAL"
     elif current_stock <= 5 or days_of_stock < (LEAD_TIME_DAYS + SAFETY_DAYS):
@@ -138,7 +149,9 @@ def collect_restock_context(
         "used_in_stock": int(used_in_stock or 0),
         "current_stock": current_stock,
         "sales_velocity_30d": sales_30d,
-        "days_of_stock": None if days_of_stock == float("inf") else round(days_of_stock, 1),
+        "days_of_stock": None
+        if days_of_stock == float("inf")
+        else round(days_of_stock, 1),
         "rejected_quantity": max(0, int(rejected_quantity)),
         "reject_reason_code": reject_reason_code,
         "baseline_quantity": int(baseline),
@@ -152,6 +165,7 @@ def collect_restock_context(
 # ==========================================
 # ② Restock Agent - gpt-4o-mini 수량/긴급도/사유 제안
 # ==========================================
+
 
 def run_restock_agent(context: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
     """
@@ -179,14 +193,14 @@ def run_restock_agent(context: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
 아래 데이터를 근거로 신품 대체 발주 수량을 제안하세요.
 
 [수집 데이터]
-- 도서: {context['title']} (ISBN {context['isbn']})
-- 최근 30일 출고(판매)량: {context['sales_velocity_30d']}권 (일평균 {round(context['sales_velocity_30d'] / 30.0, 2)}권)
-- 현재 가용 재고: {context['current_stock']}권 (신품 {context['new_stock']} + 중고 {context['used_in_stock']})
-- 재고 소진 예상: {context['days_of_stock'] if context['days_of_stock'] is not None else '판매 이력 없음'}일
+- 도서: {context["title"]} (ISBN {context["isbn"]})
+- 최근 30일 출고(판매)량: {context["sales_velocity_30d"]}권 (일평균 {round(context["sales_velocity_30d"] / 30.0, 2)}권)
+- 현재 가용 재고: {context["current_stock"]}권 (신품 {context["new_stock"]} + 중고 {context["used_in_stock"]})
+- 재고 소진 예상: {context["days_of_stock"] if context["days_of_stock"] is not None else "판매 이력 없음"}일
 {reject_line}
 {stockout_line}
-- 결정론적 안전재고 산식 기준 수량: {context['baseline_quantity']}권
-  (산식: 리드타임 {LEAD_TIME_DAYS}일 + 안전버퍼 {SAFETY_DAYS}일 수요 커버 목표, 최소 안전선 {context['min_safety_stock']}권)
+- 결정론적 안전재고 산식 기준 수량: {context["baseline_quantity"]}권
+  (산식: 리드타임 {LEAD_TIME_DAYS}일 + 안전버퍼 {SAFETY_DAYS}일 수요 커버 목표, 최소 안전선 {context["min_safety_stock"]}권)
 
 [규칙]
 1. reorder_quantity는 기준 수량을 앵커로 삼되, 판매 추세·반려 손실을 고려해 조정하세요.
@@ -210,11 +224,13 @@ def _rule_based_decision(context: Dict[str, Any]) -> Dict[str, Any]:
     reject_part = (
         f"이번 검수에서 {context['rejected_quantity']}권이 [{context['reject_reason_code'] or '검수 반려'}]로 "
         f"매입 반려되어 해당 수량의 재고 편입이 무산되었습니다. "
-        if context["rejected_quantity"] > 0 else ""
+        if context["rejected_quantity"] > 0
+        else ""
     )
     stockout_part = (
         "출고 이력이 있는 도서가 품절(가용 재고 0) 상태로, 품절로 인한 판매 기회 손실이 진행 중입니다. "
-        if context.get("stockout_recovery") else ""
+        if context.get("stockout_recovery")
+        else ""
     )
     reasoning = (
         f"최근 30일 출고 {context['sales_velocity_30d']}권 대비 가용 재고가 {context['current_stock']}권"
@@ -235,7 +251,10 @@ def _rule_based_decision(context: Dict[str, Any]) -> Dict[str, Any]:
 # ③ Validator
 # ==========================================
 
-def validate_decision(decision: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+
+def validate_decision(
+    decision: Dict[str, Any], context: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     LLM 제안 수량을 결정론적 상한/하한으로 강제한다. LLM이 환각으로 극단값을
     내더라도 DB에는 검증된 수치만 적재된다 (금전 관련 수치의 최종 결정권은 산식에 둔다).
@@ -259,13 +278,16 @@ def validate_decision(decision: Dict[str, Any], context: Dict[str, Any]) -> Dict
     if context.get("stockout_recovery"):
         urgency = "CRITICAL"
 
-    reasoning = (decision.get("reasoning") or "").strip() or _rule_based_decision(context)["reasoning"]
+    reasoning = (decision.get("reasoning") or "").strip() or _rule_based_decision(
+        context
+    )["reasoning"]
     return {"reorder_quantity": qty, "urgency": urgency, "reasoning": reasoning}
 
 
 # ==========================================
 # 그래프 실행 + order_proposals 적재 (워커/스캔 공용 진입점)
 # ==========================================
+
 
 def generate_and_store_proposal(
     db: Session,
@@ -294,9 +316,11 @@ def generate_and_store_proposal(
         accumulated_rejected += max(0, int(existing.rejected_quantity or 0))
 
     context = collect_restock_context(
-        db, book,
+        db,
+        book,
         rejected_quantity=accumulated_rejected,
-        reject_reason_code=reject_reason_code or (existing.reject_reason_code if existing else None),
+        reject_reason_code=reject_reason_code
+        or (existing.reject_reason_code if existing else None),
     )
     # 출고 이력이 전무한 도서(등록만 된 책)는 수요 근거가 없으므로 제안하지 않는다.
     # 단 검수 반려는 그 자체가 수요 신호(주문이 있었다는 뜻)이므로 현행대로 생성한다.
@@ -351,6 +375,7 @@ def generate_and_store_proposal(
     if not existing:
         try:
             from app.domains.notifications.service import notify_restock_proposal
+
             notify_restock_proposal(
                 book_title=book.title,
                 qty=decision["reorder_quantity"],
