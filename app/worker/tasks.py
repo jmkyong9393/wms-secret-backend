@@ -490,8 +490,8 @@ def sweep_stale_pending_inspections() -> int:
 )
 def scan_safety_stock_proposals() -> Dict[str, Any]:
     """
-    저재고 스캔 배치 본체. 가용 재고가 안전선 미만인 도서를 순회하며
-    Restock 판정 그래프로 제안 카드를 적재한다 (수동 트리거 API와 동일 로직).
+    저재고 스캔 배치 본체. 수요 이력 기반 후보(품절 복구 + 최근 30일 수요의 안전선
+    미만)를 순회하며 Restock 판정 그래프로 제안 카드를 적재한다 (수동 트리거 API와 동일 로직).
 
     k8s CronJob(app/batch/restock_scan.py)이 이 태스크를 큐잉하고 즉시 종료하므로,
     LLM 호출 비용이 큰 실제 스캔은 상시 워커 풀에서 실행된다.
