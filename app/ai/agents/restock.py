@@ -241,7 +241,10 @@ def validate_decision(decision: Dict[str, Any], context: Dict[str, Any]) -> Dict
     내더라도 DB에는 검증된 수치만 적재된다 (금전 관련 수치의 최종 결정권은 산식에 둔다).
     """
     baseline = max(1, context["baseline_quantity"])
-    upper = max(baseline * 2, baseline + 10)
+    # 상한은 baseline에 비례해서만 연다. 종전 `baseline + 10`은 baseline이 10 이하일 때
+    # 항상 이겨서, 30일 1권 팔리는 도서에 13권까지 허용했다(수요의 6개월치).
+    # baseline은 이미 리드타임+버퍼 수요 + 최소 안전재고 + 반려 소실을 포함한 값이다.
+    upper = math.ceil(baseline * 1.5)
     qty = decision.get("reorder_quantity") or baseline
     try:
         qty = int(qty)
