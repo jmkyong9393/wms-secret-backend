@@ -14,7 +14,7 @@ spec:
       imagePullSecrets: [{ name: ecr-secret }]   # §2-6 필수 (없으면 ImagePullBackOff)
       containers:
       - name: beat
-        image: <ACCOUNT>.dkr.ecr.ap-northeast-2.amazonaws.com/nexus-backend-repo:latest
+        image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-northeast-2.amazonaws.com/nexus-backend-repo:latest
         # -s를 /tmp로 지정 — 컨테이너가 non-root(wms-user)라 /app 루트에 스케줄 파일을
         # 못 써 기동 직후 크래시루프에 빠졌다 (2026-08-12 로컬 실측, docker-compose와 동일 원인).
         command: ["celery", "-A", "app.worker.tasks", "beat", "-l", "info", "-s", "/tmp/celerybeat-schedule"]
