@@ -261,11 +261,26 @@ app.mount(
 
 
 @app.get("/health")
+# 프론트 rewrite가 /api/:path* 만 넘기므로, 외부에서 닿으려면 이 별칭이 필요하다.
+@app.get("/api/v1/health")
 def health_check():
     """
     로드밸런서(K8s Ingress 등) 또는 KEDA 스케일링을 위한 서버 헬스 체크 엔드포인트입니다.
+
+    프라이싱 모델 상태를 함께 실는다. 모델이 없으면 규칙 산식으로 폴백하는데,
+    그 폴백이 조용해서 **모델이 한 번도 로드되지 않은 상태를 오랫동안 못 보았다**
+    (xgboost·scikit-learn 미설치, 2026-08-26 발견). 관측되지 않는 폴백은 고장과 같다.
+
+    모델 미로드는 장애가 아니므로 `status`는 건드리지 않는다 - 프로브가 이걸로
+    파드를 죽이면 멀짓한 서버가 재시작 루프에 빠진다.
     """
-    return {"status": "ok", "version": "2.15.0.1"}
+    from app.ml.pricing_predictor import is_model_active
+
+    return {
+        "status": "ok",
+        "version": "2.15.0.1",
+        "pricing_model": "xgboost" if is_model_active() else "rule_fallback",
+    }
 
 
 @app.get("/db-check")

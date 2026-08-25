@@ -6,6 +6,7 @@ Critic Agent - 2단 교차검증.
 
 Stage B는 부가 검증이므로 fail-open이다. LLM 장애 시 Stage A 결과만으로 진행한다.
 """
+
 import json
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,7 @@ from app.ai.state import WMSInspectionState
 from app.ai.agents.common import DEFECT_TRANSLATION_MAP
 from app.ai.agents.llm import llm_mini
 from app.ai.agents.schemas import CriticVerdict
+
 
 def critic_stage_a_integrity_check(defects: list, image_count: int, score) -> list[str]:
     """Vision 결함 목록과 Policy 산출 점수의 결정론적 정합성 대조 (LLM 미사용).
@@ -31,20 +33,30 @@ def critic_stage_a_integrity_check(defects: list, image_count: int, score) -> li
         # image_index 범위 초과: VLM이 존재하지 않는 이미지를 지목한 환각 신호.
         idx = d.get("image_index")
         if image_count and isinstance(idx, int) and not (0 <= idx < image_count):
-            integrity_issues.append(f"결함[{i}] image_index({idx})가 촬영 장수({image_count}) 범위를 벗어남")
+            integrity_issues.append(
+                f"결함[{i}] image_index({idx})가 촬영 장수({image_count}) 범위를 벗어남"
+            )
 
     # 결함이 있는데 감점이 0점(=100점 만점)이면 Vision과 Policy 보고가 모순된다.
     if defects and score == 100:
-        integrity_issues.append(f"결함 {len(defects)}건이 보고되었으나 UBCI 감점이 0점(100점)으로 산출됨")
+        integrity_issues.append(
+            f"결함 {len(defects)}건이 보고되었으나 UBCI 감점이 0점(100점)으로 산출됨"
+        )
 
     # 결함이 없는데 감점이 발생한 경우도 마찬가지로 모순이다.
     if not defects and score is not None and score < 100:
-        integrity_issues.append(f"결함 0건인데 UBCI {score}점(감점 {100 - score}점)이 산출됨")
+        integrity_issues.append(
+            f"결함 0건인데 UBCI {score}점(감점 {100 - score}점)이 산출됨"
+        )
 
     # 확신도를 YOLO 제보에서 그대로 베낀 결함 - 이미지를 보고 판단한 결과가 아니다.
     # Vision Agent가 결정론적으로 표시해 둔 플래그를 여기서 정합성 위반으로 승격시킨다.
     # (판독을 신뢰할 수 없으므로 자동 확정 금지 - 결함 자체는 근거로 보존한다)
-    copied = [i for i, d in enumerate(defects) if isinstance(d, dict) and d.get("conf_copied_from_candidate")]
+    copied = [
+        i
+        for i, d in enumerate(defects)
+        if isinstance(d, dict) and d.get("conf_copied_from_candidate")
+    ]
     if copied:
         integrity_issues.append(
             f"결함 {len(copied)}건의 확신도가 YOLO 제보 값과 완전히 일치 - VLM이 이미지를 "
@@ -54,7 +66,11 @@ def critic_stage_a_integrity_check(defects: list, image_count: int, score) -> li
     # 비접지 BBox - VLM이 위치를 못 잡고 좌표를 지어낸 패턴 (동일 좌표 반복 / 등차 나열).
     # 처리 계보는 conf_copied_from_candidate와 같다: 결함은 보존하되 자동 확정을 막고
     # 관리자가 실제 위치를 그리도록 HITL로 보낸다 (실측: LPN-260810-A030 · A012).
-    ungrounded = [i for i, d in enumerate(defects) if isinstance(d, dict) and d.get("bbox_ungrounded")]
+    ungrounded = [
+        i
+        for i, d in enumerate(defects)
+        if isinstance(d, dict) and d.get("bbox_ungrounded")
+    ]
     if ungrounded:
         integrity_issues.append(
             f"결함 {len(ungrounded)}건의 BBox가 지어낸 좌표 패턴(동일 좌표 반복/등차 나열) - "
@@ -77,7 +93,11 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
     vision_failed = bool(state.get("vision_failed"))
 
     if revision >= 2:
-        cause = "Vision 판독이 2회 연속 실패" if vision_failed else f"판정 애매성 지속 (UBCI {score}점)"
+        cause = (
+            "Vision 판독이 2회 연속 실패"
+            if vision_failed
+            else f"판정 애매성 지속 (UBCI {score}점)"
+        )
         critic_text = f"최대 재검수 루프(2회) 초과 - {cause}. 자동 확정 불가로 HITL 관리자 수동 오버라이드로 이관합니다."
         return {
             "reason_code": "MAX_RETRIES_AMBIGUOUS_HITL",
@@ -85,7 +105,11 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
             "revision_count": revision,
             "critic_text": critic_text,
             "executed_agents": ["critic_agent"],
-            "messages": [AIMessage(content="[Critic Agent] ⚠️ 최대 재검수 루프(2회) 초과 ➔ HITL 관리자 검수 이관")]
+            "messages": [
+                AIMessage(
+                    content="[Critic Agent] ⚠️ 최대 재검수 루프(2회) 초과 ➔ HITL 관리자 검수 이관"
+                )
+            ],
         }
 
     if score is not None and 58 <= score <= 66:
@@ -96,11 +120,19 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
             "revision_count": revision,
             "critic_text": critic_text,
             "executed_agents": ["critic_agent"],
-            "messages": [AIMessage(content=f"[Critic Agent] ⚠️ 입고 등급 경계선(UBCI {score}점) 판정 애매 ➔ HITL 관리자 개입 이관")]
+            "messages": [
+                AIMessage(
+                    content=f"[Critic Agent] ⚠️ 입고 등급 경계선(UBCI {score}점) 판정 애매 ➔ HITL 관리자 개입 이관"
+                )
+            ],
         }
 
     if score is None and revision < 2:
-        cause = "Vision 판독 실패(외부 VLM 오류)" if vision_failed else "Policy Agent UBCI 점수 미산출"
+        cause = (
+            "Vision 판독 실패(외부 VLM 오류)"
+            if vision_failed
+            else "Policy Agent UBCI 점수 미산출"
+        )
         critic_text = f"{cause} - Vision Agent 재판독 지시 (재시도 {revision + 1}/2회)"
         return {
             "reason_code": "REJECT",
@@ -111,7 +143,11 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
             "vision_failed": False,
             "critic_text": critic_text,
             "executed_agents": ["critic_agent"],
-            "messages": [AIMessage(content=f"[Critic Agent] 🔄 {cause} ➔ Vision Agent 재검수 (재시도 {revision + 1}/2회)")]
+            "messages": [
+                AIMessage(
+                    content=f"[Critic Agent] 🔄 {cause} ➔ Vision Agent 재검수 (재시도 {revision + 1}/2회)"
+                )
+            ],
         }
 
     # --- 실질 교차검증 (Cross-Check) ---
@@ -133,7 +169,11 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
             "revision_count": revision,
             "critic_text": critic_text,
             "executed_agents": ["critic_agent"],
-            "messages": [AIMessage(content=f"[Critic Agent] ⚠️ 정합성 위반 {len(integrity_issues)}건 ➔ HITL 이관")]
+            "messages": [
+                AIMessage(
+                    content=f"[Critic Agent] ⚠️ 정합성 위반 {len(integrity_issues)}건 ➔ HITL 이관"
+                )
+            ],
         }
 
     # --- Stage B: LLM 판독 타당성 심사 (GPT-4o-mini) ---
@@ -160,7 +200,9 @@ def critic_agent(state: WMSInspectionState) -> WMSInspectionState:
                     # 크롭을 직접 본 증거 대조 검증의 판정. Stage B는 이미지를 보지 않으므로
                     # 이 값을 좌표 휴리스틱으로 뒤집지 않도록 프롬프트에서 명시한다.
                     "verified": d.get("verify_visible") or "미심사",
-                    "deduction": d.get("applied_deduction", d.get("preliminary_deduction")),
+                    "deduction": d.get(
+                        "applied_deduction", d.get("preliminary_deduction")
+                    ),
                 }
                 for i, d in enumerate(defects)
             ]
@@ -199,12 +241,20 @@ Vision AI가 보고한 결함 판독이 타당한지 보수적이고 엄격하�
 오탐이 의심되는 항목이 있으면 suspect_indices에 해당 index를 넣으세요.
 """
             structured_critic = llm_mini.with_structured_output(CriticVerdict)
-            llm_verdict = structured_critic.invoke([HumanMessage(content=verdict_prompt)])
+            llm_verdict = structured_critic.invoke(
+                [HumanMessage(content=verdict_prompt)]
+            )
         except Exception as e:
-            print(f"[Critic Agent] Stage B LLM 심사 실패 - 결정론적 판정만으로 진행: {e}")
+            print(
+                f"[Critic Agent] Stage B LLM 심사 실패 - 결정론적 판정만으로 진행: {e}"
+            )
 
     if llm_verdict and llm_verdict.decision == "REJECTED":
-        suspect = f" (오탐 의심 인덱스: {llm_verdict.suspect_indices})" if llm_verdict.suspect_indices else ""
+        suspect = (
+            f" (오탐 의심 인덱스: {llm_verdict.suspect_indices})"
+            if llm_verdict.suspect_indices
+            else ""
+        )
         critic_text = f"판독 타당성 심사 반려 - {llm_verdict.reason}{suspect}"
 
         # 재검수 여유가 남아 있으면 Vision에 재판독을 지시하고, 소진됐으면 사람에게 넘긴다.
@@ -217,7 +267,7 @@ Vision AI가 보고한 결함 판독이 타당한지 보수적이고 엄격하�
                 "defects": [],
                 "critic_text": f"{critic_text} ➔ Vision Agent 재판독 지시 (재시도 {revision + 1}/2회)",
                 "executed_agents": ["critic_agent"],
-                "messages": [AIMessage(content=f"[Critic Agent] 🔄 {critic_text}")]
+                "messages": [AIMessage(content=f"[Critic Agent] 🔄 {critic_text}")],
             }
 
         return {
@@ -226,11 +276,23 @@ Vision AI가 보고한 결함 판독이 타당한지 보수적이고 엄격하�
             "revision_count": revision,
             "critic_text": f"{critic_text} ➔ 재검수 소진, HITL 관리자 검수 이관",
             "executed_agents": ["critic_agent"],
-            "messages": [AIMessage(content=f"[Critic Agent] ⚠️ {critic_text} ➔ HITL 이관")]
+            "messages": [
+                AIMessage(content=f"[Critic Agent] ⚠️ {critic_text} ➔ HITL 이관")
+            ],
         }
 
-    grade_label = "S급(MINT)" if (score or 0) >= 95 else ("A급(GOOD)" if (score or 0) >= 85 else ("B급(NORMAL)" if (score or 0) >= 65 else "C급(REJECT)"))
-    verdict_note = f" / 판독 타당성 심사 승인({llm_verdict.reason})" if llm_verdict else ""
+    grade_label = (
+        "S급(MINT)"
+        if (score or 0) >= 95
+        else (
+            "A급(GOOD)"
+            if (score or 0) >= 85
+            else ("B급(NORMAL)" if (score or 0) >= 65 else "C급(REJECT)")
+        )
+    )
+    verdict_note = (
+        f" / 판독 타당성 심사 승인({llm_verdict.reason})" if llm_verdict else ""
+    )
     critic_text = (
         f"교차 검증 통과 - 결함 {len(defects)}건의 BBox/image_index 정합성 및 "
         f"산출 점수(UBCI {score}점)와 {grade_label} 등급 분기 조건 확인{verdict_note}, 보증서 발행 승인"
@@ -241,5 +303,9 @@ Vision AI가 보고한 결함 판독이 타당한지 보수적이고 엄격하�
         "revision_count": revision,
         "critic_text": critic_text,
         "executed_agents": ["critic_agent"],
-        "messages": [AIMessage(content="[Critic Agent] 판정 명확성 검증 완료 ➔ Report Agent 보증서 발행 승인 (OK)")]
+        "messages": [
+            AIMessage(
+                content="[Critic Agent] 판정 명확성 검증 완료 ➔ Report Agent 보증서 발행 승인 (OK)"
+            )
+        ],
     }

@@ -9,6 +9,7 @@ Policy Agent - 2단 구조.
 Stage B는 점수·등급에 쓰지 않는다. ReturnPolicyVerdict 스키마에 점수 필드가 없고, 호출은 점수 확정 뒤에 일어나며, 결과는 return_policy 키에만 담긴다.
 매입가를 정하는 값에 LLM이 개입하면 재현성과 감사 추적성이 깨진다.
 """
+
 import json
 from typing import Any, Dict, List, Optional
 
@@ -20,12 +21,13 @@ from app.ai.agents.common import DEFECT_TRANSLATION_MAP
 from app.ai.agents.llm import llm_mini
 from app.ai.agents.schemas import ReturnPolicyVerdict
 
+
 def _effective_ratio(d: Dict[str, Any], default: int = 5) -> int:
     """감점 구간 판정에 쓸 면적비(%)를 돌려준다. VLM이 비우면 **BBox 면적에서 유도**한다.
 
     [배경] VLM이 `ratio`를 0으로 내려보내는 경우가 실측으로 확인됐다(LPN-260806-A001, 결함 5건 전부 ratio=0). 면적 기반 3단계 구간(마모·오염·찢어짐·긁힘 등)은 이 값이 0이면 전부 최하위 구간으로 떨어져 심각도 차등이 통째로 무력화된다.
 
-    좌표는 이미 있으므로 계산할 수 있다. BBox는 0~1000 정규화이므로 넓이비는 (w/1000)x(h/1000)이고, 이는 "결함이 이미지에서 차지하는 면적 비율"이라는 UBCI 규정의 정의와 같은 축이다. 
+    좌표는 이미 있으므로 계산할 수 있다. BBox는 0~1000 정규화이므로 넓이비는 (w/1000)x(h/1000)이고, 이는 "결함이 이미지에서 차지하는 면적 비율"이라는 UBCI 규정의 정의와 같은 축이다.
     실제 손상부는 박스보다 작을 수 있으나 단조(마모가 클수록 박스도 크다)하므로 구간 판정 목적에는 충분하다.
     좌표조차 없으면 근거가 없으므로 기존 기본값(5%)을 유지한다 - 없는 값을 크게 잡아 감점을 부풀리지 않는다.
     """
@@ -71,14 +73,14 @@ def _edge_wear_profile(defects: List[Dict[str, Any]]) -> tuple[set, int]:
     한국 단행본은 좌철(제본이 왼쪽)이 일반적이라는 관례를 쓰지 않는다. 좌/우를 그대로 쓰되 뒤표지만 반전하므로, 제본 방향을 몰라도 앞뒤 대응이 맞는다.
     """
     corners: set = set()
-    wildcard_rows: set = set()   # 가로를 알 수 없는 검출의 세로 구간
+    wildcard_rows: set = set()  # 가로를 알 수 없는 검출의 세로 구간
     max_ratio = 0
 
     for d in defects:
         dtype = str(d.get("type", "") or d.get("label", ""))
         if not ("WEAR" in dtype or "마모" in dtype):
             continue
-        if d.get("evidence_suspect"):     # 오탐 지목분은 위치 계산에서도 뺀다
+        if d.get("evidence_suspect"):  # 오탐 지목분은 위치 계산에서도 뺀다
             continue
 
         max_ratio = max(max_ratio, _effective_ratio(d, default=0))
@@ -95,11 +97,11 @@ def _edge_wear_profile(defects: List[Dict[str, Any]]) -> tuple[set, int]:
         row = "TOP" if cy < 333 else ("BOTTOM" if cy > 667 else "MID")
         idx = d.get("image_index")
 
-        if idx == 0:                      # 앞표지 - 화면 좌우 그대로
+        if idx == 0:  # 앞표지 - 화면 좌우 그대로
             col = "L" if cx < 500 else "R"
-        elif idx == 1:                    # 뒤표지 - 좌우 반전
+        elif idx == 1:  # 뒤표지 - 좌우 반전
             col = "R" if cx < 500 else "L"
-        else:                             # 책등·기타 컷 - 가로 판정 불가
+        else:  # 책등·기타 컷 - 가로 판정 불가
             wildcard_rows.add(row)
             continue
 
@@ -111,7 +113,6 @@ def _edge_wear_profile(defects: List[Dict[str, Any]]) -> tuple[set, int]:
             corners.add((row, "SIDE"))
 
     return corners, max_ratio
-
 
 
 #   Statute  = 법령 - 계약 여부와 무관하게 모두에게 적용된다
@@ -141,27 +142,36 @@ def evaluate_return_policy(
     """
     from app.core.rag_service import search_policy
 
-    defect_types = sorted({str(d.get("type") or "") for d in (defects or []) if d.get("type")})
-    query = " ".join(filter(None, [
-        platform,
-        return_reason or "중고 도서 반품 수용 기준",
-        "반품 가능 여부 배송비 부담 환불 처리 귀책 판단",
-        " ".join(defect_types),
-    ])).strip()
+    defect_types = sorted(
+        {str(d.get("type") or "") for d in (defects or []) if d.get("type")}
+    )
+    query = " ".join(
+        filter(
+            None,
+            [
+                platform,
+                return_reason or "중고 도서 반품 수용 기준",
+                "반품 가능 여부 배송비 부담 환불 처리 귀책 판단",
+                " ".join(defect_types),
+            ],
+        )
+    ).strip()
 
     # 플랫폼(테넌트)이 특정되면 해당 플랫폼 규정과 공통 규정을 함께 본다.
     # 표준 운영 정책서 제0조의2 ②·③.
     where = {"platform": {"$in": [platform, "Common"]}} if platform else None
     clauses = search_policy(query, k=8, where=where)
     if not clauses and where:
-        clauses = search_policy(query, k=8)   # 플랫폼 규정이 없으면 전체에서 다시
+        clauses = search_policy(query, k=8)  # 플랫폼 규정이 없으면 전체에서 다시
 
     # ── 직접 판정 근거 / 참고 자료 분리 (표준 운영 정책서 제0조의1 ③) ──────────
     # "외부 플랫폼 리서치 데이터뿐이고 고객사 계약 또는 법령 근거가 확인되지 않은 경우, 해당 조항은 직접 판정 근거가 아니라 WMS 기본 정책 설계 참고 근거로만 사용한다."
     # 지식베이스의 교보·YES24·쿠팡 약관은 공개 약관을 리서치로 수집한 것이지 우리가 체결한 계약이 아니다. 따라서 판정은 우리 규정(Internal)과 법령(Statute)으로만 하고, 타사 약관은 업계 관행을 이해하는 맥락으로만 모델에 준다.
     # (실제 고객사 계약이 체결되면 그 계약을 Contract로 등재하고 이 집합에 추가한다)
     binding = [c for c in clauses if c.get("authority_level") in BINDING_AUTHORITY]
-    reference = [c for c in clauses if c.get("authority_level") not in BINDING_AUTHORITY]
+    reference = [
+        c for c in clauses if c.get("authority_level") not in BINDING_AUTHORITY
+    ]
 
     # 우리 규정·법령에서 근거를 찾지 못하면 판단하지 않는다. 남의 약관으로 우리 처분을 정하지 않는다.
     if not binding:
@@ -186,11 +196,16 @@ def evaluate_return_policy(
 
     if not llm_mini:
         return {
-            "return_accepted": None, "shipping_fee_bearer": None,
-            "liability": "UNDETERMINED", "refund_ratio": None,
+            "return_accepted": None,
+            "shipping_fee_bearer": None,
+            "liability": "UNDETERMINED",
+            "refund_ratio": None,
             # 실패 경로에서도 타사 약관은 인용에 넣지 않는다 (제0조의1 ③).
             "cited_clauses": [
-                {k: c.get(k) for k in ("chunk_id", "doc_title", "clause_ref", "authority_rank")}
+                {
+                    k: c.get(k)
+                    for k in ("chunk_id", "doc_title", "clause_ref", "authority_rank")
+                }
                 for c in binding
             ],
             "reference_clauses": [
@@ -203,18 +218,45 @@ def evaluate_return_policy(
         }
 
     clause_block = json.dumps(
-        [{k: c.get(k) for k in ("chunk_id", "doc_title", "clause_ref", "authority_rank", "content")}
-         for c in binding],
-        ensure_ascii=False, indent=1,
+        [
+            {
+                k: c.get(k)
+                for k in (
+                    "chunk_id",
+                    "doc_title",
+                    "clause_ref",
+                    "authority_rank",
+                    "content",
+                )
+            }
+            for c in binding
+        ],
+        ensure_ascii=False,
+        indent=1,
     )
-    reference_block = json.dumps(
-        [{k: c.get(k) for k in ("doc_title", "clause_ref", "content")} for c in reference],
-        ensure_ascii=False, indent=1,
-    ) if reference else "(없음)"
+    reference_block = (
+        json.dumps(
+            [
+                {k: c.get(k) for k in ("doc_title", "clause_ref", "content")}
+                for c in reference
+            ],
+            ensure_ascii=False,
+            indent=1,
+        )
+        if reference
+        else "(없음)"
+    )
     defect_block = json.dumps(
-        [{"type": d.get("type"), "label": DEFECT_TRANSLATION_MAP.get(str(d.get("type")), ""),
-          "description": d.get("description")} for d in (defects or [])],
-        ensure_ascii=False, indent=1,
+        [
+            {
+                "type": d.get("type"),
+                "label": DEFECT_TRANSLATION_MAP.get(str(d.get("type")), ""),
+                "description": d.get("description"),
+            }
+            for d in (defects or [])
+        ],
+        ensure_ascii=False,
+        indent=1,
     )
 
     prompt = f"""당신은 중고도서 물류센터의 반품 정책 심사관입니다.
@@ -255,11 +297,16 @@ def evaluate_return_policy(
     except Exception as e:
         print(f"[Policy Stage B] 처분 판단 실패({e}) - 관리자 결재로 이관합니다.")
         return {
-            "return_accepted": None, "shipping_fee_bearer": None,
-            "liability": "UNDETERMINED", "refund_ratio": None,
+            "return_accepted": None,
+            "shipping_fee_bearer": None,
+            "liability": "UNDETERMINED",
+            "refund_ratio": None,
             # 실패 경로에서도 타사 약관은 인용에 넣지 않는다 (제0조의1 ③).
             "cited_clauses": [
-                {k: c.get(k) for k in ("chunk_id", "doc_title", "clause_ref", "authority_rank")}
+                {
+                    k: c.get(k)
+                    for k in ("chunk_id", "doc_title", "clause_ref", "authority_rank")
+                }
                 for c in binding
             ],
             "reference_clauses": [
@@ -273,11 +320,16 @@ def evaluate_return_policy(
 
     out = verdict.model_dump()
     out["reference_clauses"] = [
-        {k: c.get(k) for k in ("doc_title", "clause_ref", "authority_level")} for c in reference
+        {k: c.get(k) for k in ("doc_title", "clause_ref", "authority_level")}
+        for c in reference
     ]
     # 타사 약관을 판정 근거로 인용했으면 걷어낸다 (제0조의1 ③). 프롬프트로 금지했지만 모델이 지키지 않을 수 있으므로 코드로 거른다.
     binding_ids = {c.get("chunk_id") for c in binding}
-    dropped = [c for c in (out.get("cited_clauses") or []) if c.get("chunk_id") not in binding_ids]
+    dropped = [
+        c
+        for c in (out.get("cited_clauses") or [])
+        if c.get("chunk_id") not in binding_ids
+    ]
     if dropped:
         out["cited_clauses"] = [
             c for c in out["cited_clauses"] if c.get("chunk_id") in binding_ids
@@ -285,22 +337,32 @@ def evaluate_return_policy(
         print(f"[Policy Stage B] 타사 약관 인용 {len(dropped)}건 제거 (제0조의1 ③)")
 
     # 표준 운영 정책서 제16조의3 ②: 귀책이 불명확한 상태에서 고객에게 배송비·반품비를 자동 차감하지 않는다. 모델이 두 값을 모순되게 채우면 여기서 바로잡는다.
-    if out.get("liability") == "UNDETERMINED" and out.get("shipping_fee_bearer") == "CUSTOMER":
+    if (
+        out.get("liability") == "UNDETERMINED"
+        and out.get("shipping_fee_bearer") == "CUSTOMER"
+    ):
         out["shipping_fee_bearer"] = None
         out["requires_human"] = True
-        out["rationale"] = ((out.get("rationale") or "").strip() + " (귀책이 확정되지 않아 고객 비용 부담을 자동 적용하지 않습니다 — 제16조의3 ②)").strip()
+        out["rationale"] = (
+            (out.get("rationale") or "").strip()
+            + " (귀책이 확정되지 않아 고객 비용 부담을 자동 적용하지 않습니다 — 제16조의3 ②)"
+        ).strip()
 
     # 모델이 인용 없이 결론만 낸 경우를 코드로 막는다. 프롬프트로 부탁하는 것만으로는 보장되지 않으므로, 인용이 비었으면 결론을 무효화하고 사람에게 넘긴다.
     if not out.get("cited_clauses"):
-        out.update({
-            "return_accepted": None,
-            "shipping_fee_bearer": None,
-            "refund_ratio": None,
-            "requires_human": True,
-            "stage_b_status": "UNCITED_VERDICT",
-        })
+        out.update(
+            {
+                "return_accepted": None,
+                "shipping_fee_bearer": None,
+                "refund_ratio": None,
+                "requires_human": True,
+                "stage_b_status": "UNCITED_VERDICT",
+            }
+        )
         out["rationale"] = (
-            "규정 조항 인용 없이 결론이 산출되어 자동 처분을 보류합니다. " + (out.get("rationale") or "")).strip()
+            "규정 조항 인용 없이 결론이 산출되어 자동 처분을 보류합니다. "
+            + (out.get("rationale") or "")
+        ).strip()
     else:
         out["stage_b_status"] = "OK"
     # 귀책 미확정이면 사람 결재가 필요하다 (제0장 ④).
@@ -311,11 +373,15 @@ def evaluate_return_policy(
 
 
 def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
-    print("[Agent] Policy Agent: UBCI v2.0.0.0 공식 감점 매트릭스 & 텍스트 침범 가중치 적용 연산 중...")
+    print(
+        "[Agent] Policy Agent: UBCI v2.0.0.0 공식 감점 매트릭스 & 텍스트 침범 가중치 적용 연산 중..."
+    )
 
     # Vision Agent가 판독에 실패한 건은 점수를 산출하지 않는다. 결함 목록이 비어 있다는 사실이 "무결점"을 뜻하지 않기 때문에, 여기서 100점을 매기면 판독 실패가 그대로 최고 등급 자동 승인으로 이어진다. ubci_score를 None으로 남겨두면 Critic이 재검수(최대 2회) 후 HITL 이관까지 기존 루프로 처리한다.
     if state.get("vision_failed"):
-        skip_text = "Vision 판독 실패로 UBCI 점수 산출을 보류합니다 (재검수 루프로 회부)."
+        skip_text = (
+            "Vision 판독 실패로 UBCI 점수 산출을 보류합니다 (재검수 루프로 회부)."
+        )
         print(f"[Agent] Policy Agent: {skip_text}")
         return {
             "ubci_score": None,
@@ -333,14 +399,36 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
     # 키워드를 넓히고, category_type("컴퓨터/모바일" 등)을 2차 신호로 추가한다.
     # 이 Cap은 DMG_INT_DOODLE(낙서)에만 적용되므로 오탐(비문제집을 문제집으로 오판)의 대가는 "낙서 감점이 15점에서 멈춘다" 정도이고, 누락의 대가(매입가 부당 하락)보다 훨씬 가볍다 - 넓게 잡는 쪽이 안전하다.
     _WORKBOOK_TITLE_KEYWORDS = [
-        "수험서", "문제집", "기출", "자격검정", "실전문제", "학습", "교재", "AIVLE", "SQL",
-        "입문", "실습", "자습서", "코딩", "프로그래밍", "알고리즘", "예제", "테스트", "인터뷰",
-        "워크북", "연습", "풀이", "Do it", "혼자 공부하는", "풀어쓴", "with 클로드", "with 코드",
+        "수험서",
+        "문제집",
+        "기출",
+        "자격검정",
+        "실전문제",
+        "학습",
+        "교재",
+        "AIVLE",
+        "SQL",
+        "입문",
+        "실습",
+        "자습서",
+        "코딩",
+        "프로그래밍",
+        "알고리즘",
+        "예제",
+        "테스트",
+        "인터뷰",
+        "워크북",
+        "연습",
+        "풀이",
+        "Do it",
+        "혼자 공부하는",
+        "풀어쓴",
+        "with 클로드",
+        "with 코드",
     ]
     _WORKBOOK_CATEGORY_KEYWORDS = ["컴퓨터", "IT", "프로그래밍", "자격증", "수험서"]
-    is_workbook = (
-        any(k in book_title for k in _WORKBOOK_TITLE_KEYWORDS)
-        or any(k in book_category for k in _WORKBOOK_CATEGORY_KEYWORDS)
+    is_workbook = any(k in book_title for k in _WORKBOOK_TITLE_KEYWORDS) or any(
+        k in book_category for k in _WORKBOOK_CATEGORY_KEYWORDS
     )
 
     # 모서리 마모는 건수가 아니라 "책의 서로 다른 모서리 몇 곳이 닳았는가"로 센다.
@@ -359,9 +447,11 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
 
     for d in defects:
         dtype = str(d.get("type", "") or d.get("label", ""))
-        ratio = _effective_ratio(d)   # VLM이 비우면 BBox 면적에서 유도
+        ratio = _effective_ratio(d)  # VLM이 비우면 BBox 면적에서 유도
         page_cnt = d.get("page_count") or d.get("pages") or 1
-        text_overlap = d.get("text_overlap", False) or "본문" in str(d.get("description", ""))
+        text_overlap = d.get("text_overlap", False) or "본문" in str(
+            d.get("description", "")
+        )
         label = DEFECT_TRANSLATION_MAP.get(dtype) or dtype or "상태 결함"
 
         # 증거 대조 검증(verify_defects_with_images)이 오탐으로 지목한 결함은 감점하지 않는다. 목록에서는 지우지 않으므로 HITL 화면과 BBox 오버레이에는 그대로 보이고, 다만 매입가를 좌우하는 점수에는 반영하지 않는다 - 판독이 증거와 어긋난다고 판정된 항목으로 판매자에게 불이익을 주지 않기 위함이다.
@@ -374,7 +464,13 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
             continue
 
         # 🚨 치명적 결함 즉시 반려 (UBCI Spec Section 1 & Section 4)
-        if "WET" in dtype or "WATER" in dtype or "WARPING" in dtype or "침수" in dtype or "휨" in dtype:
+        if (
+            "WET" in dtype
+            or "WATER" in dtype
+            or "WARPING" in dtype
+            or "침수" in dtype
+            or "휨" in dtype
+        ):
             is_fatal_reject = True
             fatal_reason = (
                 "🚨 액체 오염(Water Stain) 또는 페이지 휨(Warping) 감지 ➔ 즉시 반려(REJECT) "
@@ -398,9 +494,17 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
                 spread_ded = (spread - 1) * UM.EDGE_WEAR_SPREAD_STEP
                 wear_ded = min(UM.EDGE_WEAR_CAP, base_ded + spread_ded)
 
-                sev = "경미" if base_ded == UM.EDGE_WEAR.minor else ("보통" if base_ded == UM.EDGE_WEAR.moderate else "심함")
+                sev = (
+                    "경미"
+                    if base_ded == UM.EDGE_WEAR.minor
+                    else ("보통" if base_ded == UM.EDGE_WEAR.moderate else "심함")
+                )
                 detail = f"모서리 마모 (-{wear_ded}점, {sev} 면적 {wear_max_ratio}% / 마모 부위 {spread}곳"
-                detail += f", 총 -{UM.EDGE_WEAR_CAP}점 Cap 적용" if base_ded + spread_ded > UM.EDGE_WEAR_CAP else ""
+                detail += (
+                    f", 총 -{UM.EDGE_WEAR_CAP}점 Cap 적용"
+                    if base_ded + spread_ded > UM.EDGE_WEAR_CAP
+                    else ""
+                )
                 detail += f", {UM.EDGE_WEAR.clause})"
 
                 deduction_items.append((label, wear_ded, detail))
@@ -414,21 +518,40 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
                 d["deduction_scope"] = "group"
                 d["deduction_group"] = "WORKBOOK_DOODLE"
                 d["applied_deduction"] = cap
-                d["deduction_note"] = f"수험서/문제집 전체 필기 -{cap}점 단일 Cap (건별 합산 아님)"
+                d["deduction_note"] = (
+                    f"수험서/문제집 전체 필기 -{cap}점 단일 Cap (건별 합산 아님)"
+                )
                 if not doodle_workbook_added:
-                    deduction_items.append((
-                        label, cap,
-                        f"수험서/문제집 도서 전체 필기/낙서 (-{cap}점 단일 고정 Cap, {UM.WORKBOOK_DOODLE.clause})",
-                    ))
+                    deduction_items.append(
+                        (
+                            label,
+                            cap,
+                            f"수험서/문제집 도서 전체 필기/낙서 (-{cap}점 단일 고정 Cap, {UM.WORKBOOK_DOODLE.clause})",
+                        )
+                    )
                     total_deduction += cap
                     doodle_workbook_added = True
             else:
-                base_ded = UM.DOODLE.severe if page_cnt > UM.DOODLE_PAGE_THRESHOLD else UM.DOODLE.minor
+                base_ded = (
+                    UM.DOODLE.severe
+                    if page_cnt > UM.DOODLE_PAGE_THRESHOLD
+                    else UM.DOODLE.minor
+                )
                 multiplier = UM.TEXT_OVERLAP_MULTIPLIER if text_overlap else 1.0
                 final_ded = int(base_ded * multiplier)
                 total_deduction += final_ded
-                overlap_str = f" (본문 텍스트 침범 x{UM.TEXT_OVERLAP_MULTIPLIER} 가중치)" if text_overlap else ""
-                deduction_items.append((label, final_ded, f"{label} (-{final_ded}점{overlap_str}, {UM.DOODLE.clause})"))
+                overlap_str = (
+                    f" (본문 텍스트 침범 x{UM.TEXT_OVERLAP_MULTIPLIER} 가중치)"
+                    if text_overlap
+                    else ""
+                )
+                deduction_items.append(
+                    (
+                        label,
+                        final_ded,
+                        f"{label} (-{final_ded}점{overlap_str}, {UM.DOODLE.clause})",
+                    )
+                )
                 d["applied_deduction"] = final_ded
                 d["deduction_scope"] = "single"
                 d["deduction_note"] = (
@@ -441,7 +564,13 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         elif "STAIN" in dtype or "오염" in dtype or "얼룩" in dtype:
             base_ded = UM.STAIN.tier_for(ratio)
             total_deduction += base_ded
-            deduction_items.append((label, base_ded, f"{label} (-{base_ded}점, 면적 {ratio}%, {UM.STAIN.clause})"))
+            deduction_items.append(
+                (
+                    label,
+                    base_ded,
+                    f"{label} (-{base_ded}점, 면적 {ratio}%, {UM.STAIN.clause})",
+                )
+            )
             d["applied_deduction"] = base_ded
             d["deduction_scope"] = "single"
             d["deduction_note"] = f"면적 {ratio}% 구간"
@@ -459,7 +588,13 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
             level = min(3, max(1, level))
             base_ded = UM.DISCOLOR_BY_LEVEL[level]
             total_deduction += base_ded
-            deduction_items.append((label, base_ded, f"{label} (-{base_ded}점, 강도 L{level}, {UM.DISCOLOR.clause})"))
+            deduction_items.append(
+                (
+                    label,
+                    base_ded,
+                    f"{label} (-{base_ded}점, 강도 L{level}, {UM.DISCOLOR.clause})",
+                )
+            )
             d["applied_deduction"] = base_ded
             d["deduction_scope"] = "single"
             d["deduction_note"] = f"황변 강도 L{level} (면적 아님)"
@@ -471,7 +606,12 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
                 rule = UM.TEAR
             elif "STICKER" in dtype or "스티커" in dtype:
                 rule = UM.STICKER
-            elif "CRUSH" in dtype or "찍힘" in dtype or "구겨짐" in dtype or "찌그러짐" in dtype:
+            elif (
+                "CRUSH" in dtype
+                or "찍힘" in dtype
+                or "구겨짐" in dtype
+                or "찌그러짐" in dtype
+            ):
                 rule = UM.CRUSH
             elif "SPINE" in dtype or "갈라짐" in dtype:
                 rule = UM.SPINE_CRACK
@@ -489,11 +629,25 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
                 rule = UM.DEFAULT
 
             base_ded = rule.tier_for(ratio)
-            multiplier = UM.TEXT_OVERLAP_MULTIPLIER if (text_overlap and rule.text_overlap_weighted) else 1.0
+            multiplier = (
+                UM.TEXT_OVERLAP_MULTIPLIER
+                if (text_overlap and rule.text_overlap_weighted)
+                else 1.0
+            )
             final_ded = int(base_ded * multiplier)
             total_deduction += final_ded
-            overlap_str = f" (본문 텍스트 침범 x{UM.TEXT_OVERLAP_MULTIPLIER} 가중치)" if multiplier != 1.0 else ""
-            deduction_items.append((label, final_ded, f"{label} (-{final_ded}점{overlap_str}, {rule.clause})"))
+            overlap_str = (
+                f" (본문 텍스트 침범 x{UM.TEXT_OVERLAP_MULTIPLIER} 가중치)"
+                if multiplier != 1.0
+                else ""
+            )
+            deduction_items.append(
+                (
+                    label,
+                    final_ded,
+                    f"{label} (-{final_ded}점{overlap_str}, {rule.clause})",
+                )
+            )
             d["applied_deduction"] = final_ded
             d["deduction_scope"] = "single"
             d["deduction_note"] = f"면적 {ratio}% 구간{overlap_str}"
@@ -501,7 +655,10 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
     # 마모 그룹 감점을 소속 결함 전체에 동일하게 새긴다. 건별 합산이 아니라는 사실을 화면이 그대로 읽을 수 있어야 한다. (오버레이가 지어내지 않도록 값과 문구를 함께 준다).
     if edge_wear_added:
         for d in defects:
-            if d.get("deduction_group") != "EDGE_WEAR" or d.get("deduction_scope") == "excluded":
+            if (
+                d.get("deduction_group") != "EDGE_WEAR"
+                or d.get("deduction_scope") == "excluded"
+            ):
                 continue
             d["applied_deduction"] = wear_group_ded
             d["deduction_note"] = (
@@ -520,8 +677,10 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         decision_str = UM.decision_for(score)
 
         # 검증이 판독을 전부 기각해 감점 근거가 남지 않은 상태는 "흠이 없다"가 아니라 "판독하지 못했다"이므로 무결점 등급을 주지 않고 판정을 보류한다.
-        score_unverified = bool(defects) and total_deduction == 0 and bool(suspect_excluded)
-        if score_unverified: # noqa: SIM102 - 아래 분기들이 이 플래그를 함께 읽는다
+        score_unverified = (
+            bool(defects) and total_deduction == 0 and bool(suspect_excluded)
+        )
+        if score_unverified:  # noqa: SIM102 - 아래 분기들이 이 플래그를 함께 읽는다
             grade_str = "판정 보류 (증거 대조 전건 반려)"
             decision_str = "HITL"
 
@@ -567,11 +726,17 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
             if basis:
                 deduction_basis.append({"defect_type": dtype, **basis})
     except Exception as e:
-        print(f"[Policy Agent] 근거 조항 인용 실패 - 점수는 그대로 유지하고 인용만 생략합니다: {e}")
+        print(
+            f"[Policy Agent] 근거 조항 인용 실패 - 점수는 그대로 유지하고 인용만 생략합니다: {e}"
+        )
 
     if deduction_basis:
         # 여러 결함이 같은 조항을 근거로 삼는 경우가 흔하므로 조항 단위로 중복을 제거한다. (순서는 유지 - dict가 삽입 순서를 보존)
-        refs = ", ".join(dict.fromkeys(f"{b['doc_title']} {b['clause_ref']}" for b in deduction_basis))
+        refs = ", ".join(
+            dict.fromkeys(
+                f"{b['doc_title']} {b['clause_ref']}" for b in deduction_basis
+            )
+        )
         policy_text += f" | 근거 조항: {refs}"
 
     # ── Stage B: 거래 처분 판단 (LLM + RAG) ──────────────────────────────
@@ -591,9 +756,12 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
             # Stage B 실패가 점수 산출을 무효화해서는 안 된다. 처분만 사람에게 넘긴다.
             print(f"[Policy Stage B] 예기치 못한 오류({e}) - 처분 판단을 생략합니다.")
             return_policy = {
-                "return_accepted": None, "shipping_fee_bearer": None,
-                "liability": "UNDETERMINED", "refund_ratio": None,
-                "cited_clauses": [], "requires_human": True,
+                "return_accepted": None,
+                "shipping_fee_bearer": None,
+                "liability": "UNDETERMINED",
+                "refund_ratio": None,
+                "cited_clauses": [],
+                "requires_human": True,
                 "rationale": "처분 판단을 수행하지 못해 관리자 결재로 이관합니다.",
                 "stage_b_status": "EXCEPTION",
             }
@@ -618,5 +786,5 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         "reason_code": None,
         "repair_directive": None,
         "executed_agents": ["policy_agent"],
-        "messages": [AIMessage(content=f"[Policy Agent] {policy_text}")]
+        "messages": [AIMessage(content=f"[Policy Agent] {policy_text}")],
     }

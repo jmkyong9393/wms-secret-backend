@@ -86,12 +86,6 @@ dev = [
     "mypy>=1.18",
 ]
 
-[tool.ruff.format]
-# app/ai는 LangGraph 파이프라인 프리즈 구역이다. 포맷은 동작을 바꾸지 않지만
-# CLAUDE.md가 이 구역의 코드 수정에 명시적 예외 승인을 요구하므로 제외한다.
-# 승인을 받으면 이 줄을 지우고 `uv run ruff format app/`을 한 번 돌리면 된다.
-exclude = ["app/ai/**"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # tests/manual은 외부 자원(OpenAI 키·로컬 .pt·기동 중인 API)을 요구하는 수동 실행본이라
