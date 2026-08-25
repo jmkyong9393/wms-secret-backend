@@ -18,6 +18,7 @@ IP 기준 리밋만으로는 브루트포스를 제대로 막지도, 정상 사�
 4. **Redis 장애 시 fail-open.** 부가 방어 장치 때문에 로그인 자체가 불가능해지면 안 된다.
    (동일 원칙: Critic Stage B, Vision 검증 함수)
 """
+
 from typing import Optional, Tuple
 
 import redis
@@ -31,7 +32,9 @@ def _get_client() -> Optional[redis.Redis]:
     try:
         return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
     except Exception as e:
-        print(f"[LoginThrottle] Redis 연결 실패({e}) - 스로틀 비활성 상태로 진행(fail-open)")
+        print(
+            f"[LoginThrottle] Redis 연결 실패({e}) - 스로틀 비활성 상태로 진행(fail-open)"
+        )
         return None
 
 

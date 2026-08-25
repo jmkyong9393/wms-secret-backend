@@ -2,6 +2,7 @@
 네트워크 라벨 프린터(Xprinter XP-423B 등) Raw TCP 전송 서비스.
 LABEL_PRINTER_ENABLED=false(기본)이면 실제 연결 없이 건너뛰므로 프린터가 없는 개발 환경에서도 입고·검수 흐름이 깨지지 않는다.
 """
+
 import logging
 import socket
 from dataclasses import dataclass

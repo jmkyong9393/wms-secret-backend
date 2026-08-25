@@ -23,6 +23,7 @@ build_certificate_document() 호출(LLM)만 제외한다. 랙 배정/재고 편�
 targetGrade = suggested_grade or "B", primaryReasonCode = reason_code
 (단, 비어있거나 AWAITING_HUMAN_REVIEW면 "DMG_INT_DOODLE"로 폴백).
 """
+
 import sys
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -49,12 +50,12 @@ EXCLUDE_LPNS = {"LPN-260806-A002", "LPN-260804-A010", "LPN-260804-A009"}
 
 def main() -> None:
     with Session(engine) as db:
-        admin = db.exec(
-            select(User).where(User.employee_id == "WM2608001")
-        ).first()
+        admin = db.exec(select(User).where(User.employee_id == "WM2608001")).first()
         if not admin:
             admin = db.exec(
-                select(User).where(User.role.in_([UserRoleEnum.MASTER, UserRoleEnum.ADMIN]))
+                select(User).where(
+                    User.role.in_([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
+                )
             ).first()
         if not admin:
             print("관리자 계정을 찾지 못해 중단합니다.")
@@ -63,7 +64,9 @@ def main() -> None:
 
         jobs = db.exec(
             select(ReturnJob).where(
-                ReturnJob.status.in_([JobStatusEnum.HITL_REQUIRED, JobStatusEnum.PENDING])
+                ReturnJob.status.in_(
+                    [JobStatusEnum.HITL_REQUIRED, JobStatusEnum.PENDING]
+                )
             )
         ).all()
 
@@ -83,7 +86,11 @@ def main() -> None:
 
             previous_state = job.status
             target_grade = agent_logs.get("suggested_grade") or "B"
-            reason_code = agent_logs.get("reason_code") or agent_logs.get("primary_reason_code") or ""
+            reason_code = (
+                agent_logs.get("reason_code")
+                or agent_logs.get("primary_reason_code")
+                or ""
+            )
             if not reason_code or reason_code == "AWAITING_HUMAN_REVIEW":
                 reason_code = "DMG_INT_DOODLE"
 
@@ -116,25 +123,29 @@ def main() -> None:
             }
             db.add(job)
 
-            db.add(AdminAuditLog(
-                admin_id=admin.id,
-                target_type="RETURN_JOB",
-                target_id=str(job.id),
-                action="APPROVE_DOWNGRADE",
-                previous_state=previous_state,
-                new_state=job.status,
-                target_grade=target_grade,
-                primary_reason_code=reason_code,
-                defect_coordinates=agent_logs.get("defect_coordinates") or [],
-                review_duration_ms=0,
-            ))
+            db.add(
+                AdminAuditLog(
+                    admin_id=admin.id,
+                    target_type="RETURN_JOB",
+                    target_id=str(job.id),
+                    action="APPROVE_DOWNGRADE",
+                    previous_state=previous_state,
+                    new_state=job.status,
+                    target_grade=target_grade,
+                    primary_reason_code=reason_code,
+                    defect_coordinates=agent_logs.get("defect_coordinates") or [],
+                    review_duration_ms=0,
+                )
+            )
             processed += 1
             print(f"  [{processed}] {lpn} -> {target_grade} ({reason_code})")
 
         db.commit()
 
     print()
-    print(f"처리 완료: {processed}건 승인/재고편입, 제외 {len(skipped_excluded)}건 ({sorted(skipped_excluded)})")
+    print(
+        f"처리 완료: {processed}건 승인/재고편입, 제외 {len(skipped_excluded)}건 ({sorted(skipped_excluded)})"
+    )
 
 
 if __name__ == "__main__":

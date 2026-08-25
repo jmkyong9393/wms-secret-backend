@@ -61,7 +61,12 @@ def _clear_auth_cookies(response: Response) -> None:
 
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit(settings.LOGIN_IP_RATE_LIMIT)
-def login(request: Request, response: Response, login_req: LoginRequest, session: Session = Depends(get_db)):
+def login(
+    request: Request,
+    response: Response,
+    login_req: LoginRequest,
+    session: Session = Depends(get_db),
+):
     """
     사번+비밀번호 인증 후 JWT를 HttpOnly 쿠키로 발급한다.
 
@@ -76,12 +81,16 @@ def login(request: Request, response: Response, login_req: LoginRequest, session
     if blocked:
         raise TooManyLoginAttemptsException(retry_after_seconds=retry_after)
 
-    user = user_service.authenticate_user(session=session, employee_id=login_req.employee_id, password=login_req.password)
+    user = user_service.authenticate_user(
+        session=session, employee_id=login_req.employee_id, password=login_req.password
+    )
     if not user:
         remaining = throttle.register_failure(login_req.employee_id)
         raise InvalidCredentialsException(remaining_attempts=remaining)
 
-    user_status_str = str(user.status.value) if hasattr(user.status, 'value') else str(user.status)
+    user_status_str = (
+        str(user.status.value) if hasattr(user.status, "value") else str(user.status)
+    )
     if user_status_str != "ACTIVE":
         # 자격증명 자체는 맞았으므로 실패 카운터를 올리지 않는다 (재시도해도 결과가 같은
         # 상태이고, 관리자 조치가 필요한 사안이라 스로틀로 가릴 이유가 없다).
@@ -90,11 +99,12 @@ def login(request: Request, response: Response, login_req: LoginRequest, session
     # 로그인 성공 - 누적된 실패 기록을 즉시 지운다.
     throttle.clear(login_req.employee_id)
 
-    role_str = str(user.role.value) if hasattr(user.role, 'value') else str(user.role)
+    role_str = str(user.role.value) if hasattr(user.role, "value") else str(user.role)
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = user_service.create_access_token(
-        data={"sub": user.employee_id, "role": role_str}, expires_delta=access_token_expires
+        data={"sub": user.employee_id, "role": role_str},
+        expires_delta=access_token_expires,
     )
 
     _set_auth_cookies(response, access_token, role_str)
@@ -126,17 +136,23 @@ def get_me(current_user: User = Depends(get_current_user)):
 def update_me(
     update_req: UserUpdate,
     session: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     내 프로필 정보 수정 (이름/이메일/전화번호/주소). 비밀번호는 여기서 다루지 않는다 -
     PATCH /api/v1/auth/password 를 사용한다.
     """
-    user = user_service.update_user_profile(session=session, user=current_user, update_in=update_req)
+    user = user_service.update_user_profile(
+        session=session, user=current_user, update_in=update_req
+    )
     return user
 
 
-@router.post("/privacy-consent", response_model=UserResponse, summary="개인정보 수집·이용 동의 기록")
+@router.post(
+    "/privacy-consent",
+    response_model=UserResponse,
+    summary="개인정보 수집·이용 동의 기록",
+)
 def submit_privacy_consent(
     consent: PrivacyConsentRequest,
     session: Session = Depends(get_db),
@@ -149,7 +165,9 @@ def submit_privacy_consent(
     "언제 받았는가"가 남지 않으면 동의를 받았다는 사실 자체를 증명할 수 없다.
     """
     if not consent.agreed:
-        raise BadRequestException("서비스 이용을 위해서는 개인정보 수집·이용 동의가 필요합니다.")
+        raise BadRequestException(
+            "서비스 이용을 위해서는 개인정보 수집·이용 동의가 필요합니다."
+        )
 
     user = user_service.record_privacy_consent(session=session, user=current_user)
     return user
@@ -161,12 +179,22 @@ async def issue_stream_ticket(
     current_user: User = Depends(get_current_user),
 ):
     """쿠키를 실을 수 없는 클라이언트용 SSE 접근 티켓 발급. scope에는 스트림 경로를 그대로 넣는다."""
-    role = str(current_user.role.value) if hasattr(current_user.role, "value") else str(current_user.role)
-    ticket, expires_in = await issue_sse_ticket(scope=scope, employee_id=current_user.employee_id, role=role)
+    role = (
+        str(current_user.role.value)
+        if hasattr(current_user.role, "value")
+        else str(current_user.role)
+    )
+    ticket, expires_in = await issue_sse_ticket(
+        scope=scope, employee_id=current_user.employee_id, role=role
+    )
     return {"ticket": ticket, "expires_in": expires_in, "scope": scope}
 
 
-@router.get("/password-policy", response_model=PasswordPolicyResponse, summary="비밀번호 작성 규칙 조회")
+@router.get(
+    "/password-policy",
+    response_model=PasswordPolicyResponse,
+    summary="비밀번호 작성 규칙 조회",
+)
 def get_password_policy():
     """
     화면이 안내 문구와 사전검증 기준을 서버에서 받아가기 위한 공개 엔드포인트.
@@ -185,7 +213,7 @@ def get_password_policy():
 def change_password(
     change_req: ChangePasswordRequest,
     session: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     비밀번호 변경 단일 엔드포인트. 마이페이지의 자율 변경과 최초 로그인 온보딩(강제 변경)이

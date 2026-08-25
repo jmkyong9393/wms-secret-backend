@@ -73,6 +73,7 @@ def _fast_sign_key():
         return None
     try:
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
         return load_pem_private_key(raw.encode("utf-8"), password=None)
     except Exception as exc:
         print(f"[CloudFront] cryptography 키 로드 실패 - rsa 폴백: {exc}")

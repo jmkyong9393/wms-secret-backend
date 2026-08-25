@@ -26,6 +26,7 @@
 그래서 **사유(결함 조합)를 먼저 뽑고 UBCI 매트릭스로 점수를 역산**한다.
 감점 수치는 policy_agent와 동일한 표를 쓴다 (2026-08-06 확정 STAIN/DISCOLOR 포함).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -81,17 +82,17 @@ SEED_ZONES = ["B", "C", "D", "E"]
 # ── UBCI 감점표 (policy_agent와 동일) ────────────────────────────────────
 # (사유코드, 표기, 감점) — 감점은 정책상 확정값이며 임의로 바꾸지 않는다.
 DEFECT_POOL: list[tuple[str, str, int]] = [
-    ("DMG_EDGE_WEAR",    "모서리 마모",        5),
-    ("DMG_EXT_SCRATCH",  "표지 긁힘/스크래치",  2),
-    ("DMG_EXT_STICKER",  "스티커/바코드 자국",  3),
-    ("DMG_EXT_CRUSH",    "표지 모서리 찍힘",    5),
-    ("DMG_INT_DISCOLOR", "내지 황변/빛바램",    2),   # level 1
-    ("DMG_INT_STAIN",    "내지 오염/이물질",    5),   # ratio < 5%
-    ("DMG_EXT_TEAR",     "커버 찢어짐",        10),
-    ("DMG_INT_DOODLE",   "내부 손글씨/낙서",   10),
-    ("DMG_SPINE_CRACK",  "책등 갈라짐",        10),
-    ("DMG_INT_STAIN_M",  "내지 오염(중간)",    10),   # ratio 5~15%
-    ("DMG_INT_DISCOLOR_H", "내지 황변(심함)",  10),   # level 3
+    ("DMG_EDGE_WEAR", "모서리 마모", 5),
+    ("DMG_EXT_SCRATCH", "표지 긁힘/스크래치", 2),
+    ("DMG_EXT_STICKER", "스티커/바코드 자국", 3),
+    ("DMG_EXT_CRUSH", "표지 모서리 찍힘", 5),
+    ("DMG_INT_DISCOLOR", "내지 황변/빛바램", 2),  # level 1
+    ("DMG_INT_STAIN", "내지 오염/이물질", 5),  # ratio < 5%
+    ("DMG_EXT_TEAR", "커버 찢어짐", 10),
+    ("DMG_INT_DOODLE", "내부 손글씨/낙서", 10),
+    ("DMG_SPINE_CRACK", "책등 갈라짐", 10),
+    ("DMG_INT_STAIN_M", "내지 오염(중간)", 10),  # ratio 5~15%
+    ("DMG_INT_DISCOLOR_H", "내지 황변(심함)", 10),  # level 3
 ]
 # 즉시 반려 사유 (UBCI 규정상 물리적 사용 불가)
 FATAL_POOL: list[tuple[str, str]] = [
@@ -141,7 +142,7 @@ async def fetch_aladin_bestsellers(target_count: int) -> list[dict]:
         for cid, cname in ALADIN_CATEGORIES:
             if len(collected) >= target_count:
                 break
-            for start in (1, 2, 3, 4, 5):          # 회당 50건, 최대 250건/분류
+            for start in (1, 2, 3, 4, 5):  # 회당 50건, 최대 250건/분류
                 if len(collected) >= target_count:
                     break
                 params = {
@@ -166,18 +167,26 @@ async def fetch_aladin_bestsellers(target_count: int) -> list[dict]:
                     isbn = (it.get("isbn13") or "").strip()
                     if not isbn or isbn in collected:
                         continue
-                    parts = [p.strip() for p in (it.get("categoryName") or "").split(">") if p.strip()]
+                    parts = [
+                        p.strip()
+                        for p in (it.get("categoryName") or "").split(">")
+                        if p.strip()
+                    ]
                     collected[isbn] = {
                         "isbn": isbn,
                         "title": it.get("title") or "제목 미상",
                         "author": it.get("author"),
                         "publisher": it.get("publisher"),
                         "pubDate": it.get("pubDate"),
-                        "price": int(it.get("priceStandard") or it.get("priceSales") or 0),
+                        "price": int(
+                            it.get("priceStandard") or it.get("priceSales") or 0
+                        ),
                         "cover": it.get("cover"),
                         "description": it.get("description"),
                         # 서빙 경로(inbound/router.py)와 동일하게 2단계를 장르로 쓴다
-                        "category": parts[1] if len(parts) > 1 else (parts[0] if parts else "미분류"),
+                        "category": parts[1]
+                        if len(parts) > 1
+                        else (parts[0] if parts else "미분류"),
                     }
             print(f"  cid={cid:<6} {cname:<14} 누적 {len(collected)}권")
     return list(collected.values())[:target_count]
@@ -190,15 +199,17 @@ def next_lpn_seq(db: Session) -> dict[str, int]:
     `lpn_barcode` 컬럼 스캔에 잡히지 않고, 그대로 두면 이력에 이미 부여된 번호를 재고에
     중복 발급한다(2026-08-06에 실제로 발생). 두 테이블 합집합에서 최대값을 구한다.
     """
-    rows = db.exec(text(
-        r"SELECT substring(lpn from '([A-Z])[0-9]+$') AS z,"
-        r"       max(substring(lpn from '[A-Z]([0-9]+)$')::int) AS mx FROM ("
-        r"  SELECT lpn_barcode AS lpn FROM inventory_used_items"
-        r"  UNION ALL"
-        r"  SELECT agent_logs->>'lpn_barcode' FROM return_jobs"
-        r"   WHERE agent_logs->>'lpn_barcode' IS NOT NULL"
-        r") x WHERE lpn ~ '[A-Z][0-9]+$' GROUP BY 1"
-    )).all()
+    rows = db.exec(
+        text(
+            r"SELECT substring(lpn from '([A-Z])[0-9]+$') AS z,"
+            r"       max(substring(lpn from '[A-Z]([0-9]+)$')::int) AS mx FROM ("
+            r"  SELECT lpn_barcode AS lpn FROM inventory_used_items"
+            r"  UNION ALL"
+            r"  SELECT agent_logs->>'lpn_barcode' FROM return_jobs"
+            r"   WHERE agent_logs->>'lpn_barcode' IS NOT NULL"
+            r") x WHERE lpn ~ '[A-Z][0-9]+$' GROUP BY 1"
+        )
+    ).all()
     seq = {z: 0 for z in SEED_ZONES}
     for z, mx in rows:
         if z in seq:
@@ -208,8 +219,12 @@ def next_lpn_seq(db: Session) -> dict[str, int]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="알라딘 베스트셀러 기반 카탈로그 시드")
-    ap.add_argument("--new", type=int, default=1000, help="신품 도서 권수 (books 테이블)")
-    ap.add_argument("--used", type=int, default=200, help="중고 재고 건수 (inventory_used_items)")
+    ap.add_argument(
+        "--new", type=int, default=1000, help="신품 도서 권수 (books 테이블)"
+    )
+    ap.add_argument(
+        "--used", type=int, default=200, help="중고 재고 건수 (inventory_used_items)"
+    )
     args = ap.parse_args()
 
     print(f"[1/3] 알라딘 베스트셀러 수집 (목표 {args.new}권)")
@@ -223,17 +238,19 @@ def main() -> None:
         for m in books_meta:
             if m["isbn"] in existing:
                 continue
-            db.add(Book(
-                isbn=m["isbn"],
-                title=m["title"],
-                author=m["author"],
-                publisher=m["publisher"],
-                published_date=m["pubDate"],
-                base_price=float(m["price"] or 0),
-                description=m["description"],
-                cover_image_url=m["cover"],
-                category_type=m["category"],
-            ))
+            db.add(
+                Book(
+                    isbn=m["isbn"],
+                    title=m["title"],
+                    author=m["author"],
+                    publisher=m["publisher"],
+                    published_date=m["pubDate"],
+                    base_price=float(m["price"] or 0),
+                    description=m["description"],
+                    cover_image_url=m["cover"],
+                    category_type=m["category"],
+                )
+            )
             created += 1
         db.commit()
         print(f"[2/3] 신품 등록: 신규 {created}권 / 기존 {len(existing)}권")
@@ -253,11 +270,14 @@ def main() -> None:
             loc_by_zone.setdefault(lc.zone, []).append(lc)
 
         seq = next_lpn_seq(db)
-        print(f"[3/3] 중고 {args.used}건 생성 (존별 시작 순번: "
-              + ", ".join(f"{z}{seq[z]+1:03d}" for z in SEED_ZONES) + ")")
+        print(
+            f"[3/3] 중고 {args.used}건 생성 (존별 시작 순번: "
+            + ", ".join(f"{z}{seq[z] + 1:03d}" for z in SEED_ZONES)
+            + ")"
+        )
 
         # 실제 창고 분포에 가깝게: 대부분 양호, 소수만 반려
-        grade_plan = (["MINT"] * 25 + ["GOOD"] * 45 + ["NORMAL"] * 25 + ["REJECT"] * 5)
+        grade_plan = ["MINT"] * 25 + ["GOOD"] * 45 + ["NORMAL"] * 25 + ["REJECT"] * 5
         today = now_kst()
         made = 0
 
@@ -268,35 +288,45 @@ def main() -> None:
             seq[zone] += 1
             target = random.choice(grade_plan)
             defects, score = build_defects_for_grade(target)
-            grade = {"MINT": ConditionGradeEnum.MINT, "GOOD": ConditionGradeEnum.GOOD,
-                     "NORMAL": ConditionGradeEnum.NORMAL, "REJECT": ConditionGradeEnum.REJECT}[target]
+            grade = {
+                "MINT": ConditionGradeEnum.MINT,
+                "GOOD": ConditionGradeEnum.GOOD,
+                "NORMAL": ConditionGradeEnum.NORMAL,
+                "REJECT": ConditionGradeEnum.REJECT,
+            }[target]
 
             book = random.choice(all_books)
-            inspected = today - timedelta(days=random.randint(0, 13),
-                                          hours=random.randint(0, 23),
-                                          minutes=random.randint(0, 59))
-            db.add(InventoryUsedItem(
-                id=uuid4(),
-                book_id=book.id,
-                location_id=random.choice(loc_by_zone[zone]).id,
-                lpn_barcode=f"LPN-{today:%y%m%d}-{zone}{seq[zone]:03d}",
-                condition_grade=grade.value,
-                ubci_score=score,
-                inspected_by="SEED",
-                inspection_source="SEED",
-                created_at=inspected,
-                updated_at=inspected,
-                defect_details=defects,
-            ))
+            inspected = today - timedelta(
+                days=random.randint(0, 13),
+                hours=random.randint(0, 23),
+                minutes=random.randint(0, 59),
+            )
+            db.add(
+                InventoryUsedItem(
+                    id=uuid4(),
+                    book_id=book.id,
+                    location_id=random.choice(loc_by_zone[zone]).id,
+                    lpn_barcode=f"LPN-{today:%y%m%d}-{zone}{seq[zone]:03d}",
+                    condition_grade=grade.value,
+                    ubci_score=score,
+                    inspected_by="SEED",
+                    inspection_source="SEED",
+                    created_at=inspected,
+                    updated_at=inspected,
+                    defect_details=defects,
+                )
+            )
             made += 1
 
         db.commit()
         print(f"      생성 완료: {made}건")
 
-        dist = db.exec(text(
-            "SELECT condition_grade, count(*), min(ubci_score), max(ubci_score) "
-            "FROM inventory_used_items WHERE inspection_source='SEED' GROUP BY 1 ORDER BY 1"
-        )).all()
+        dist = db.exec(
+            text(
+                "SELECT condition_grade, count(*), min(ubci_score), max(ubci_score) "
+                "FROM inventory_used_items WHERE inspection_source='SEED' GROUP BY 1 ORDER BY 1"
+            )
+        ).all()
         print()
         print("      등급 분포 (SEED 한정)")
         for g, c, mn, mx in dist:

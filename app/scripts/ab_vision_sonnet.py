@@ -24,6 +24,7 @@ GPT-4o가 YOLO 제보를 그대로 결함으로 승격시키는 현상이 실측
 '제보 대비' 줄이 핵심이다. 채택/기각/추가가 전부 0/0/0이면 그 모델도 통과 도장을 찍은 것이고,
 기각이나 추가가 나오면 실제로 이미지를 본 것이다.
 """
+
 import base64
 import json
 import os
@@ -38,15 +39,18 @@ from sqlmodel import Session
 from app.db.session import engine
 from app.ai.agents import VisionResult
 
-MODEL = "claude-sonnet-5"   # 조장 지정. 기본값은 opus지만 이번 비교 대상은 sonnet이다.
+MODEL = "claude-sonnet-5"  # 조장 지정. 기본값은 opus지만 이번 비교 대상은 sonnet이다.
 
 
 def load_job(prefix: str):
     with Session(engine) as db:
-        row = db.exec(text(
-            "SELECT id::text, agent_logs::text FROM return_jobs "
-            "WHERE id::text LIKE :p ORDER BY updated_at DESC LIMIT 1"
-        ), params={"p": f"{prefix}%"}).first()
+        row = db.exec(
+            text(
+                "SELECT id::text, agent_logs::text FROM return_jobs "
+                "WHERE id::text LIKE :p ORDER BY updated_at DESC LIMIT 1"
+            ),
+            params={"p": f"{prefix}%"},
+        ).first()
     if not row:
         raise SystemExit(f"job을 찾지 못했습니다: {prefix}")
     return row[0], json.loads(row[1] or "{}")
@@ -82,8 +86,12 @@ def compare_to_candidates(defects, candidates, label: str) -> None:
             adopted += 1
     rejected = len(candidates) - len(matched_cand)
     added = len(defects) - adopted
-    verdict = "통과 도장 (판독 아님)" if (rejected == 0 and added == 0) else "실제 판독함"
-    print(f"  제보 대비 → 채택 {adopted} / 기각 {rejected} / 추가 {added}   ⇒ {verdict}")
+    verdict = (
+        "통과 도장 (판독 아님)" if (rejected == 0 and added == 0) else "실제 판독함"
+    )
+    print(
+        f"  제보 대비 → 채택 {adopted} / 기각 {rejected} / 추가 {added}   ⇒ {verdict}"
+    )
 
 
 def main() -> None:
@@ -101,11 +109,17 @@ def main() -> None:
         )
 
     import anthropic
-    from app.ai.agents import VISION_PROMPT_BASE, build_yolo_hint  # 현행 원문 (복제 아님)
+    from app.ai.agents import (
+        VISION_PROMPT_BASE,
+        build_yolo_hint,
+    )  # 현행 원문 (복제 아님)
 
     job_id, logs = load_job(prefix)
-    paths = json.loads(logs.get("local_image_paths") or "[]") if isinstance(
-        logs.get("local_image_paths"), str) else (logs.get("local_image_paths") or [])
+    paths = (
+        json.loads(logs.get("local_image_paths") or "[]")
+        if isinstance(logs.get("local_image_paths"), str)
+        else (logs.get("local_image_paths") or [])
+    )
     candidates = logs.get("yolo_candidates") or []
     gpt_defects = logs.get("defects") or []
 
@@ -128,14 +142,16 @@ def main() -> None:
             continue
         with open(p, "rb") as f:
             content.append({"type": "text", "text": f"[이미지 index={i}]"})
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": base64.standard_b64encode(f.read()).decode(),
-                },
-            })
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": base64.standard_b64encode(f.read()).decode(),
+                    },
+                }
+            )
 
     # OAuth 토큰(`ant auth login`)은 x-api-key가 아니라 Authorization: Bearer로 가고,
     # oauth 베타 헤더를 함께 보내야 /v1/messages가 받는다. API 키면 그냥 기본 경로다.
@@ -164,14 +180,16 @@ def main() -> None:
     compare_to_candidates(cl_defects, candidates, MODEL)
     for d in cl_defects:
         b = d.get("bbox") or {}
-        print(f"    {d.get('type')}  conf={d.get('confidence')}  ratio={d.get('ratio')}  "
-              f"img={d.get('image_index')}  bbox=({b.get('xmin')},{b.get('ymin')},{b.get('xmax')},{b.get('ymax')})")
+        print(
+            f"    {d.get('type')}  conf={d.get('confidence')}  ratio={d.get('ratio')}  "
+            f"img={d.get('image_index')}  bbox=({b.get('xmin')},{b.get('ymin')},{b.get('xmax')},{b.get('ymax')})"
+        )
 
     u = resp.usage
     # 프로모 단가 $2/$10 per MTok (2026-08-31까지). 이후 $3/$15.
     cost = (u.input_tokens / 1e6) * 2.0 + (u.output_tokens / 1e6) * 10.0
     print(f"\n토큰: 입력 {u.input_tokens:,} / 출력 {u.output_tokens:,}")
-    print(f"비용: ${cost:.4f} (프로모 단가 기준, 약 {cost*1400:.0f}원)")
+    print(f"비용: ${cost:.4f} (프로모 단가 기준, 약 {cost * 1400:.0f}원)")
 
 
 if __name__ == "__main__":

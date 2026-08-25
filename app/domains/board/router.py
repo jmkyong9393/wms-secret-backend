@@ -34,7 +34,11 @@ def list_board_posts(
     return {"items": items, "total": total, "page": page, "size": size}
 
 
-@router.get("/posts/{post_id}", response_model=BoardPostDetailResponse, summary="게시글 상세 조회")
+@router.get(
+    "/posts/{post_id}",
+    response_model=BoardPostDetailResponse,
+    summary="게시글 상세 조회",
+)
 def get_board_post(
     post_id: UUID,
     db: Session = Depends(get_db),
@@ -58,7 +62,9 @@ def create_board_post(
     return board_service.create_post(db, current_user, payload)
 
 
-@router.patch("/posts/{post_id}", response_model=BoardPostDetailResponse, summary="게시글 수정")
+@router.patch(
+    "/posts/{post_id}", response_model=BoardPostDetailResponse, summary="게시글 수정"
+)
 def update_board_post(
     post_id: UUID,
     payload: BoardPostUpdate,
@@ -101,7 +107,9 @@ def create_board_comment(
     return board_service.create_comment(db, post, current_user, payload)
 
 
-@router.patch("/comments/{comment_id}", response_model=BoardCommentResponse, summary="댓글 수정")
+@router.patch(
+    "/comments/{comment_id}", response_model=BoardCommentResponse, summary="댓글 수정"
+)
 def update_board_comment(
     comment_id: UUID,
     payload: BoardCommentUpdate,

@@ -12,6 +12,7 @@
   python -m app.scripts.purge_ghost_lpn                                  # 미리보기
   python -m app.scripts.purge_ghost_lpn --backup /tmp/ghost_lpn.json --apply
 """
+
 import argparse
 import json
 import sys
@@ -52,10 +53,16 @@ def collect_ghosts(db: Session, grace_minutes: int) -> list[InventoryUsedItem]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="유령 LPN 정리")
-    parser.add_argument("--apply", action="store_true", help="실제로 삭제한다 (미지정 시 미리보기)")
-    parser.add_argument("--backup", metavar="PATH", help="삭제 대상을 JSON으로 저장할 경로")
     parser.add_argument(
-        "--grace-minutes", type=int, default=DEFAULT_GRACE_MINUTES,
+        "--apply", action="store_true", help="실제로 삭제한다 (미지정 시 미리보기)"
+    )
+    parser.add_argument(
+        "--backup", metavar="PATH", help="삭제 대상을 JSON으로 저장할 경로"
+    )
+    parser.add_argument(
+        "--grace-minutes",
+        type=int,
+        default=DEFAULT_GRACE_MINUTES,
         help=f"이 시간보다 최근에 채번된 건은 건드리지 않는다 (기본 {DEFAULT_GRACE_MINUTES}분)",
     )
     args = parser.parse_args()
@@ -65,7 +72,9 @@ def main() -> int:
 
         total = db.exec(select(InventoryUsedItem)).all()
         pending = [i for i in total if i.item_status == "PENDING_INSPECTION"]
-        print(f"전체 LPN {len(total)}건 / PENDING_INSPECTION {len(pending)}건 / 삭제 대상 {len(ghosts)}건")
+        print(
+            f"전체 LPN {len(total)}건 / PENDING_INSPECTION {len(pending)}건 / 삭제 대상 {len(ghosts)}건"
+        )
 
         if not ghosts:
             print("삭제 대상이 없습니다.")

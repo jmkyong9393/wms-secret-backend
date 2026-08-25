@@ -3,10 +3,14 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from uuid import UUID
 
+
 class UserCreate(BaseModel):
-    company_prefix: str = Field(..., min_length=2, max_length=2, description="고객사 이니셜 (예: KT, LG)")
+    company_prefix: str = Field(
+        ..., min_length=2, max_length=2, description="고객사 이니셜 (예: KT, LG)"
+    )
     name: str
     role: str = Field(default="WORKER")
+
 
 class UserUpdate(BaseModel):
     # 비밀번호는 이 스키마로 다루지 않는다 - PATCH /api/v1/auth/password 단일 엔드포인트로만 변경한다
@@ -15,6 +19,7 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     address: Optional[str] = None
+
 
 class UserResponse(BaseModel):
     id: UUID
@@ -29,7 +34,9 @@ class UserResponse(BaseModel):
     # 개인정보 수집·이용 동의 시각 (NULL이면 미동의 - 온보딩에서 동의를 받는다)
     privacy_consent_at: Optional[datetime] = None
 
+
 # --- Admin / Employee Management Schemas ---
+
 
 class BulkCreateEmployeeRow(BaseModel):
     employee_id: str
@@ -37,16 +44,20 @@ class BulkCreateEmployeeRow(BaseModel):
     role: str
     password: str
 
+
 class BulkCreateEmployeeRequest(BaseModel):
     employees: list[BulkCreateEmployeeRow]
+
 
 class BulkCreateEmployeeResult(BaseModel):
     employee_id: str
     success: bool
     reason: Optional[str] = None
 
+
 class BulkCreateEmployeeResponse(BaseModel):
     results: list[BulkCreateEmployeeResult]
+
 
 class EmployeeListItem(BaseModel):
     employee_id: str
@@ -55,21 +66,26 @@ class EmployeeListItem(BaseModel):
     status: str
     created_at: str
 
+
 class EmployeeListResponse(BaseModel):
     items: list[EmployeeListItem]
     total: int
     page: int
     size: int
 
+
 class UpdateEmployeeStatusRequest(BaseModel):
     status: str
+
 
 class UpdateEmployeeStatusResponse(BaseModel):
     employee_id: str
     status: str
 
+
 class UpdateEmployeeRoleRequest(BaseModel):
     role: str
+
 
 class UpdateEmployeeRoleResponse(BaseModel):
     employee_id: str

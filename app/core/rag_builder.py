@@ -12,6 +12,7 @@ RAG 지식베이스 인덱스 빌더 (policy_data_master.yaml -> ChromaDB)
 docker-compose에 이미 정의되어 있던 chroma-server 컨테이너에 얇은 chromadb-client로
 붙는 클라이언트-서버 방식으로 교체한다.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -90,8 +91,12 @@ def to_documents(data: List[Dict[str, Any]]):
 
 
 # 조문 제목 예: "### 제 3조. REJECT 하드 리미트" / "### 제 0조의2. 정책 권위 레벨 및 RAG 정렬 기준"
-_SOP_ARTICLE_RE = re.compile(r"^###\s+(제\s*\d+조(?:의\d+)?\.?\s*[^\n]*)$", re.MULTILINE)
-_SOP_CHAPTER_RE = re.compile(r"^##\s+(제\s*\d+\s*장(?:의\d+)?\.?\s*[^\n]*)$", re.MULTILINE)
+_SOP_ARTICLE_RE = re.compile(
+    r"^###\s+(제\s*\d+조(?:의\d+)?\.?\s*[^\n]*)$", re.MULTILINE
+)
+_SOP_CHAPTER_RE = re.compile(
+    r"^##\s+(제\s*\d+\s*장(?:의\d+)?\.?\s*[^\n]*)$", re.MULTILINE
+)
 
 
 def load_sop_documents():
@@ -140,7 +145,11 @@ def load_sop_documents():
         # "제 3조. REJECT 하드 리미트" -> clause_ref "제3조", 제목은 별도 보관
         num_match = re.match(r"제\s*(\d+)조(?:의(\d+))?\.?\s*(.*)", heading)
         if num_match:
-            art, sub, title = num_match.group(1), num_match.group(2), num_match.group(3).strip()
+            art, sub, title = (
+                num_match.group(1),
+                num_match.group(2),
+                num_match.group(3).strip(),
+            )
             clause_ref = f"제{art}조" + (f"의{sub}" if sub else "")
             chunk_id = f"wms_sop_art{art}" + (f"_{sub}" if sub else "")
         else:
@@ -156,15 +165,17 @@ def load_sop_documents():
 
         ids.append(chunk_id)
         texts.append(content)
-        metadatas.append({
-            "chunk_id": chunk_id,
-            "platform": "Common",
-            "authority_level": "Internal",
-            "authority_rank": AUTHORITY_RANK["Internal"],
-            "category": chapter,
-            "doc_title": "WMS 표준 운영 정책서",
-            "clause_ref": f"{clause_ref} {title}".strip(),
-        })
+        metadatas.append(
+            {
+                "chunk_id": chunk_id,
+                "platform": "Common",
+                "authority_level": "Internal",
+                "authority_rank": AUTHORITY_RANK["Internal"],
+                "category": chapter,
+                "doc_title": "WMS 표준 운영 정책서",
+                "clause_ref": f"{clause_ref} {title}".strip(),
+            }
+        )
 
     return ids, texts, metadatas
 
@@ -181,7 +192,9 @@ def build_vector_db(rebuild: bool = False):
 
     embedder = get_embedder()
     if embedder is None:
-        raise RuntimeError("OpenAI 임베딩 모델을 초기화할 수 없습니다. OPENAI_API_KEY를 확인하세요.")
+        raise RuntimeError(
+            "OpenAI 임베딩 모델을 초기화할 수 없습니다. OPENAI_API_KEY를 확인하세요."
+        )
 
     if rebuild:
         try:
@@ -229,12 +242,16 @@ def build_vector_db(rebuild: bool = False):
         )
         print(f"  {min(end, len(ids))}/{len(ids)} 완료")
 
-    print(f"ChromaDB 인덱스 구축 완료: 컬렉션 '{COLLECTION_NAME}', 총 {collection.count()}건")
+    print(
+        f"ChromaDB 인덱스 구축 완료: 컬렉션 '{COLLECTION_NAME}', 총 {collection.count()}건"
+    )
     return collection
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rebuild", action="store_true", help="컬렉션을 삭제하고 처음부터 재빌드")
+    parser.add_argument(
+        "--rebuild", action="store_true", help="컬렉션을 삭제하고 처음부터 재빌드"
+    )
     args = parser.parse_args()
     build_vector_db(rebuild=args.rebuild)

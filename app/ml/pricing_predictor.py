@@ -8,6 +8,7 @@
 추론은 결정론적이다: 학습이 끝난 트리 앙상블은 같은 입력에 항상 같은 값을 낸다.
 따라서 '동일 입력 반복 시 동일 가격' 성질이 유지된다.
 """
+
 from __future__ import annotations
 
 import threading
@@ -74,7 +75,8 @@ def predict_p_sold_batch(
 
     def _fallback() -> list[float]:
         return [
-            _rule_based_p_sold(d, ubci_score, seasonality, dwell_decay) for d in discounts
+            _rule_based_p_sold(d, ubci_score, seasonality, dwell_decay)
+            for d in discounts
         ]
 
     model = _get_model()
@@ -85,7 +87,10 @@ def predict_p_sold_batch(
     # 가격 산정이 멈추면 출고 자체가 막히므로, 정확도를 조금 잃더라도 산출은 계속한다.
     try:
         X = np.array(
-            [[d, ubci_score, seasonality, float(min(dwell_days, 365))] for d in discounts],
+            [
+                [d, ubci_score, seasonality, float(min(dwell_days, 365))]
+                for d in discounts
+            ],
             dtype=np.float32,
         )
         preds = model.predict(X)
@@ -100,4 +105,6 @@ def model_label() -> str:
     """응답에 실을 산정 방식 표기. 실제 동작과 어긋나지 않게 상태에 따라 바꾼다."""
     if is_model_active():
         return "XGBoost Purchase-Probability + Expected Revenue Maximization"
-    return "Rule-based Price Elasticity + Expected Revenue Maximization (모델 미로드 폴백)"
+    return (
+        "Rule-based Price Elasticity + Expected Revenue Maximization (모델 미로드 폴백)"
+    )
