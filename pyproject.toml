@@ -31,7 +31,14 @@ dependencies = [
     "tenacity>=9.1.4",
     "Pillow>=10.2.0",
     "pottery>=3.0.1",
-    "xgboost>=3.4.0",
+    # xgboost 3.4부터 Python>=3.12를 요구해 requires-python(>=3.11)과 충돌한다.
+    # 3.2로 낮추어도 3.4로 학습한 JSON 모델이 그대로 로드·추론된다(실측).
+    # 일반 xgboost는 CPU만 써도 nvidia-nccl-cu12(342MB)를 필수로 끌고 온다.
+    # CPU 전용 배포판은 import 이름·API가 같고 추론 결과도 동일하다(실측).
+    "xgboost-cpu>=3.2,<3.4",
+    # XGBRegressor는 sklearn 인터페이스라 없으면 ImportError로 폴백된다.
+    # 선언이 빠져 있어 학습된 프라이싱 모델이 쓰이지 않고 규칙 산식으로 돌았다.
+    "scikit-learn>=1.5",
     "ultralytics>=8.4.115",
     # torch/torchvision은 ultralytics의 전이 의존성이지만 여기에 직접 명시한다.
     # uv의 [tool.uv.sources]는 **직접 의존성에만** 적용되므로, 전이 상태로 두면 아래
@@ -73,6 +80,10 @@ packages = ["app"]
 dev = [
     "pytest>=8.2.2",
     "httpx>=0.27.0",
+    # CI가 호출하는데 선언이 없어 "Failed to spawn: ruff"로 죽었다.
+    # 버전을 lock에 고정해야 로컬과 CI 결과가 같아진다.
+    "ruff>=0.14",
+    "mypy>=1.18",
 ]
 
 [tool.pytest.ini_options]
