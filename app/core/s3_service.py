@@ -43,7 +43,9 @@ def build_public_url(s3_key: str) -> Optional[str]:
     return f"{base}/{s3_key.lstrip('/')}"
 
 
-def upload_bytes_to_s3(file_bytes: bytes, s3_key: str, content_type: str = "image/jpeg") -> Optional[str]:
+def upload_bytes_to_s3(
+    file_bytes: bytes, s3_key: str, content_type: str = "image/jpeg"
+) -> Optional[str]:
     """
     바이트 배열을 S3 버킷에 업로드하고 CloudFront 공개 URL을 반환한다.
     자격증명이 없거나 업로드에 실패하면 None을 반환하여 호출부가 로컬 경로로 폴백하게 한다.
@@ -83,7 +85,9 @@ def upload_bytes_to_s3(file_bytes: bytes, s3_key: str, content_type: str = "imag
 
     public_url = build_public_url(s3_key)
     if not public_url:
-        print(f"[S3] 업로드는 성공했으나 CLOUDFRONT_DOMAIN이 없어 공개 URL을 만들 수 없습니다 ({s3_key}).")
+        print(
+            f"[S3] 업로드는 성공했으나 CLOUDFRONT_DOMAIN이 없어 공개 URL을 만들 수 없습니다 ({s3_key})."
+        )
         return None
 
     print(f"[S3] 업로드 완료 -> {public_url}")

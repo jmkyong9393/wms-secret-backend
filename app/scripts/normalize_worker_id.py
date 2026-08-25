@@ -11,6 +11,7 @@
     python -m app.scripts.normalize_worker_id            # dry-run (기본)
     python -m app.scripts.normalize_worker_id --apply    # 실제 반영
 """
+
 import re
 import sys
 
@@ -38,8 +39,10 @@ def main() -> None:
             if m and m.group(1) in valid_ids:
                 targets.append((r, m.group(1)))
 
-        print(f"worker_id 보유 행 {len(rows)}건 / 정규화 대상 {len(targets)}건 "
-              f"(모드: {'APPLY' if APPLY else 'DRY-RUN'})")
+        print(
+            f"worker_id 보유 행 {len(rows)}건 / 정규화 대상 {len(targets)}건 "
+            f"(모드: {'APPLY' if APPLY else 'DRY-RUN'})"
+        )
         for r, emp in targets:
             print(f"  {r.worker_id!r} -> {emp!r}  (log_id={r.id})")
             if APPLY:

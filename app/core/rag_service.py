@@ -10,6 +10,7 @@ docker-compose에 이미 정의된 chroma-server 컨테이너에 얇은 chromadb
 [설계 원칙 - RAG는 점수를 정하지 않는다]
 UBCI 점수·등급은 UBCI_Specification 매트릭스 산식이 결정론적으로 산출한다. RAG는 이미 확정된 감점에 **근거 조항을 찾아 붙이는 역할(grounding)만** 한다. 검색 결과가 점수에 영향을 주면 같은 도서가 실행할 때마다 다른 등급을 받게 되어 감사 추적성이 깨진다.
 """
+
 from __future__ import annotations
 
 import os
@@ -27,7 +28,9 @@ _unavailable = False
 def _chroma_host_port() -> tuple[str, int]:
     # 컨테이너 안에서는 서비스명(chroma-server:8000), 호스트에서는 localhost:8001로 붙는다.
     host = os.getenv("CHROMA_SERVER_HOST", "localhost")
-    port = int(os.getenv("CHROMA_SERVER_PORT", "8001" if host == "localhost" else "8000"))
+    port = int(
+        os.getenv("CHROMA_SERVER_PORT", "8001" if host == "localhost" else "8000")
+    )
     return host, port
 
 
@@ -42,6 +45,7 @@ def get_client():
             return _client
         try:
             import chromadb
+
             host, port = _chroma_host_port()
             client = chromadb.HttpClient(host=host, port=port)
             client.heartbeat()
@@ -68,6 +72,7 @@ def get_embedder():
             if not api_key:
                 try:
                     from app.core.config import settings
+
                     api_key = getattr(settings, "OPENAI_API_KEY", None)
                 except Exception:
                     api_key = None
@@ -93,7 +98,9 @@ def get_collection():
         return None
 
 
-def search_policy(query: str, k: int = 3, where: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def search_policy(
+    query: str, k: int = 3, where: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
     """
     규정집에서 질의와 가장 관련 있는 조항을 검색한다.
     반환: [{chunk_id, doc_title, clause_ref, authority_level, content, similarity}]
@@ -125,18 +132,20 @@ def search_policy(query: str, k: int = 3, where: Optional[Dict[str, Any]] = None
         md = md or {}
         # Chroma는 거리(distance)를 반환한다. 코사인 거리를 0~1 유사도로 환산해 호출부가 임계값 판단을 직관적으로 할 수 있게 한다.
         similarity = max(0.0, 1.0 - float(dist))
-        out.append({
-            "chunk_id": md.get("chunk_id"),
-            "doc_title": md.get("doc_title"),
-            "clause_ref": md.get("clause_ref"),
-            "authority_level": md.get("authority_level"),
-            # 규범적 강제성 순위 (1=법령 ... 5=내부 실행 기준). 정책서 제0조의2 ①.
-            # 검색 정렬에는 쓰지 않는다 - 조항 간 충돌 조정과 판정 로그 기록용이다.
-            "authority_rank": md.get("authority_rank"),
-            "category": md.get("category"),
-            "content": doc,
-            "similarity": round(similarity, 4),
-        })
+        out.append(
+            {
+                "chunk_id": md.get("chunk_id"),
+                "doc_title": md.get("doc_title"),
+                "clause_ref": md.get("clause_ref"),
+                "authority_level": md.get("authority_level"),
+                # 규범적 강제성 순위 (1=법령 ... 5=내부 실행 기준). 정책서 제0조의2 ①.
+                # 검색 정렬에는 쓰지 않는다 - 조항 간 충돌 조정과 판정 로그 기록용이다.
+                "authority_rank": md.get("authority_rank"),
+                "category": md.get("category"),
+                "content": doc,
+                "similarity": round(similarity, 4),
+            }
+        )
     return out
 
 
@@ -159,7 +168,9 @@ _DEDUCTION_QUERY_MAP = {
 }
 
 
-def cite_deduction_basis(defect_type: str, label: str = "", min_similarity: float = 0.20) -> Optional[Dict[str, Any]]:
+def cite_deduction_basis(
+    defect_type: str, label: str = "", min_similarity: float = 0.20
+) -> Optional[Dict[str, Any]]:
     """
     [기능 A] 확정된 감점 항목의 근거 조항을 찾아 반환한다.
 
@@ -167,7 +178,11 @@ def cite_deduction_basis(defect_type: str, label: str = "", min_similarity: floa
     규정집에서 찾아 붙이기만 한다. 유사도가 임계값에 못 미치면 None을 반환해 관련 없는
     조항을 억지로 인용하지 않는다(근거 없는 인용은 없느니만 못하다).
     """
-    query = _DEDUCTION_QUERY_MAP.get(str(defect_type or "")) or label or str(defect_type or "")
+    query = (
+        _DEDUCTION_QUERY_MAP.get(str(defect_type or ""))
+        or label
+        or str(defect_type or "")
+    )
     if not query:
         return None
 
@@ -208,19 +223,27 @@ def build_hitl_briefing(
     """
     import json
 
-    defect_types = sorted({str(d.get("type")) for d in (defects or []) if d.get("type")})
-    query = " ".join(filter(None, [
-        book_title or "중고 도서",
-        f"UBCI {ubci_score}점" if ubci_score is not None else "",
-        " ".join(_DEDUCTION_QUERY_MAP.get(t, t) for t in defect_types),
-        "중고 도서 매입 등급 판정 반품 수용 기준",
-    ])).strip()
+    defect_types = sorted(
+        {str(d.get("type")) for d in (defects or []) if d.get("type")}
+    )
+    query = " ".join(
+        filter(
+            None,
+            [
+                book_title or "중고 도서",
+                f"UBCI {ubci_score}점" if ubci_score is not None else "",
+                " ".join(_DEDUCTION_QUERY_MAP.get(t, t) for t in defect_types),
+                "중고 도서 매입 등급 판정 반품 수용 기준",
+            ],
+        )
+    ).strip()
 
     clauses = search_policy(query, k=4)
 
     recommendation = None
     try:
         from app.ai.agents import llm_mini
+
         if llm_mini:
             prompt = f"""당신은 중고도서 물류센터 HITL 결재 관리자를 보조하는 분석가입니다.
 아래 자료를 정리해 관리자가 판단하기 쉽게 요약하세요. **당신이 결재를 결정하지 마세요.**

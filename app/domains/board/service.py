@@ -20,7 +20,9 @@ def _serialize_comment(comment: BoardComment, author: User) -> dict:
     }
 
 
-def _serialize_post_list_item(post: BoardPost, author: User, comment_count: int) -> dict:
+def _serialize_post_list_item(
+    post: BoardPost, author: User, comment_count: int
+) -> dict:
     return {
         "id": str(post.id),
         "category": post.category,
@@ -79,7 +81,9 @@ def list_posts(
     for post in posts:
         author = db.get(User, post.author_id)
         comment_count = db.exec(
-            select(func.count()).select_from(BoardComment).where(BoardComment.post_id == post.id)
+            select(func.count())
+            .select_from(BoardComment)
+            .where(BoardComment.post_id == post.id)
         ).one()
         items.append(_serialize_post_list_item(post, author, comment_count))
 
@@ -141,7 +145,9 @@ def delete_post(db: Session, post: BoardPost) -> None:
 
 
 def create_comment(db: Session, post: BoardPost, author: User, payload) -> dict:
-    comment = BoardComment(post_id=post.id, author_id=author.id, content=payload.content)
+    comment = BoardComment(
+        post_id=post.id, author_id=author.id, content=payload.content
+    )
     db.add(comment)
     db.commit()
     db.refresh(comment)

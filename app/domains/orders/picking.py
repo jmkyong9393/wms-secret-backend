@@ -6,6 +6,7 @@ AI 피킹 지시서(Picking Instruction) 생성 도메인 로직.
 - LLM(gpt-4o-mini) = 동선 요약(route_summary) / 작업자 지시문(worker_note) 내러티브 생성 전용
   → LLM 실패 시에도 지시서 발행은 항상 성공 (템플릿 폴백)
 """
+
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -40,7 +41,13 @@ _OUTBOUND_TARGET_ROLE: Dict[str, str] = {
 }
 
 
-def publish_outbound_notification(event_type: str, category: str, title: str, description: str, extra: Optional[Dict[str, Any]] = None) -> None:
+def publish_outbound_notification(
+    event_type: str,
+    category: str,
+    title: str,
+    description: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
     """
     출고 파이프라인(피킹 완료/송장 발급/최종 출고) 이벤트를 알림으로 발행한다.
 
@@ -78,7 +85,9 @@ def generate_instruction_no(session: Session) -> str:
     """
     prefix = f"PICK-{now_kst().strftime('%y%m%d')}"
     todays = session.exec(
-        select(PickingInstruction).where(PickingInstruction.instruction_no.startswith(prefix))
+        select(PickingInstruction).where(
+            PickingInstruction.instruction_no.startswith(prefix)
+        )
     ).all()
     max_seq = 0
     for ins in todays:
@@ -137,12 +146,20 @@ def _location_of(
         loc = session.get(Location, location_id)
         if loc:
             # DB에 "A" / "Zone C" 표기가 혼재 - 동선 정렬 일관성을 위해 "Zone " 접두어 제거 정규화
-            zone = (loc.zone or "A").replace("Zone", "").replace("zone", "").strip() or "A"
-            return {"zone": zone, "rack": _unpad(loc.rack, "1"), "shelf": _unpad(loc.shelf, "1")}
+            zone = (loc.zone or "A").replace("Zone", "").replace(
+                "zone", ""
+            ).strip() or "A"
+            return {
+                "zone": zone,
+                "rack": _unpad(loc.rack, "1"),
+                "shelf": _unpad(loc.shelf, "1"),
+            }
     return _fallback_location_for_book(book, grade)
 
 
-def allocate_order_items(session: Session, order: Order) -> List[PickingInstructionItem]:
+def allocate_order_items(
+    session: Session, order: Order
+) -> List[PickingInstructionItem]:
     """
     규칙 기반 재고 할당 엔진.
     - 신품 라인: books 마스터 + inventory 위치 (Zone A 신품 구역), ISBN 스캔 매칭
@@ -170,8 +187,15 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
             # 주문이 특정 LPN을 지목했으면 그 개체를 그대로 집는다. 중고는 LPN마다
             # 실물·등급·가격이 다르므로 같은 책의 다른 개체로 바꿔치면 안 된다
             # (주문 화면에서 고른 책과 지시서에 찍힌 바코드가 어긋나 스캔이 실패한다).
-            pinned = session.get(InventoryUsedItem, oi.used_item_id) if oi.used_item_id else None
-            if pinned is not None and pinned.item_status == ItemStatusEnum.IN_STOCK.value:
+            pinned = (
+                session.get(InventoryUsedItem, oi.used_item_id)
+                if oi.used_item_id
+                else None
+            )
+            if (
+                pinned is not None
+                and pinned.item_status == ItemStatusEnum.IN_STOCK.value
+            ):
                 used_rows = [pinned]
             else:
                 if oi.used_item_id and pinned is not None:
@@ -183,7 +207,9 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
                 used_rows = session.exec(
                     select(InventoryUsedItem)
                     .where(InventoryUsedItem.book_id == book.id)
-                    .where(InventoryUsedItem.item_status == ItemStatusEnum.IN_STOCK.value)
+                    .where(
+                        InventoryUsedItem.item_status == ItemStatusEnum.IN_STOCK.value
+                    )
                     .order_by(InventoryUsedItem.created_at.asc())
                 ).all()
 
@@ -191,23 +217,32 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
             if remaining <= 0:
                 break
             # 중고는 등급이 존을 가른다(MINT=B / GOOD=C / NORMAL=D). 폴백도 같은 규칙을 따른다.
-            loc = _location_of(session, used.location_id, book=book, grade=used.condition_grade or "NORMAL")
+            loc = _location_of(
+                session,
+                used.location_id,
+                book=book,
+                grade=used.condition_grade or "NORMAL",
+            )
             used.item_status = ItemStatusEnum.ALLOCATED.value
             used.updated_at = now_kst()
             session.add(used)
-            draft.append(PickingInstructionItem(
-                instruction_id=None,  # 헤더 저장 후 채움
-                order_item_id=oi.id,
-                book_id=book.id,
-                used_item_id=used.id,
-                stock_type="USED",
-                lpn_barcode=used.lpn_barcode,
-                isbn=book.isbn,
-                title=book.title,
-                quantity=1,
-                zone=loc["zone"], rack=loc["rack"], shelf=loc["shelf"],
-                unit_price=oi.unit_price,
-            ))
+            draft.append(
+                PickingInstructionItem(
+                    instruction_id=None,  # 헤더 저장 후 채움
+                    order_item_id=oi.id,
+                    book_id=book.id,
+                    used_item_id=used.id,
+                    stock_type="USED",
+                    lpn_barcode=used.lpn_barcode,
+                    isbn=book.isbn,
+                    title=book.title,
+                    quantity=1,
+                    zone=loc["zone"],
+                    rack=loc["rack"],
+                    shelf=loc["shelf"],
+                    unit_price=oi.unit_price,
+                )
+            )
             remaining -= 1
 
         if remaining > 0:
@@ -220,7 +255,9 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
             ).first()
             # 신품은 Zone A 고정이지만 랙/선반은 카테고리·판형이 정한다. 재고 행이 없으면
             # (아직 입고 전) 같은 알고리즘으로 배정 예정 칸을 산출한다.
-            loc = _location_of(session, inv.location_id if inv else None, book=book, grade="NEW")
+            loc = _location_of(
+                session, inv.location_id if inv else None, book=book, grade="NEW"
+            )
 
             # [2026-08-10 신설] 재고 부족 라인은 있는 척하지 않는다.
             #
@@ -232,18 +269,22 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
             available = get_new_stock_qty(session, book.id)
             out_of_stock = available < remaining
 
-            draft.append(PickingInstructionItem(
-                instruction_id=None,
-                order_item_id=oi.id,
-                book_id=book.id,
-                stock_type="NEW",
-                isbn=book.isbn,
-                title=book.title,
-                quantity=remaining,
-                zone=loc["zone"], rack=loc["rack"], shelf=loc["shelf"],
-                unit_price=oi.unit_price,
-                status="OUT_OF_STOCK" if out_of_stock else "PENDING",
-            ))
+            draft.append(
+                PickingInstructionItem(
+                    instruction_id=None,
+                    order_item_id=oi.id,
+                    book_id=book.id,
+                    stock_type="NEW",
+                    isbn=book.isbn,
+                    title=book.title,
+                    quantity=remaining,
+                    zone=loc["zone"],
+                    rack=loc["rack"],
+                    shelf=loc["shelf"],
+                    unit_price=oi.unit_price,
+                    status="OUT_OF_STOCK" if out_of_stock else "PENDING",
+                )
+            )
 
             if out_of_stock:
                 # 발주 제안 생성 실패가 지시서 발행을 막아서는 안 된다(같은 도서의 PENDING
@@ -258,7 +299,9 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
                         rejected_quantity=max(0, remaining - available),
                     )
                 except Exception as e:
-                    logger.warning(f"[Picking] 재고부족 발주 제안 생성 실패 (지시서는 정상 발행): {e}")
+                    logger.warning(
+                        f"[Picking] 재고부족 발주 제안 생성 실패 (지시서는 정상 발행): {e}"
+                    )
 
     # Zone A → B → C → D 동선 오름차순 정렬 후 피킹 순서 부여
     draft.sort(key=lambda it: (it.zone, it.rack, it.shelf, it.stock_type))
@@ -271,6 +314,7 @@ def allocate_order_items(session: Session, order: Order) -> List[PickingInstruct
 # LLM 내러티브 (실패 시 템플릿 폴백)
 # ==========================================
 
+
 def _fallback_narrative(items: List[PickingInstructionItem]) -> Dict[str, str]:
     zones = []
     for it in items:
@@ -281,11 +325,13 @@ def _fallback_narrative(items: List[PickingInstructionItem]) -> Dict[str, str]:
     return {
         "route_summary": f"{route} 순서로 총 {len(items)}개 위치에서 {total_qty}권을 피킹하세요.",
         "worker_note": "신품은 ISBN 바코드, 중고는 LPN 바코드를 스캔해 검증하세요. "
-                       "양장/대형 도서는 하단, 경량 도서는 상단 적재를 권장합니다.",
+        "양장/대형 도서는 하단, 경량 도서는 상단 적재를 권장합니다.",
     }
 
 
-def generate_llm_narrative(items: List[PickingInstructionItem], customer_name: str) -> Dict[str, str]:
+def generate_llm_narrative(
+    items: List[PickingInstructionItem], customer_name: str
+) -> Dict[str, str]:
     """gpt-4o-mini로 피킹 동선 요약과 작업자 지시문을 생성한다. 실패 시 템플릿 폴백."""
     try:
         from langchain_openai import ChatOpenAI
@@ -293,8 +339,12 @@ def generate_llm_narrative(items: List[PickingInstructionItem], customer_name: s
         from pydantic import BaseModel, Field as PydField
 
         class PickingNarrative(BaseModel):
-            route_summary: str = PydField(description="Zone 이동 동선 중심의 2문장 이내 피킹 경로 요약 (한국어)")
-            worker_note: str = PydField(description="파손 주의/스캔 방법/적재 순서 등 작업자 지시문 2문장 이내 (한국어)")
+            route_summary: str = PydField(
+                description="Zone 이동 동선 중심의 2문장 이내 피킹 경로 요약 (한국어)"
+            )
+            worker_note: str = PydField(
+                description="파손 주의/스캔 방법/적재 순서 등 작업자 지시문 2문장 이내 (한국어)"
+            )
 
         lines = "\n".join(
             f"{it.pick_seq}. [{it.stock_type}] {it.title} x{it.quantity}권 "
@@ -303,21 +353,30 @@ def generate_llm_narrative(items: List[PickingInstructionItem], customer_name: s
             for it in items
         )
         llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, timeout=8)
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "당신은 도서 물류센터의 피킹 작업 관제 AI입니다. "
-                       "피킹 순서는 이미 규칙 엔진이 확정했으므로 변경하지 말고, "
-                       "현장 작업자가 즉시 이해할 수 있는 동선 요약과 주의사항만 작성하세요."),
-            ("human", "B2B 거래처: {customer}\n피킹 목록:\n{lines}"),
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "당신은 도서 물류센터의 피킹 작업 관제 AI입니다. "
+                    "피킹 순서는 이미 규칙 엔진이 확정했으므로 변경하지 말고, "
+                    "현장 작업자가 즉시 이해할 수 있는 동선 요약과 주의사항만 작성하세요.",
+                ),
+                ("human", "B2B 거래처: {customer}\n피킹 목록:\n{lines}"),
+            ]
+        )
         chain = prompt | llm.with_structured_output(PickingNarrative)
-        res: PickingNarrative = chain.invoke({"customer": customer_name, "lines": lines})
+        res: PickingNarrative = chain.invoke(
+            {"customer": customer_name, "lines": lines}
+        )
         return {"route_summary": res.route_summary, "worker_note": res.worker_note}
     except Exception as e:
         logger.warning(f"Picking narrative LLM fallback: {e}")
         return _fallback_narrative(items)
 
 
-def create_picking_instruction(session: Session, order: Order, use_llm: bool = True) -> PickingInstruction:
+def create_picking_instruction(
+    session: Session, order: Order, use_llm: bool = True
+) -> PickingInstruction:
     """주문 1건에 대한 피킹 지시서 발행 (할당 + 내러티브 + 상태 전이)"""
     items = allocate_order_items(session, order)
     if not items:
@@ -325,7 +384,8 @@ def create_picking_instruction(session: Session, order: Order, use_llm: bool = T
 
     narrative = (
         generate_llm_narrative(items, order.customer_name or "B2B 거래처")
-        if use_llm else _fallback_narrative(items)
+        if use_llm
+        else _fallback_narrative(items)
     )
 
     instruction = PickingInstruction(
@@ -359,7 +419,10 @@ def create_picking_instruction(session: Session, order: Order, use_llm: bool = T
         category="출고 피킹 지시",
         title=f"신규 AI 피킹 지시서 발행 [{instruction.instruction_no}]",
         description=f"{order.customer_name or 'B2B 거래처'} · 총 {instruction.total_items}권 피킹 요청 - 출고 피킹 스캐너에서 수락 후 진행하세요.",
-        extra={"instruction_id": str(instruction.id), "instruction_no": instruction.instruction_no},
+        extra={
+            "instruction_id": str(instruction.id),
+            "instruction_no": instruction.instruction_no,
+        },
     )
     return instruction
 
@@ -378,18 +441,24 @@ def _purge_order_if_orphaned(session: Session, order_id: UUID) -> bool:
     order = session.get(Order, order_id)
     if order is None or order.status == "SHIPPED":
         return False
-    if session.exec(select(PickingInstruction).where(PickingInstruction.order_id == order_id)).first():
+    if session.exec(
+        select(PickingInstruction).where(PickingInstruction.order_id == order_id)
+    ).first():
         return False
     if session.exec(select(ReturnJob).where(ReturnJob.order_id == order_id)).first():
         return False
-    if session.exec(select(OrderProposal).where(OrderProposal.order_id == order_id)).first():
+    if session.exec(
+        select(OrderProposal).where(OrderProposal.order_id == order_id)
+    ).first():
         return False
 
     session.delete(order)
     return True
 
 
-def delete_picking_instruction(session: Session, instruction: PickingInstruction) -> bool:
+def delete_picking_instruction(
+    session: Session, instruction: PickingInstruction
+) -> bool:
     """
     수락 전 지시서를 흔적 없이 제거한다 (라인 아이템은 FK CASCADE로 함께 삭제).
     주문까지 지웠으면 True를 돌려준다.
@@ -403,7 +472,9 @@ def delete_picking_instruction(session: Session, instruction: PickingInstruction
 
     if instruction.status == "PENDING":
         items = session.exec(
-            select(PickingInstructionItem).where(PickingInstructionItem.instruction_id == instruction.id)
+            select(PickingInstructionItem).where(
+                PickingInstructionItem.instruction_id == instruction.id
+            )
         ).all()
         for it in items:
             if it.stock_type == "USED" and it.used_item_id:
@@ -437,7 +508,9 @@ def delete_picking_instruction(session: Session, instruction: PickingInstruction
     return purged_order
 
 
-def serialize_instruction(session: Session, instruction: PickingInstruction) -> Dict[str, Any]:
+def serialize_instruction(
+    session: Session, instruction: PickingInstruction
+) -> Dict[str, Any]:
     """지시서 헤더 + 라인 아이템 직렬화 (프론트 공용 응답 포맷)"""
     items = session.exec(
         select(PickingInstructionItem)
@@ -459,13 +532,21 @@ def serialize_instruction(session: Session, instruction: PickingInstruction) -> 
         "worker_note": instruction.worker_note,
         "ai_source": instruction.ai_source,
         "accepted_by": instruction.accepted_by,
-        "accepted_at": instruction.accepted_at.isoformat() if instruction.accepted_at else None,
+        "accepted_at": instruction.accepted_at.isoformat()
+        if instruction.accepted_at
+        else None,
         "box_id": instruction.box_id,
         "cushion_name": instruction.cushion_name,
         "cj_waybill_no": instruction.cj_waybill_no,
-        "packed_at": instruction.packed_at.isoformat() if instruction.packed_at else None,
-        "shipped_at": instruction.shipped_at.isoformat() if instruction.shipped_at else None,
-        "created_at": instruction.created_at.isoformat() if instruction.created_at else None,
+        "packed_at": instruction.packed_at.isoformat()
+        if instruction.packed_at
+        else None,
+        "shipped_at": instruction.shipped_at.isoformat()
+        if instruction.shipped_at
+        else None,
+        "created_at": instruction.created_at.isoformat()
+        if instruction.created_at
+        else None,
         "items": [
             {
                 "id": str(it.id),

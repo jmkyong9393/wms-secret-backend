@@ -6,7 +6,13 @@ from datetime import datetime
 from fastapi import HTTPException
 from app.models.wms import now_kst
 
-def recommend_optimal_warehouse_zone(grade: str = "MINT", category: str = "IT/컴퓨터", base_price: float = 20000.0, standard_size: str = None) -> tuple[str, str, str]:
+
+def recommend_optimal_warehouse_zone(
+    grade: str = "MINT",
+    category: str = "IT/컴퓨터",
+    base_price: float = 20000.0,
+    standard_size: str = None,
+) -> tuple[str, str, str]:
     """
     [카테고리별 + 등급별 + 판형/크기별 3차원 물류 조합 알고리즘]
     1. 등급 (MINT/GOOD/NORMAL/REJECT) ➔ 존(Zone A-E) 결정 (품질 관리 및 출고 속도 차등)
@@ -15,15 +21,15 @@ def recommend_optimal_warehouse_zone(grade: str = "MINT", category: str = "IT/�
     """
     # 1. 조장님 절대적 3D 물류 규칙: 등급별 존 (Zone A-E)
     if grade in ["NEW", "NEW_FASTTRACK"]:
-        zone = "A" # Zone A: 신품 전용 고속 입출고 피킹 존
+        zone = "A"  # Zone A: 신품 전용 고속 입출고 피킹 존
     elif grade in ["MINT", "S"]:
-        zone = "B" # Zone B: MINT (S급/최상급) 중고 전용 존
+        zone = "B"  # Zone B: MINT (S급/최상급) 중고 전용 존
     elif grade in ["GOOD", "A"]:
-        zone = "C" # Zone C: GOOD (A급/상급) 중고 표준 존
+        zone = "C"  # Zone C: GOOD (A급/상급) 중고 표준 존
     elif grade in ["NORMAL", "B"]:
-        zone = "D" # Zone D: NORMAL (B급/중급) 중고 존
+        zone = "D"  # Zone D: NORMAL (B급/중급) 중고 존
     elif grade in ["POOR", "REJECT"]:
-        zone = "E" # Zone E: REJECT (폐기/반려) 격리 전용 랙 구역
+        zone = "E"  # Zone E: REJECT (폐기/반려) 격리 전용 랙 구역
     else:
         zone = "D"
 
@@ -31,44 +37,44 @@ def recommend_optimal_warehouse_zone(grade: str = "MINT", category: str = "IT/�
     # 알라딘 실카테고리 값("컴퓨터/모바일", "소설/시/희곡" 등)은 표기가 다양해 부분 일치로 매핑한다.
     c = category or ""
     if "컴퓨터" in c or "IT" in c:
-        rack = "1"   # IT/컴퓨터
+        rack = "1"  # IT/컴퓨터
     elif "소설" in c or "에세이" in c or "문학" in c or "시" in c:
-        rack = "2"   # 소설/문학
+        rack = "2"  # 소설/문학
     elif "경제" in c or "경영" in c or "자기계발" in c:
-        rack = "3"   # 경제/경영
+        rack = "3"  # 경제/경영
     elif "과학" in c or "수학" in c or "외국어" in c or "수험" in c:
-        rack = "4"   # 자연과학/수험서
+        rack = "4"  # 자연과학/수험서
     else:
-        rack = "5"   # 만화/기타 (만화·여행·역사·인문·예술·어린이 등)
+        rack = "5"  # 만화/기타 (만화·여행·역사·인문·예술·어린이 등)
 
     # 3. 크기/판형별 선반 (Shelf 1-4) (용적률 최적화)
     # 실값은 "4x6배판 188x257mm"처럼 치수가 붙은 문자열이라 부분 일치로 판별한다.
     ss = standard_size or ""
     if any(k in ss for k in ("대형", "국배판", "A4", "4x6배판")):
-        shelf = "1" # 최하단 대형/무거운 도서 전용 선반 (하중 부담 방지)
+        shelf = "1"  # 최하단 대형/무거운 도서 전용 선반 (하중 부담 방지)
     elif any(k in ss for k in ("신국판", "국판", "4륙판")):
-        shelf = "2" # 중형 표준 선반
+        shelf = "2"  # 중형 표준 선반
     elif "문고" in ss:
-        shelf = "3" # 소형 고밀도 선반
+        shelf = "3"  # 소형 고밀도 선반
     else:
-        shelf = "4" # 상단 보조 선반 (판형 미상)
+        shelf = "4"  # 상단 보조 선반 (판형 미상)
 
     return zone, rack, shelf
 
-def get_or_create_location(db: Session, zone: str = "A", rack: str = "1", shelf: str = "1") -> Location:
+
+def get_or_create_location(
+    db: Session, zone: str = "A", rack: str = "1", shelf: str = "1"
+) -> Location:
     """
     창고 보관 랙 (Zone A-E) 위치를 조회하거나 없으면 자동 생성합니다.
     """
     from app.models.wms import Location
+
     barcode = f"LOC-{zone}-{rack}-{shelf}"
     loc = db.query(Location).filter(Location.barcode == barcode).first()
     if not loc:
         loc = Location(
-            zone=zone,
-            rack=rack,
-            shelf=shelf,
-            barcode=barcode,
-            is_active=True
+            zone=zone, rack=rack, shelf=shelf, barcode=barcode, is_active=True
         )
         db.add(loc)
         db.commit()
@@ -100,7 +106,9 @@ def get_new_stock_map(db: Session) -> Dict[Any, int]:
     return out
 
 
-def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int, worker_id: str = None):
+def fasttrack_new_stock_inbound(
+    db: Session, book: Book, qty: int, worker_id: str = None
+):
     """
     신품 도서 Fast-Track 입고의 공용 집행 로직.
     Zone A(신품존) 묶음 재고(Inventory) upsert + INBOUND 원장 기록.
@@ -126,7 +134,9 @@ def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int, worker_id: st
     )
     location = get_or_create_location(db, zone=rec_zone, rack=rec_rack, shelf=rec_shelf)
     inv = db.exec(
-        select(Inventory).where(Inventory.book_id == book.id, Inventory.location_id == location.id)
+        select(Inventory).where(
+            Inventory.book_id == book.id, Inventory.location_id == location.id
+        )
     ).first()
     if inv:
         inv.quantity += qty
@@ -137,16 +147,18 @@ def fasttrack_new_stock_inbound(db: Session, book: Book, qty: int, worker_id: st
 
     book.updated_at = now_kst()
     db.add(book)
-    db.add(InventoryLog(
-        transaction_type="INBOUND",
-        book_id=book.id,
-        condition_grade="NEW",
-        quantity_change=qty,
-        picked_location=f"{location.zone}-{location.rack}-{location.shelf}",
-        # 누가 이 입고를 했는가. 자동 발주(AUTO_PO) 승인 경로는 사람이 아니므로 결재자 사번이
-        # 들어오고, 현장 Fast-Track 입고는 촬영·스캔한 작업자 사번이 들어온다.
-        worker_id=(worker_id or "").strip() or None,
-    ))
+    db.add(
+        InventoryLog(
+            transaction_type="INBOUND",
+            book_id=book.id,
+            condition_grade="NEW",
+            quantity_change=qty,
+            picked_location=f"{location.zone}-{location.rack}-{location.shelf}",
+            # 누가 이 입고를 했는가. 자동 발주(AUTO_PO) 승인 경로는 사람이 아니므로 결재자 사번이
+            # 들어오고, 현장 Fast-Track 입고는 촬영·스캔한 작업자 사번이 들어온다.
+            worker_id=(worker_id or "").strip() or None,
+        )
+    )
     return inv, location
 
 
@@ -162,9 +174,12 @@ def generate_next_lpn_barcode(db: Session, zone: str = None) -> str:
         zone_code = LPN_LIVE_ZONE
     date_str = now_kst().strftime("%y%m%d")
     prefix = f"LPN-{date_str}-{zone_code}"
-    last = db.query(InventoryUsedItem.lpn_barcode).filter(
-        InventoryUsedItem.lpn_barcode.like(f"{prefix}%")
-    ).order_by(InventoryUsedItem.lpn_barcode.desc()).first()
+    last = (
+        db.query(InventoryUsedItem.lpn_barcode)
+        .filter(InventoryUsedItem.lpn_barcode.like(f"{prefix}%"))
+        .order_by(InventoryUsedItem.lpn_barcode.desc())
+        .first()
+    )
     seq_num = (int(last[0][-3:]) + 1) if last else 1
     return f"{prefix}{seq_num:03d}"
 
@@ -197,11 +212,13 @@ def generate_lpn(
     elif isbn:
         book = db.query(Book).filter(Book.isbn == isbn).first()
     else:
-        raise HTTPException(status_code=400, detail="Either book_id or isbn must be provided")
-        
+        raise HTTPException(
+            status_code=400, detail="Either book_id or isbn must be provided"
+        )
+
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
-        
+
     # 2. 고유 LPN 바코드 생성 (표준 규격: LPN-260803-A003)
     #
     # 종전에는 존 문자와 순번을 모두 random으로 뽑고 중복 검사를 하지 않았다.
@@ -236,9 +253,12 @@ def generate_lpn(
 
     MAX_RETRY = 5
     for attempt in range(MAX_RETRY):
-        last = db.query(InventoryUsedItem.lpn_barcode).filter(
-            InventoryUsedItem.lpn_barcode.like(f"{prefix}%")
-        ).order_by(InventoryUsedItem.lpn_barcode.desc()).first()
+        last = (
+            db.query(InventoryUsedItem.lpn_barcode)
+            .filter(InventoryUsedItem.lpn_barcode.like(f"{prefix}%"))
+            .order_by(InventoryUsedItem.lpn_barcode.desc())
+            .first()
+        )
         seq_num = (int(last[0][-3:]) + 1) if last else 1
         lpn_code = f"{prefix}{seq_num:03d}"
 
@@ -246,10 +266,11 @@ def generate_lpn(
             book_id=book.id,
             location_id=buffer_loc.id,  # 검수 대기 버퍼 (rack/shelf = 0/0)
             lpn_barcode=lpn_code,
-            ubci_score=None, # 검수 전 미측정
-            condition_grade="PENDING", # 검수 전 미확정
-            item_status="PENDING_INSPECTION", # AI 검수 대기 상태
-            prelabel_worker_id=(worker_id or "").strip() or None, # 선부착(라벨 발급) 작업자
+            ubci_score=None,  # 검수 전 미측정
+            condition_grade="PENDING",  # 검수 전 미확정
+            item_status="PENDING_INSPECTION",  # AI 검수 대기 상태
+            prelabel_worker_id=(worker_id or "").strip()
+            or None,  # 선부착(라벨 발급) 작업자
         )
 
         try:
@@ -268,6 +289,7 @@ def generate_lpn(
         db.refresh(new_item)
         return new_item, book
 
+
 def assign_rack_location_after_inspection(
     db: Session,
     lpn_barcode: str,
@@ -275,7 +297,7 @@ def assign_rack_location_after_inspection(
     # 재고 집계(발주 저재고 스캔·Restock 에이전트)는 IN_STOCK만 센다. 기본값이
     # COMPLETED면 검수를 통과해 랙까지 배정된 재고가 가용 재고에서 누락된다.
     final_status: str = "IN_STOCK",
-    book_id = None,
+    book_id=None,
     ubci_score: int = 85,
     source_job_id: str = None,
     certificate_url: str = None,
@@ -291,15 +313,23 @@ def assign_rack_location_after_inspection(
     inspection_source / inspected_by는 이 품목의 등급을 최종 확정한 주체를 기록한다
     (AI_AUTO=파이프라인 자동 확정, HITL=관리자 수동 결재, MANUAL=현장 수기).
     """
-    item = db.query(InventoryUsedItem).filter(InventoryUsedItem.lpn_barcode == lpn_barcode).first()
-    book = db.query(Book).filter(Book.id == (item.book_id if item else book_id)).first() if (item or book_id) else None
+    item = (
+        db.query(InventoryUsedItem)
+        .filter(InventoryUsedItem.lpn_barcode == lpn_barcode)
+        .first()
+    )
+    book = (
+        db.query(Book).filter(Book.id == (item.book_id if item else book_id)).first()
+        if (item or book_id)
+        else None
+    )
 
     # 등급/카테고리/판형 3차원 알고리즘으로 Zone A/B/C/D/E 랙 위치 자동 결정
     rec_zone, rec_rack, rec_shelf = recommend_optimal_warehouse_zone(
         grade=final_grade,
         category=book.category_type if book else "IT/컴퓨터",
         base_price=book.base_price if book else 20000.0,
-        standard_size=book.standard_size if book else None
+        standard_size=book.standard_size if book else None,
     )
     location = get_or_create_location(db, zone=rec_zone, rack=rec_rack, shelf=rec_shelf)
 
@@ -327,7 +357,7 @@ def assign_rack_location_after_inspection(
             inspection_source=inspection_source,
             inspected_by=inspected_by,
             inspected_at=now_kst(),
-            created_at=now_kst()
+            created_at=now_kst(),
         )
         db.add(item)
         db.commit()
@@ -348,7 +378,9 @@ def assign_rack_location_after_inspection(
         item.source_job_id = source_job_id
     if certificate_url:
         item.certificate_url = certificate_url
-    elif not item.certificate_url or "/certificate/CERT-" in (item.certificate_url or ""):
+    elif not item.certificate_url or "/certificate/CERT-" in (
+        item.certificate_url or ""
+    ):
         # CERT-* 형식은 라우트가 조회하지 못하므로(404) LPN 기반으로 교정한다.
         item.certificate_url = f"/certificate/{item.lpn_barcode}"
 
@@ -383,11 +415,11 @@ def assign_rack_location_after_inspection(
         grade=final_grade,
         category=book.category_type if book else "IT/컴퓨터",
         base_price=book.base_price if book else 20000.0,
-        standard_size=book.standard_size if book else None
+        standard_size=book.standard_size if book else None,
     )
 
     location = get_or_create_location(db, zone=rec_zone, rack=rec_rack, shelf=rec_shelf)
-    
+
     item.location_id = location.id
     item.condition_grade = final_grade
     item.item_status = final_status
@@ -398,6 +430,7 @@ def assign_rack_location_after_inspection(
     db.refresh(item)
 
     return item
+
 
 def get_all_lpn(db: Session, skip: int = 0, limit: int = 100):
     """발급된 모든 LPN 및 랙 위치 조회"""

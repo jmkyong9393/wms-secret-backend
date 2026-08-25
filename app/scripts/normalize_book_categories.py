@@ -21,6 +21,7 @@ books.category_type 정규화 — 알라딘 실조회 기반.
 
 멱등하다 - 여러 번 돌려도 결과가 같다.
 """
+
 import asyncio
 import sys
 
@@ -58,10 +59,12 @@ def parse_aladin_level2(category_name: str) -> str | None:
 
 async def main() -> None:
     with Session(engine) as s:
-        s.exec(text(
-            "CREATE TABLE IF NOT EXISTS _bak_20260806_books_category AS "
-            "SELECT id, isbn, title, category_type FROM books"
-        ))
+        s.exec(
+            text(
+                "CREATE TABLE IF NOT EXISTS _bak_20260806_books_category AS "
+                "SELECT id, isbn, title, category_type FROM books"
+            )
+        )
         s.commit()
         books = s.exec(select(Book)).all()
         print(f"대상 도서 {len(books)}권 (백업: _bak_20260806_books_category)")
@@ -103,7 +106,9 @@ async def main() -> None:
         s.commit()
 
     print()
-    print(f"갱신 {updated}건 (알라딘 조회 {updated - fallback - failed} / 시드 매핑 {fallback} / 미분류 {failed})")
+    print(
+        f"갱신 {updated}건 (알라딘 조회 {updated - fallback - failed} / 시드 매핑 {fallback} / 미분류 {failed})"
+    )
     for isbn, before, after in results[:15]:
         print(f"  {isbn}  {before[:24]:<26} -> {after}")
     if len(results) > 15:

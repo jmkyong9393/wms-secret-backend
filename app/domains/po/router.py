@@ -17,7 +17,9 @@ admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 
 
 class ProposalDecisionRequest(BaseModel):
-    proposal_ids: List[str] = Field(..., description="결재할 order_proposals id 목록 (단건도 배열로)")
+    proposal_ids: List[str] = Field(
+        ..., description="결재할 order_proposals id 목록 (단건도 배열로)"
+    )
 
 
 def _inspector_label(current_admin) -> str:
@@ -30,7 +32,9 @@ def _inspector_label(current_admin) -> str:
 
 @router.get("/proposals")
 def list_proposals(
-    status: Optional[str] = Query(default=None, description="PENDING | APPROVED | DISMISSED (미지정 시 전체)"),
+    status: Optional[str] = Query(
+        default=None, description="PENDING | APPROVED | DISMISSED (미지정 시 전체)"
+    ),
     db: Session = Depends(get_db),
     current_admin=Depends(admin_only),
 ) -> List[Dict[str, Any]]:
@@ -67,7 +71,9 @@ def dismiss_proposals(
     db: Session = Depends(get_db),
     current_admin=Depends(admin_only),
 ):
-    return po_service.dismiss_proposals(db, req.proposal_ids, decided_by=_inspector_label(current_admin))
+    return po_service.dismiss_proposals(
+        db, req.proposal_ids, decided_by=_inspector_label(current_admin)
+    )
 
 
 @router.post("/proposals/delete")

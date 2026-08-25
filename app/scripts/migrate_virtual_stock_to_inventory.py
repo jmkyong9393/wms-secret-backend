@@ -30,7 +30,9 @@ def migrate(apply: bool = False) -> int:
 
     with Session(engine) as db:
         books = db.exec(select(Book).where(Book.virtual_stock > 0)).all()
-        print(f"대상 도서: {len(books)}종 / 총 {sum(b.virtual_stock or 0 for b in books)}권")
+        print(
+            f"대상 도서: {len(books)}종 / 총 {sum(b.virtual_stock or 0 for b in books)}권"
+        )
         print("-" * 78)
 
         for b in books:
@@ -50,16 +52,22 @@ def migrate(apply: bool = False) -> int:
             # 같은 칸에 두 행으로 갈라져 합계는 맞아도 원장이 지저분해진다.
             existing_qty = sum(
                 int(r.quantity or 0)
-                for r in db.exec(select(Inventory).where(Inventory.book_id == b.id)).all()
+                for r in db.exec(
+                    select(Inventory).where(Inventory.book_id == b.id)
+                ).all()
             )
-            print(f"  {b.title[:38]:40s} virtual={qty:3d} → {loc_label:8s} (기존 Inventory={existing_qty})")
+            print(
+                f"  {b.title[:38]:40s} virtual={qty:3d} → {loc_label:8s} (기존 Inventory={existing_qty})"
+            )
 
             if not apply:
                 moved_books += 1
                 moved_qty += qty
                 continue
 
-            location = get_or_create_location(db, zone=rec_zone, rack=rec_rack, shelf=rec_shelf)
+            location = get_or_create_location(
+                db, zone=rec_zone, rack=rec_rack, shelf=rec_shelf
+            )
             inv = db.exec(
                 select(Inventory).where(
                     Inventory.book_id == b.id, Inventory.location_id == location.id
@@ -73,14 +81,16 @@ def migrate(apply: bool = False) -> int:
             db.add(inv)
 
             # 이관은 수량 이동이지 신규 입고가 아니다. 원장에 남기되 사유를 구분한다.
-            db.add(InventoryLog(
-                transaction_type="INBOUND",
-                book_id=b.id,
-                condition_grade="NEW",
-                quantity_change=qty,
-                picked_location=loc_label,
-                worker_id="MIGRATION_VSTOCK",
-            ))
+            db.add(
+                InventoryLog(
+                    transaction_type="INBOUND",
+                    book_id=b.id,
+                    condition_grade="NEW",
+                    quantity_change=qty,
+                    picked_location=loc_label,
+                    worker_id="MIGRATION_VSTOCK",
+                )
+            )
 
             b.virtual_stock = 0
             b.updated_at = now_kst()
@@ -93,7 +103,9 @@ def migrate(apply: bool = False) -> int:
             db.commit()
 
     print("-" * 78)
-    print(f"{'반영 완료' if apply else 'DRY-RUN (반영 안 함)'}: {moved_books}종 / {moved_qty}권")
+    print(
+        f"{'반영 완료' if apply else 'DRY-RUN (반영 안 함)'}: {moved_books}종 / {moved_qty}권"
+    )
     if not apply:
         print("실제 반영하려면 --apply 를 붙여 다시 실행하세요.")
     return 0

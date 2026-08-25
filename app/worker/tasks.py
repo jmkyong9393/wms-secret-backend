@@ -51,10 +51,12 @@ redis_client = Redis.from_url(REDIS_URL)
 
 DLQ_KEY = "wms:dlq:inspection_tasks"
 
+
 def _notify_agent_error(return_job_id: str, error_msg: str) -> None:
     """DLQ 격리 발생을 관제 콘솔 알림으로 올린다. 실패해도 DLQ 적재를 방해하지 않는다."""
     try:
         from app.domains.notifications.service import notify_agent_error
+
         notify_agent_error(job_id=return_job_id, error_message=error_msg)
     except Exception as e:
         logger.warning(f"[Notification] 에이전트 오류 알림 발행 실패: {e}")
@@ -62,7 +64,7 @@ def _notify_agent_error(return_job_id: str, error_msg: str) -> None:
 
 def push_to_dlq(task_id: str, return_job_id: str, error_msg: str, retries: int) -> None:
     """
-    Celery 최대 재시도(Max Retries) 초과 시, 작업을 버리지 않고 
+    Celery 최대 재시도(Max Retries) 초과 시, 작업을 버리지 않고
     Redis 기반의 Dead Letter Queue(DLQ)에 적재하여 데이터 유실을 방어합니다.
     추후 관리자가 대시보드(Admin UI)에서 DLQ 목록을 확인하고 원클릭 수동 재처리(Re-queue)를 할 수 있도록 설계되었습니다.
     """
@@ -71,30 +73,34 @@ def push_to_dlq(task_id: str, return_job_id: str, error_msg: str, retries: int) 
         "return_job_id": return_job_id,
         "error": error_msg,
         "failed_at": now_kst().isoformat(),
-        "retries": retries
+        "retries": retries,
     }
-    
+
     try:
         # 우측 끝에 밀어넣기 (큐 형태 보장) + 보관정책 원자 적용:
         # 최대 N건 초과 시 오래된 항목부터 절삭(LTRIM), 마지막 적재 후 TTL 갱신(EXPIRE)
         from app.core.config import settings
+
         with redis_client.pipeline(transaction=True) as pipeline:
             pipeline.rpush(DLQ_KEY, json.dumps(dlq_payload))
             pipeline.ltrim(DLQ_KEY, -settings.INSPECTION_DLQ_MAX_ENTRIES, -1)
             pipeline.expire(DLQ_KEY, settings.INSPECTION_DLQ_TTL_SECONDS)
             pipeline.execute()
-        logger.error(f"[DLQ] Task {task_id} for job {return_job_id} safely pushed to DLQ.")
+        logger.error(
+            f"[DLQ] Task {task_id} for job {return_job_id} safely pushed to DLQ."
+        )
         _notify_agent_error(return_job_id, error_msg)
     except Exception as e:
         # 최악의 경우 Redis마저 뻗었다면 시스템 치명적 결함이므로 로그로 흔적을 짙게 남김
-        logger.critical(f"FATAL: Failed to push DLQ! task={task_id}, job={return_job_id}, err={str(e)}")
-
+        logger.critical(
+            f"FATAL: Failed to push DLQ! task={task_id}, job={return_job_id}, err={str(e)}"
+        )
 
 
 # PROCESSING 상태 변경 후 프론트에 진행 상태를 전달하는 Pub/Sub 이벤트 발행 함수
 def publish_processing_event(
-        return_job_id: uuid.UUID,
-        celery_task_id: str,
+    return_job_id: uuid.UUID,
+    celery_task_id: str,
 ) -> None:
     publish_return_job_event(
         return_job_id=str(return_job_id),
@@ -107,19 +113,27 @@ def publish_processing_event(
         },
     )
 
+
 def _summarize_defects(agent_logs: Dict[str, Any]) -> str:
     defects = (agent_logs or {}).get("defects") or []
-    types = sorted({d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")})
+    types = sorted(
+        {d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")}
+    )
     return ", ".join(types) if types else "정상"
+
 
 # 최종 검수 결과(APPROVED/REJECTED)를 프론트에 전달하는 Pub/Sub 이벤트 발행 함수
 def publish_final_event(
-        job: ReturnJob,
-        celery_task_id: str,
+    job: ReturnJob,
+    celery_task_id: str,
 ) -> None:
     from app.models.wms import ubci_grade_from_score
 
-    grade = "HITL_REQUIRED" if job.status == "HITL_REQUIRED" else ubci_grade_from_score(job.ubci_score)
+    grade = (
+        "HITL_REQUIRED"
+        if job.status == "HITL_REQUIRED"
+        else ubci_grade_from_score(job.ubci_score)
+    )
     publish_return_job_event(
         return_job_id=str(job.id),
         event={
@@ -134,11 +148,12 @@ def publish_final_event(
         },
     )
 
+
 # Worker 처리 실패 시 FAILED 상태를 프론트에 전달하는 Pub/Sub 이벤트 발행 함수
 def publish_failed_event(
-        return_job_id: uuid.UUID,
-        celery_task_id: str,
-        error: Exception,
+    return_job_id: uuid.UUID,
+    celery_task_id: str,
+    error: Exception,
 ) -> None:
     publish_return_job_event(
         return_job_id=str(return_job_id),
@@ -154,6 +169,7 @@ def publish_failed_event(
         },
     )
 
+
 # AI decision 결과에 따라 창고 랙 위치를 확정하고 최종 ReturnJob status를 결정하는 함수
 #
 # [수정 이력] 기존에는 존재하지 않는 내부 WMS HTTP 엔드포인트(call_wms_approve_api/call_wms_reject_api,
@@ -162,14 +178,14 @@ def publish_failed_event(
 # assign_rack_location_after_inspection()을 인프로세스로 직접 호출하도록 교체하여 실제로
 # InventoryUsedItem 랙 배정이 이뤄지도록 한다.
 def execute_wms_action(
-        decision: str,
-        book_id: uuid.UUID,
-        lpn_barcode: Optional[str],
-        final_grade: str,
-        ubci_score: Optional[int],
-        source_job_id: str,
-        inbound_worker_id: Optional[str] = None,
-        auto_refund_eligible: bool = False,
+    decision: str,
+    book_id: uuid.UUID,
+    lpn_barcode: Optional[str],
+    final_grade: str,
+    ubci_score: Optional[int],
+    source_job_id: str,
+    inbound_worker_id: Optional[str] = None,
+    auto_refund_eligible: bool = False,
 ) -> Tuple[str, Dict[str, Any]]:
     # [수정 이력] HITL 이관(decision="HITL")도 여기서 함께 처리한다. Zone Z(임시적재)에
     # InventoryUsedItem을 미리 만들어 실물이 어디 있는지 추적 가능하게 하고, 관리자가
@@ -187,7 +203,9 @@ def execute_wms_action(
         enqueue_restock_proposal(source_job_id)
 
     if not lpn_barcode:
-        logger.warning(f"lpn_barcode 없음 (return_job_id={source_job_id}) - 랙 위치 자동 할당을 건너뜁니다.")
+        logger.warning(
+            f"lpn_barcode 없음 (return_job_id={source_job_id}) - 랙 위치 자동 할당을 건너뜁니다."
+        )
         return final_status, {}
 
     from app.db.session import engine
@@ -239,10 +257,10 @@ def execute_wms_action(
     return final_status, {}
 
 
-
 # ==========================================
 # Restock 판정 그래프 워커 (자동 발주 제안 생성)
 # ==========================================
+
 
 def _extract_reject_reason_code(agent_logs: Optional[Dict[str, Any]]) -> Optional[str]:
     """
@@ -255,7 +273,9 @@ def _extract_reject_reason_code(agent_logs: Optional[Dict[str, Any]]) -> Optiona
     if primary:
         return str(primary)[:50]
     defects = logs.get("defects") or []
-    types = sorted({d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")})
+    types = sorted(
+        {d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")}
+    )
     return ",".join(types[:3])[:50] if types else None
 
 
@@ -296,7 +316,9 @@ def generate_restock_proposal(return_job_id: str) -> Dict[str, Any]:
             )
             return {"status": "SUCCESS", "proposal_id": str(proposal.id)}
     except Exception as e:
-        logger.exception(f"[Restock] 제안 생성 실패 (return_job_id={return_job_id}): {e}")
+        logger.exception(
+            f"[Restock] 제안 생성 실패 (return_job_id={return_job_id}): {e}"
+        )
         return {"status": "FAILED", "error": str(e)}
 
 
@@ -312,13 +334,20 @@ def enqueue_restock_proposal(return_job_id: str) -> None:
         logger.warning(f"[Restock] Celery 큐잉 실패, 인프로세스로 폴백: {e}")
         try:
             import threading
-            threading.Thread(target=generate_restock_proposal, args=(str(return_job_id),), daemon=True).start()
+
+            threading.Thread(
+                target=generate_restock_proposal,
+                args=(str(return_job_id),),
+                daemon=True,
+            ).start()
         except Exception as e2:
             logger.error(f"[Restock] 인프로세스 폴백마저 실패 - 제안 생성 건너뜀: {e2}")
 
 
 @celery_app.task(name="app.worker.tasks.generate_hitl_certificate", max_retries=1)
-def generate_hitl_certificate(return_job_id: str, hitl_inspector: str) -> Dict[str, Any]:
+def generate_hitl_certificate(
+    return_job_id: str, hitl_inspector: str
+) -> Dict[str, Any]:
     """
     HITL 승인 건의 고객 보증서 본문을 비동기로 생성한다.
 
@@ -365,7 +394,9 @@ def generate_hitl_certificate(return_job_id: str, hitl_inspector: str) -> Dict[s
             cert_doc = build_certificate_document(cert_state)
             # 보증서 번호의 날짜는 KST다. 컨테이너 TZ가 UTC라 datetime.now()를 쓰면
             # KST 00~09시 발급분이 전날 번호를 받는다.
-            cert_doc["cert_id"] = f"CERT-{now_kst().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
+            cert_doc["cert_id"] = (
+                f"CERT-{now_kst().strftime('%Y%m%d')}-{str(job.id)[:6].upper()}"
+            )
             cert_doc["issued_by"] = "HITL"
             cert_doc["inspected_by"] = hitl_inspector
 
@@ -386,10 +417,14 @@ def generate_hitl_certificate(return_job_id: str, hitl_inspector: str) -> Dict[s
             }
             session.add(job)
             session.commit()
-            logger.info(f"[HITL] 보증서 비동기 생성 완료: {cert_doc['cert_id']} (job {job.id})")
+            logger.info(
+                f"[HITL] 보증서 비동기 생성 완료: {cert_doc['cert_id']} (job {job.id})"
+            )
             return {"status": "SUCCESS", "cert_id": cert_doc["cert_id"]}
     except Exception as e:
-        logger.exception(f"[HITL] 보증서 비동기 생성 실패 (return_job_id={return_job_id}): {e}")
+        logger.exception(
+            f"[HITL] 보증서 비동기 생성 실패 (return_job_id={return_job_id}): {e}"
+        )
         return {"status": "FAILED", "error": str(e)}
 
 
@@ -405,6 +440,7 @@ def enqueue_hitl_certificate(return_job_id: str, hitl_inspector: str) -> None:
         logger.warning(f"[HITL] Celery 큐잉 실패, 인프로세스로 폴백: {e}")
         try:
             import threading
+
             threading.Thread(
                 target=generate_hitl_certificate,
                 args=(str(return_job_id), hitl_inspector),
@@ -513,15 +549,17 @@ def scan_safety_stock_proposals() -> Dict[str, Any]:
 
 # celery task
 @celery_app.task(
-        bind=True,
-        name="app.worker.tasks.process_inspection",
-        max_retries=3,
-        # 지수 백오프는 코드 내부에 `retry(countdown=...)` 로직으로 직접 구현하여 우아하게 제어함.
+    bind=True,
+    name="app.worker.tasks.process_inspection",
+    max_retries=3,
+    # 지수 백오프는 코드 내부에 `retry(countdown=...)` 로직으로 직접 구현하여 우아하게 제어함.
 )
-def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict[str, Any]:
+def process_inspection(
+    self, return_job_id: str, was_hitl: bool = False
+) -> Dict[str, Any]:
     """
     LangGraph 기반 AI 비전 검수 메인 워커.
-    
+
     [핵심 방어 로직 적용 (Resilience Architecture)]
     1. Redlock (분산 락): KEDA 스케일 아웃 환경에서 다중 워커가 동일 건을 중복 처리하지 못하도록 Lock 점유.
     2. Exponential Backoff (지수 백오프): LLM API Rate Limit(429)이나 외부 망 통신 장애 발생 시 우회.
@@ -539,11 +577,13 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
     # auto_release_time 을 300초(5분)로 두어 워커가 크래시 나더라도 락이 자연 해제되게 방어 설계.
     lock_key = f"lock:inspection:{return_job_id}"
     lock = Redlock(key=lock_key, masters={redis_client}, auto_release_time=300)
-    
+
     try:
         # blocking=False: 누군가 이미 락을 쥐고 있으면 쿨하게 포기 (멱등성 보장)
         if not lock.acquire(blocking=False):
-            logger.warning(f"Task {celery_task_id} skipped. Job {return_job_id} is already locked by another worker.")
+            logger.warning(
+                f"Task {celery_task_id} skipped. Job {return_job_id} is already locked by another worker."
+            )
             return {"status": "SKIPPED", "reason": "LOCKED"}
 
         # 터미널 상태 가드 — Redlock은 '동시' 중복만 막는다. visibility_timeout 재전달이나
@@ -551,16 +591,23 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # 그대로 재검수(이중 LLM 비용 + 랙 재배정)가 돌게 된다. 여기서 차단한다.
         # (HITL_REQUIRED는 제외 — 관리자 결재 후 재검수 경로가 정상적으로 재진입한다.)
         from app.db.session import engine
+
         with Session(engine) as _s:
             _job = _s.get(ReturnJob, parsed_return_job_id)
-            if _job is not None and _job.status in ("APPROVED", "REJECTED") and not was_hitl:
+            if (
+                _job is not None
+                and _job.status in ("APPROVED", "REJECTED")
+                and not was_hitl
+            ):
                 logger.warning(
                     f"Task {celery_task_id} skipped. Job {return_job_id} already terminal "
                     f"({_job.status}) - duplicate delivery or sweeper requeue."
                 )
                 return {"status": "SKIPPED", "reason": f"ALREADY_{_job.status}"}
 
-        logger.info(f"process_inspection started. task_id={celery_task_id} return_job_id={return_job_id}")
+        logger.info(
+            f"process_inspection started. task_id={celery_task_id} return_job_id={return_job_id}"
+        )
 
         # 2. ReturnJob 조회 및 PROCESSING 상태 변경
         (
@@ -579,14 +626,18 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # 로컬 파일 경로를 요구하므로, 입고 시 함께 남겨둔 local_image_paths를 우선 사용하고
         # (원격 재다운로드 왕복 제거) 로컬 사본이 없는 과거 건에서만 URL로 폴백한다.
         local_paths = [
-            p for p in ((agent_logs_in or {}).get("local_image_paths") or []) if p and os.path.exists(p)
+            p
+            for p in ((agent_logs_in or {}).get("local_image_paths") or [])
+            if p and os.path.exists(p)
         ]
         inference_images = local_paths or image_urls
 
         # [수정 이력] Policy Agent의 is_workbook 판정(수험서/문제집 낙서 -15점 단일 Cap)은
         # state["book_title"]을 읽는데, 이 키를 아무도 채워준 적이 없어 항상 빈 문자열이었다.
         # 즉 수험서 Cap이 한 번도 발동하지 않고 낙서가 건당 누적 감점되고 있었다.
-        book_title = ((agent_logs_in or {}).get("book_metadata") or {}).get("title") or ""
+        book_title = ((agent_logs_in or {}).get("book_metadata") or {}).get(
+            "title"
+        ) or ""
         # is_workbook이 제목 키워드에만 의존해 "쉽게 풀어쓴 C언어
         # Express"처럼 실습문제가 실린 도서 다수가 안 걸렸다. inbound/router.py가 이미
         # agent_logs["book_category"]에 심어둔 값을 읽어 2차 신호로 함께 넘긴다.
@@ -601,13 +652,16 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
             try:
                 from app.db.session import engine as _engine
                 from app.models.wms import Book as _Book
+
                 with Session(_engine) as _s:
                     _book = _s.get(_Book, book_id) if book_id else None
                     if _book:
                         book_title = book_title or (_book.title or "")
                         book_category = book_category or (_book.category_type or "")
             except Exception as _meta_err:
-                logger.warning(f"[BookContext] 도서 메타 DB 폴백 실패(검수는 계속): {_meta_err}")
+                logger.warning(
+                    f"[BookContext] 도서 메타 DB 폴백 실패(검수는 계속): {_meta_err}"
+                )
 
         publish_processing_event(
             return_job_id=parsed_return_job_id,
@@ -617,12 +671,12 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # 3. LangGraph Multi-Agent 실행
         langgraph_wrapper = LangGraphInspectionWrapper()
         ai_result = langgraph_wrapper.run_inspection(
-            return_job_id = return_job_id,
-            order_id = order_id,
-            image_urls = inference_images,
-            display_image_urls = image_urls,
-            book_title = book_title,
-            book_category = book_category,
+            return_job_id=return_job_id,
+            order_id=order_id,
+            image_urls=inference_images,
+            display_image_urls=image_urls,
+            book_title=book_title,
+            book_category=book_category,
         )
 
         # 4. AI decision에 따라 창고 랙 위치 확정
@@ -650,7 +704,7 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
             logs["supervisor_rationale"] = (
                 (prev_rationale + " / " if prev_rationale else "")
                 + "재검수 결과는 자동 승인 가능 수준이나, 이미 관리자 결재로 이관된 건이므로 "
-                  "자동 확정을 보류하고 결재 대기를 유지합니다 (HITL 잠금)."
+                "자동 확정을 보류하고 결재 대기를 유지합니다 (HITL 잠금)."
             )
 
         final_status, extra_logs = execute_wms_action(
@@ -684,7 +738,10 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # 더미 4건을 하드코딩해 들고 있었다. 알림 발행 실패가 검수 결과를 무효화해서는
         # 안 되므로 예외는 여기서 삼킨다.
         try:
-            from app.domains.notifications.service import notify_hitl_required, notify_inspection_done
+            from app.domains.notifications.service import (
+                notify_hitl_required,
+                notify_inspection_done,
+            )
 
             job_logs = job.agent_logs or {}
             # 도서명은 위에서 DB 폴백까지 끝낸 book_title을 재사용한다.
@@ -697,7 +754,9 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
                     job_id=str(job.id),
                     book_title=notify_book_title,
                     ubci_score=job.ubci_score,
-                    reason=job_logs.get("supervisor_rationale") or job_logs.get("critic_text") or "",
+                    reason=job_logs.get("supervisor_rationale")
+                    or job_logs.get("critic_text")
+                    or "",
                 )
             elif job.status == "APPROVED":
                 notify_inspection_done(
@@ -707,7 +766,9 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
                     ubci_score=job.ubci_score,
                 )
         except Exception as notify_err:
-            logger.warning(f"[Notification] 검수 완료 알림 발행 실패(검수 결과에는 영향 없음): {notify_err}")
+            logger.warning(
+                f"[Notification] 검수 완료 알림 발행 실패(검수 결과에는 영향 없음): {notify_err}"
+            )
 
         logger.info(
             f"process_inspection completed gracefully. task_id={celery_task_id} return_job_id={job.id} status={job.status}"
@@ -721,7 +782,7 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
             "status": job.status,
             "ubci_score": job.ubci_score,
         }
-        
+
     except QuorumNotAchieved:
         logger.warning(f"Redlock quorum not achieved for {return_job_id}")
         return {"status": "SKIPPED", "reason": "LOCK_FAILED"}
@@ -733,7 +794,7 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         retries = self.request.retries
         if retries < self.max_retries:
             # 2초, 4초, 8초... 순으로 기하급수적 대기 시간 적용
-            backoff_delay = 2 ** retries
+            backoff_delay = 2**retries
             logger.warning(
                 f"[Rate Limit / API Error] Retrying task {celery_task_id} in {backoff_delay}s... "
                 f"({retries + 1}/{self.max_retries}) | Err: {str(error)}"
@@ -744,22 +805,24 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         # 백오프를 모두 소진했음에도 실패한 경우 (Max Retries Exhausted) -> DLQ 격리
         logger.exception(f"API retries exhausted for {return_job_id}. Sending to DLQ.")
         push_to_dlq(celery_task_id, return_job_id, str(error), retries)
-        
+
         failed_job = save_inspection_failed(parsed_return_job_id, celery_task_id, error)
         if failed_job is not None:
             publish_failed_event(failed_job.id, celery_task_id, error)
-            
+
         raise
-    
+
     except Exception as error:
         # 예상치 못한 런타임 에러의 경우 바로 DLQ 격리 및 실패 처리
-        logger.exception(f"Unexpected error in process_inspection. task_id={celery_task_id}, sending to DLQ.")
+        logger.exception(
+            f"Unexpected error in process_inspection. task_id={celery_task_id}, sending to DLQ."
+        )
         push_to_dlq(celery_task_id, return_job_id, str(error), self.request.retries)
-        
+
         failed_job = save_inspection_failed(parsed_return_job_id, celery_task_id, error)
         if failed_job is not None:
             publish_failed_event(failed_job.id, celery_task_id, error)
-            
+
         raise
 
     finally:
@@ -769,15 +832,6 @@ def process_inspection(self, return_job_id: str, was_hitl: bool = False) -> Dict
         except Exception:
             # 락이 만료되었거나 이미 풀린 상태면 무시
             pass
-
-
-
-
-    
-
-    
-
-
 
 
 @celery_app.task(name="app.worker.tasks.generate_weekly_insight")
@@ -797,7 +851,8 @@ def generate_weekly_insight() -> Dict[str, Any]:
 
     from app.db.session import engine
     from app.domains.dashboard.weekly_insight_service import (
-        build_weekly_insight, iso_week_bounds,
+        build_weekly_insight,
+        iso_week_bounds,
     )
     from app.models.wms import now_kst
 
@@ -834,7 +889,9 @@ def generate_weekly_insight() -> Dict[str, Any]:
                     target_role="ADMIN",
                 )
             except Exception as notify_err:
-                logger.warning(f"[WeeklyInsight] 알림 발행 실패(집계는 완료됨): {notify_err}")
+                logger.warning(
+                    f"[WeeklyInsight] 알림 발행 실패(집계는 완료됨): {notify_err}"
+                )
 
     except Exception as e:
         logger.error(f"[WeeklyInsight] 주간 인사이트 생성 실패: {e}")

@@ -5,7 +5,14 @@ from sqlalchemy import or_, cast, String
 from sqlmodel import Session, select, func
 from app.db.session import get_db
 from app.models.wms import (
-    ReturnJob, InventoryUsedItem, Inventory, Order, OrderItem, Book, JobStatusEnum, ubci_grade_from_score,
+    ReturnJob,
+    InventoryUsedItem,
+    Inventory,
+    Order,
+    OrderItem,
+    Book,
+    JobStatusEnum,
+    ubci_grade_from_score,
     AdminAuditLog,
 )
 from app.core.security import RoleChecker, UserRoleEnum
@@ -14,8 +21,9 @@ from app.models.wms import now_kst
 router = APIRouter(
     prefix="/dashboard",
     tags=["Dashboard"],
-    dependencies=[Depends(RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN]))]
+    dependencies=[Depends(RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN]))],
 )
+
 
 @router.get("/kpi")
 def get_kpi(session: Session = Depends(get_db)) -> Dict[str, Any]:
@@ -28,45 +36,78 @@ def get_kpi(session: Session = Depends(get_db)) -> Dict[str, Any]:
     today_start = now_kst().replace(hour=0, minute=0, second=0, microsecond=0)
 
     # 1. 오늘 검수 건수 (ReturnJob)
-    today_inspection = session.exec(
-        select(func.count(ReturnJob.id)).where(ReturnJob.created_at >= today_start)
-    ).one() or 0
+    today_inspection = (
+        session.exec(
+            select(func.count(ReturnJob.id)).where(ReturnJob.created_at >= today_start)
+        ).one()
+        or 0
+    )
 
     # 2. 승인 대기 건수 (HITL_REQUIRED)
-    pending_issues = session.exec(
-        select(func.count(ReturnJob.id)).where(ReturnJob.status == JobStatusEnum.HITL_REQUIRED)
-    ).one() or 0
+    pending_issues = (
+        session.exec(
+            select(func.count(ReturnJob.id)).where(
+                ReturnJob.status == JobStatusEnum.HITL_REQUIRED
+            )
+        ).one()
+        or 0
+    )
 
     # 3. 오늘 입고 완료 수량 (InventoryUsedItem)
-    today_inbound = session.exec(
-        select(func.count(InventoryUsedItem.id)).where(InventoryUsedItem.created_at >= today_start)
-    ).one() or 0
+    today_inbound = (
+        session.exec(
+            select(func.count(InventoryUsedItem.id)).where(
+                InventoryUsedItem.created_at >= today_start
+            )
+        ).one()
+        or 0
+    )
 
     # 4. 오늘 출고 완료 주문 수량 (Order)
-    today_outbound = session.exec(
-        select(func.count(Order.id)).where(Order.created_at >= today_start)
-    ).one() or 0
+    today_outbound = (
+        session.exec(
+            select(func.count(Order.id)).where(Order.created_at >= today_start)
+        ).one()
+        or 0
+    )
 
     # 5. 전체 기간 승인/반려/HITL 이관율 실집계
-    approved = session.exec(
-        select(func.count(ReturnJob.id)).where(ReturnJob.status == JobStatusEnum.APPROVED)
-    ).one() or 0
-    rejected = session.exec(
-        select(func.count(ReturnJob.id)).where(ReturnJob.status == JobStatusEnum.REJECTED)
-    ).one() or 0
+    approved = (
+        session.exec(
+            select(func.count(ReturnJob.id)).where(
+                ReturnJob.status == JobStatusEnum.APPROVED
+            )
+        ).one()
+        or 0
+    )
+    rejected = (
+        session.exec(
+            select(func.count(ReturnJob.id)).where(
+                ReturnJob.status == JobStatusEnum.REJECTED
+            )
+        ).one()
+        or 0
+    )
     decided = approved + rejected + pending_issues
 
     # 6. 관리자 결재를 거친 건을 분리한다.
     #    status만 보면 관리자가 소환해 손으로 승인한 건도 APPROVED에 섞여 "자동 승인율"로
     #    잡힌다. 사람이 개입한 건은 정의상 자동이 아니므로 감사 로그 유무로 갈라낸다.
     def _human_touched(statuses: List[str]) -> int:
-        return session.exec(
-            select(func.count(func.distinct(AdminAuditLog.target_id)))
-            .where(AdminAuditLog.target_type == "RETURN_JOB")
-            .where(AdminAuditLog.target_id.in_(
-                select(cast(ReturnJob.id, String)).where(ReturnJob.status.in_(statuses))
-            ))
-        ).one() or 0
+        return (
+            session.exec(
+                select(func.count(func.distinct(AdminAuditLog.target_id)))
+                .where(AdminAuditLog.target_type == "RETURN_JOB")
+                .where(
+                    AdminAuditLog.target_id.in_(
+                        select(cast(ReturnJob.id, String)).where(
+                            ReturnJob.status.in_(statuses)
+                        )
+                    )
+                )
+            ).one()
+            or 0
+        )
 
     decided_statuses = [
         JobStatusEnum.APPROVED.value,
@@ -91,7 +132,9 @@ def get_kpi(session: Session = Depends(get_db)) -> Dict[str, Any]:
         "pending_issues": pending_issues,
         # approval_rate는 사람 개입분을 포함한 "최종" 승인율이다. AI 단독 성과가 아니다.
         "approval_rate": round(approved / decided * 100, 1) if decided else 0.0,
-        "auto_approval_rate": round(auto_approved / decided * 100, 1) if decided else 0.0,
+        "auto_approval_rate": round(auto_approved / decided * 100, 1)
+        if decided
+        else 0.0,
         "rejection_rate": round(rejected / decided * 100, 1) if decided else 0.0,
         "hitl_rate": round(pending_issues / decided * 100, 1) if decided else 0.0,
         "decided_total": decided,
@@ -134,28 +177,46 @@ def get_inspection_breakdown(session: Session = Depends(get_db)) -> Dict[str, An
             )
         )
     ).all()
-    excluded = session.exec(
-        select(func.count(InventoryUsedItem.id))
-        .where(InventoryUsedItem.item_status == _NOT_YET_INSPECTED)
-    ).one() or 0
+    excluded = (
+        session.exec(
+            select(func.count(InventoryUsedItem.id)).where(
+                InventoryUsedItem.item_status == _NOT_YET_INSPECTED
+            )
+        ).one()
+        or 0
+    )
 
     # 대조표를 한 번에 읽어 LPN마다 쿼리를 날리지 않는다 (재고 수백 건 규모).
     admin_targets = {
-        row for row in session.exec(
-            select(AdminAuditLog.target_id).where(AdminAuditLog.target_type == "RETURN_JOB")
+        row
+        for row in session.exec(
+            select(AdminAuditLog.target_id).where(
+                AdminAuditLog.target_type == "RETURN_JOB"
+            )
         ).all()
     }
-    job_rows = session.exec(select(ReturnJob.id, ReturnJob.status, ReturnJob.agent_logs)).all()
+    job_rows = session.exec(
+        select(ReturnJob.id, ReturnJob.status, ReturnJob.agent_logs)
+    ).all()
     job_status = {str(r[0]): r[1] for r in job_rows}
     job_escalated = {
-        str(r[0]) for r in job_rows
-        if isinstance((r[2] or {}).get("escalations"), list) and (r[2] or {}).get("escalations")
+        str(r[0])
+        for r in job_rows
+        if isinstance((r[2] or {}).get("escalations"), list)
+        and (r[2] or {}).get("escalations")
     }
 
     # 신품은 LPN이 없는 묶음 재고라 수량으로 센다. 단위가 '권'으로 같아 중고와 합산된다.
-    new_stock = session.exec(select(func.coalesce(func.sum(Inventory.quantity), 0))).one() or 0
+    new_stock = (
+        session.exec(select(func.coalesce(func.sum(Inventory.quantity), 0))).one() or 0
+    )
 
-    counts = {"AI_AUTO": 0, "HITL_AI": 0, "HITL_ADMIN": 0, "NEW_FASTTRACK": int(new_stock)}
+    counts = {
+        "AI_AUTO": 0,
+        "HITL_AI": 0,
+        "HITL_ADMIN": 0,
+        "NEW_FASTTRACK": int(new_stock),
+    }
     for it in items:
         job_id = str(it.source_job_id) if it.source_job_id else None
         if job_id and job_id in admin_targets:
@@ -193,7 +254,8 @@ def get_inspection_breakdown(session: Session = Depends(get_db)) -> Dict[str, An
                 # 신품을 뺀 "검수를 실제로 받은 물량" 안에서의 비중. 검수 품질을 볼 때 쓴다.
                 "pct_inspected": (
                     round(counts[k] / used_total * 100, 1)
-                    if used_total and k != "NEW_FASTTRACK" else None
+                    if used_total and k != "NEW_FASTTRACK"
+                    else None
                 ),
             }
             for k in order
@@ -249,14 +311,35 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     # 같은 사건이 화면마다 다르게 표시된다는 이 코드베이스의 원칙대로, 퍼센트는 총합 대비
     # 비율을 여기서 확정해 pct로 함께 내려준다 (value는 그대로 유지 - Pie 조각 크기용).
     grade_total = sum(grade_counts.values())
+
     def _pct(n: int) -> float:
         return round(n / grade_total * 100, 1) if grade_total else 0.0
 
     ubci_grade_data = [
-        {"name": "MINT (95~100점)", "value": grade_counts["MINT"], "pct": _pct(grade_counts["MINT"]), "color": "#10b981"},
-        {"name": "GOOD (85~94점)", "value": grade_counts["GOOD"], "pct": _pct(grade_counts["GOOD"]), "color": "#3b82f6"},
-        {"name": "NORMAL (65~84점)", "value": grade_counts["NORMAL"], "pct": _pct(grade_counts["NORMAL"]), "color": "#f59e0b"},
-        {"name": "REJECT (65점 미만)", "value": grade_counts["REJECT"], "pct": _pct(grade_counts["REJECT"]), "color": "#ef4444"},
+        {
+            "name": "MINT (95~100점)",
+            "value": grade_counts["MINT"],
+            "pct": _pct(grade_counts["MINT"]),
+            "color": "#10b981",
+        },
+        {
+            "name": "GOOD (85~94점)",
+            "value": grade_counts["GOOD"],
+            "pct": _pct(grade_counts["GOOD"]),
+            "color": "#3b82f6",
+        },
+        {
+            "name": "NORMAL (65~84점)",
+            "value": grade_counts["NORMAL"],
+            "pct": _pct(grade_counts["NORMAL"]),
+            "color": "#f59e0b",
+        },
+        {
+            "name": "REJECT (65점 미만)",
+            "value": grade_counts["REJECT"],
+            "pct": _pct(grade_counts["REJECT"]),
+            "color": "#ef4444",
+        },
     ]
     # 파이 중앙 라벨(MINT+GOOD 합산 비율)도 프론트가 "86%"로 하드코딩해두고 있었다 - 실데이터와
     # 무관하게 항상 같은 숫자가 떠 있었다. 여기서 실계산값을 함께 내려 하드코딩을 대체한다.
@@ -271,41 +354,54 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
     # 입고 = 중고 LPN 1행(1권) + 신품 quantity 합, 출고 = order_items.quantity 합.
     volume_data = []
     for i in range(VOLUME_DAYS):
-        day_start = (volume_start + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = (volume_start + timedelta(days=i)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         day_end = day_start + timedelta(days=1)
 
-        used_in = session.exec(
-            select(func.count(InventoryUsedItem.id)).where(
-                InventoryUsedItem.created_at >= day_start,
-                InventoryUsedItem.created_at < day_end,
-            )
-        ).one() or 0
+        used_in = (
+            session.exec(
+                select(func.count(InventoryUsedItem.id)).where(
+                    InventoryUsedItem.created_at >= day_start,
+                    InventoryUsedItem.created_at < day_end,
+                )
+            ).one()
+            or 0
+        )
 
-        new_in = session.exec(
-            select(func.coalesce(func.sum(Inventory.quantity), 0)).where(
-                Inventory.created_at >= day_start,
-                Inventory.created_at < day_end,
-            )
-        ).one() or 0
+        new_in = (
+            session.exec(
+                select(func.coalesce(func.sum(Inventory.quantity), 0)).where(
+                    Inventory.created_at >= day_start,
+                    Inventory.created_at < day_end,
+                )
+            ).one()
+            or 0
+        )
 
         # 주문 건수가 아니라 실제 출고 권수. AUTO_PO(자동 발주)는 입고 예정이라 제외한다.
-        outbound_count = session.exec(
-            select(func.coalesce(func.sum(OrderItem.quantity), 0))
-            .join(Order, Order.id == OrderItem.order_id)
-            .where(
-                Order.created_at >= day_start,
-                Order.created_at < day_end,
-                Order.type != "AUTO_PO",
-            )
-        ).one() or 0
+        outbound_count = (
+            session.exec(
+                select(func.coalesce(func.sum(OrderItem.quantity), 0))
+                .join(Order, Order.id == OrderItem.order_id)
+                .where(
+                    Order.created_at >= day_start,
+                    Order.created_at < day_end,
+                    Order.type != "AUTO_PO",
+                )
+            ).one()
+            or 0
+        )
 
-        volume_data.append({
-            "date": day_start.strftime("%m-%d"),
-            "inbound": int(used_in) + int(new_in),
-            "inbound_used": int(used_in),
-            "inbound_new": int(new_in),
-            "outbound": int(outbound_count),
-        })
+        volume_data.append(
+            {
+                "date": day_start.strftime("%m-%d"),
+                "inbound": int(used_in) + int(new_in),
+                "inbound_used": int(used_in),
+                "inbound_new": int(new_in),
+                "outbound": int(outbound_count),
+            }
+        )
 
     # 카테고리별 실재고 보유 수량 집계 (중고 / 신품 분리).
     #
@@ -336,13 +432,22 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
 
     totals: Dict[str, Dict[str, int]] = {}
     for category, count in used_rows:
-        totals.setdefault(category or "GENERAL", {"used": 0, "new": 0})["used"] += int(count or 0)
+        totals.setdefault(category or "GENERAL", {"used": 0, "new": 0})["used"] += int(
+            count or 0
+        )
     for category, qty in new_rows:
-        totals.setdefault(category or "GENERAL", {"used": 0, "new": 0})["new"] += int(qty or 0)
+        totals.setdefault(category or "GENERAL", {"used": 0, "new": 0})["new"] += int(
+            qty or 0
+        )
 
     category_data = sorted(
         (
-            {"name": name, "used": v["used"], "new": v["new"], "count": v["used"] + v["new"]}
+            {
+                "name": name,
+                "used": v["used"],
+                "new": v["new"],
+                "count": v["used"] + v["new"],
+            }
             for name, v in totals.items()
         ),
         key=lambda r: r["count"],
@@ -355,6 +460,7 @@ def get_dashboard_charts(session: Session = Depends(get_db)) -> Dict[str, Any]:
         "ubci_mint_good_pct": mint_good_pct,
         "category_data": category_data,
     }
+
 
 @router.get("/logs")
 def get_dashboard_logs(
@@ -379,18 +485,27 @@ def get_dashboard_logs(
 
     logs = []
     for job, book in rows:
-        grade = ubci_grade_from_score(job.ubci_score) if job.ubci_score is not None else None
-        logs.append({
-            "id": str(job.id),
-            "transaction_type": "INBOUND_INSPECTION" if job.status == JobStatusEnum.APPROVED else "HITL_PENDING",
-            # 실제 도서명을 쓴다. 도서를 특정하지 못한 건은 지어내지 않고 null로 둔다.
-            "book_title": book.title if book else None,
-            "condition_grade": grade,
-            "quantity_change": 1,
-            "date": job.created_at.isoformat() if job.created_at else None,
-        })
+        grade = (
+            ubci_grade_from_score(job.ubci_score)
+            if job.ubci_score is not None
+            else None
+        )
+        logs.append(
+            {
+                "id": str(job.id),
+                "transaction_type": "INBOUND_INSPECTION"
+                if job.status == JobStatusEnum.APPROVED
+                else "HITL_PENDING",
+                # 실제 도서명을 쓴다. 도서를 특정하지 못한 건은 지어내지 않고 null로 둔다.
+                "book_title": book.title if book else None,
+                "condition_grade": grade,
+                "quantity_change": 1,
+                "date": job.created_at.isoformat() if job.created_at else None,
+            }
+        )
 
     return logs
+
 
 @router.get("/weekly-insights")
 def get_weekly_insights(session: Session = Depends(get_db)) -> Dict[str, Any]:
@@ -403,7 +518,9 @@ def get_weekly_insights(session: Session = Depends(get_db)) -> Dict[str, Any]:
     누가 언제 방문하든 같은 주차는 같은 값을 낸다.
     """
     from app.domains.dashboard.weekly_insight_service import (
-        build_weekly_insight, iso_week_bounds, serialize_weekly_insight,
+        build_weekly_insight,
+        iso_week_bounds,
+        serialize_weekly_insight,
     )
     from app.models.wms import WeeklyInsight
 

@@ -10,7 +10,13 @@ class AppException(HTTPException):
 
     error_code: str = "UNKNOWN"
 
-    def __init__(self, status_code: int, detail: str, error_code: str = "UNKNOWN", headers: dict | None = None):
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        error_code: str = "UNKNOWN",
+        headers: dict | None = None,
+    ):
         super().__init__(status_code=status_code, detail=detail, headers=headers)
         self.error_code = error_code
 
@@ -19,33 +25,40 @@ class BadRequestException(HTTPException):
     def __init__(self, detail: str = "Bad Request"):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
+
 class NotFoundException(HTTPException):
     def __init__(self, detail: str = "Not Found"):
         super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
 
 class UserAlreadyExistsException(BadRequestException):
     def __init__(self):
         super().__init__(detail="Employee ID already registered")
 
+
 class EmailAlreadyExistsException(BadRequestException):
     def __init__(self):
         super().__init__(detail="Email already registered")
+
 
 class InvalidInvitationCodeException(BadRequestException):
     def __init__(self):
         super().__init__(detail="Invalid invitation code")
 
+
 class UnauthorizedException(HTTPException):
     def __init__(self, detail: str = "Unauthorized"):
         super().__init__(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail=detail,
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
+
 
 class ForbiddenException(HTTPException):
     def __init__(self, detail: str = "Forbidden"):
         super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
 
 class InvalidCredentialsException(UnauthorizedException):
     error_code = "AUTH_INVALID_CREDENTIALS"
@@ -55,11 +68,14 @@ class InvalidCredentialsException(UnauthorizedException):
         super().__init__(detail="사번 또는 비밀번호가 일치하지 않습니다.")
         self.remaining_attempts = remaining_attempts
 
+
 class InactiveAccountException(ForbiddenException):
     error_code = "AUTH_ACCOUNT_INACTIVE"
 
     def __init__(self):
-        super().__init__(detail="비활성 상태의 계정입니다. 관리자에게 계정 활성화를 요청하세요.")
+        super().__init__(
+            detail="비활성 상태의 계정입니다. 관리자에게 계정 활성화를 요청하세요."
+        )
 
 
 class PasswordPolicyViolationException(AppException):

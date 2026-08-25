@@ -6,6 +6,7 @@
   - 중고 판매가 : 우리가 최종 고객에게 파는 금액. calculate_used_retail_price()
     (고객 보증서 화면에 노출되는 값이며, 당연히 매입가보다 높다)
 """
+
 from typing import Any, Dict, Optional
 
 # ==========================================
@@ -19,12 +20,29 @@ from typing import Any, Dict, Optional
 # 한글/영문/변형 표기를 내부 표준 키로 모으는 정규화 계층을 둔다.
 _CATEGORY_ALIASES = {
     "IT": [
-        "it", "컴퓨터", "컴퓨터/모바일", "컴퓨터/it", "it/컴퓨터", "모바일",
-        "프로그래밍", "그래픽/멀티미디어", "네트워크", "os/데이터베이스",
+        "it",
+        "컴퓨터",
+        "컴퓨터/모바일",
+        "컴퓨터/it",
+        "it/컴퓨터",
+        "모바일",
+        "프로그래밍",
+        "그래픽/멀티미디어",
+        "네트워크",
+        "os/데이터베이스",
     ],
     "Textbook": [
-        "textbook", "교재", "대학교재", "대학교재/전문서적", "수험서", "수험서/자격증",
-        "고등학교참고서", "중학교참고서", "초등학교참고서", "외국어", "자격증",
+        "textbook",
+        "교재",
+        "대학교재",
+        "대학교재/전문서적",
+        "수험서",
+        "수험서/자격증",
+        "고등학교참고서",
+        "중학교참고서",
+        "초등학교참고서",
+        "외국어",
+        "자격증",
     ],
     "Economy": ["economy", "경제경영", "경제/경영", "경영", "재테크", "투자"],
     "Self-help": ["self-help", "자기계발", "인문학", "인문", "심리", "철학"],
@@ -118,8 +136,8 @@ TREND_SENSITIVE_CATEGORIES = ["Comic", "Novel", "Magazine", "Children"]
 # [명세] 08_Dynamic_Pricing §2-② — 교재는 학기/방학 수요 절벽이 크고, IT 서적은 비수기가 없다.
 # [수정 이력] 명세서에는 정의되어 있었으나 실제 판매가 산정에는 반영된 적이 없었다.
 CATEGORY_SEASONALITY: Dict[str, float] = {
-    "Textbook": 1.25,   # 학기 성수기
-    "IT": 1.05,         # 상시 고수요
+    "Textbook": 1.25,  # 학기 성수기
+    "IT": 1.05,  # 상시 고수요
     "Economy": 1.02,
     "Self-help": 1.00,
     "Novel": 1.00,
@@ -147,7 +165,9 @@ DESCRIPTION_PREMIUM_KEYWORDS = {
 MAX_DESCRIPTION_PREMIUM = 0.15  # 프리미엄 상한 (+15%)
 
 
-def calculate_description_premium(description: Optional[str], title: Optional[str] = None) -> float:
+def calculate_description_premium(
+    description: Optional[str], title: Optional[str] = None
+) -> float:
     """
     도서 설명/제목에서 희소성 키워드를 찾아 프리미엄 계수(0.0 ~ 0.15)를 산출한다.
     키워드 기반 결정론적 연산이며 LLM을 쓰지 않는다(같은 도서는 항상 같은 값).
@@ -231,7 +251,7 @@ def calculate_used_retail_price(
     # 유행 민감 카테고리만 장기 체류 감가를 받는다 (도서는 비부패성 자산이므로 상한 10%).
     if canonical in TREND_SENSITIVE_CATEGORIES and days_in_inventory > 0:
         dwell_discount = min(days_in_inventory / 365.0 * 0.10, 0.10)
-        price *= (1.0 - dwell_discount)
+        price *= 1.0 - dwell_discount
 
     # 정가를 넘는 중고가는 어떤 조합에서도 성립하지 않는다 (희소본이어도 정가 상한 유지).
     price = min(price, float(list_price or 0.0))
@@ -273,20 +293,30 @@ def build_pricing_breakdown(
         "b2b_supply_price": b2b,
         "category_raw": category,
         "category_normalized": canonical,
-        "category_retail_rate": USED_RETAIL_BASE_RATE.get(canonical, USED_RETAIL_BASE_RATE["General"]),
-        "category_b2b_rate": CATEGORY_BASE_RATE.get(canonical, CATEGORY_BASE_RATE["General"]),
+        "category_retail_rate": USED_RETAIL_BASE_RATE.get(
+            canonical, USED_RETAIL_BASE_RATE["General"]
+        ),
+        "category_b2b_rate": CATEGORY_BASE_RATE.get(
+            canonical, CATEGORY_BASE_RATE["General"]
+        ),
         "condition_factor": round(_condition_factor(ubci_score), 4),
         "seasonality_index": seasonality,
-        "seasonality_applied": round(1.0 + (seasonality - 1.0) * SEASONALITY_INFLUENCE, 4),
+        "seasonality_applied": round(
+            1.0 + (seasonality - 1.0) * SEASONALITY_INFLUENCE, 4
+        ),
         "description_premium": premium,
         "days_in_inventory": days_in_inventory,
         "dwell_discount": round(dwell_discount, 4),
         # 정가 대비 총 감가율 (고객 화면에 "정가 대비 -30%"로 표기)
-        "discount_rate_vs_list": round(1.0 - (retail / list_price), 4) if list_price > 0 else 0.0,
+        "discount_rate_vs_list": round(1.0 - (retail / list_price), 4)
+        if list_price > 0
+        else 0.0,
     }
 
 
-def calculate_dynamic_discount_rate(ubci_score: float, days_in_inventory: int, category: str) -> float:
+def calculate_dynamic_discount_rate(
+    ubci_score: float, days_in_inventory: int, category: str
+) -> float:
     """
     악성 재고 방어 및 판매 확률 극대화를 위한 동적 할인율(0.05 ~ 0.85)을 계산한다.
     도서는 비부패성 자산이므로 유행 민감 장르에 한해서만 체류 페널티를 부과한다.
@@ -301,8 +331,8 @@ def calculate_dynamic_discount_rate(ubci_score: float, days_in_inventory: int, c
 
     score = float(ubci_score if ubci_score is not None else 85)
     if score < 70:
-        base_discount += 0.20   # FAIR / POOR
+        base_discount += 0.20  # FAIR / POOR
     elif score < 85:
-        base_discount += 0.10   # NORMAL
+        base_discount += 0.10  # NORMAL
 
     return round(max(0.05, min(0.85, base_discount)), 2)

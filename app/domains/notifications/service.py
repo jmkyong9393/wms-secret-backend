@@ -12,6 +12,7 @@ WMS 전역 알림 발행 서비스.
 [중요] 알림 발행 실패가 업무 트랜잭션을 깨뜨려서는 안 된다. 모든 함수는 예외를 삼키고
 경고 로그만 남긴다 (알림은 부가 기능이지 업무의 전제 조건이 아니다).
 """
+
 from __future__ import annotations
 
 import json
@@ -26,20 +27,60 @@ NOTIFICATIONS_CHANNEL = "notifications:global"
 
 # 이벤트 종류별 기본 표시 속성 (프론트가 뱃지 문구/색을 지어내지 않도록 백엔드가 확정한다)
 _TYPE_PRESETS: Dict[str, Dict[str, str]] = {
-    "AGENT_ERROR": {"category": "에이전트 이상감지", "severity": "CRITICAL", "link_url": "/admin/hitl"},
-    "HITL_REQUIRED": {"category": "정책상 관리자 검토", "severity": "WARN", "link_url": "/admin/hitl"},
-    "RESTOCK_PROPOSAL": {"category": "자동발주 알림", "severity": "INFO", "link_url": "/admin/po"},
-    "FDS_ALERT": {"category": "FDS 이상거래", "severity": "CRITICAL", "link_url": "/admin/fds"},
-    "INSPECTION_DONE": {"category": "검수 완료", "severity": "INFO", "link_url": "/inspections"},
+    "AGENT_ERROR": {
+        "category": "에이전트 이상감지",
+        "severity": "CRITICAL",
+        "link_url": "/admin/hitl",
+    },
+    "HITL_REQUIRED": {
+        "category": "정책상 관리자 검토",
+        "severity": "WARN",
+        "link_url": "/admin/hitl",
+    },
+    "RESTOCK_PROPOSAL": {
+        "category": "자동발주 알림",
+        "severity": "INFO",
+        "link_url": "/admin/po",
+    },
+    "FDS_ALERT": {
+        "category": "FDS 이상거래",
+        "severity": "CRITICAL",
+        "link_url": "/admin/fds",
+    },
+    "INSPECTION_DONE": {
+        "category": "검수 완료",
+        "severity": "INFO",
+        "link_url": "/inspections",
+    },
     # [2026-08-08 신설] 출고 파이프라인 3사건. 이전에는 orders/picking.py의
     # publish_outbound_notification()이 이 서비스를 거치지 않고 Redis에만 직접 발행해
     # DB에 남지 않았다 (아래 emit_outbound_event 수정 이력 참고).
-    "PICKING_INSTRUCTION_ISSUED": {"category": "출고 피킹 지시", "severity": "INFO", "link_url": "/worker/outbound"},
-    "PICKING_COMPLETED": {"category": "피킹 완료", "severity": "INFO", "link_url": "/admin/outbound"},
-    "WAYBILL_ISSUED": {"category": "송장 발급", "severity": "INFO", "link_url": "/worker/outbound"},
-    "OUTBOUND_SHIPPED": {"category": "출고 완료", "severity": "INFO", "link_url": "/admin/outbound"},
+    "PICKING_INSTRUCTION_ISSUED": {
+        "category": "출고 피킹 지시",
+        "severity": "INFO",
+        "link_url": "/worker/outbound",
+    },
+    "PICKING_COMPLETED": {
+        "category": "피킹 완료",
+        "severity": "INFO",
+        "link_url": "/admin/outbound",
+    },
+    "WAYBILL_ISSUED": {
+        "category": "송장 발급",
+        "severity": "INFO",
+        "link_url": "/worker/outbound",
+    },
+    "OUTBOUND_SHIPPED": {
+        "category": "출고 완료",
+        "severity": "INFO",
+        "link_url": "/admin/outbound",
+    },
     # [2026-08-12 신설] 주간 인사이트 배치(Celery Beat 00:05 KST)가 AI 서사와 함께 올린다.
-    "WEEKLY_INSIGHT": {"category": "주간 인사이트", "severity": "INFO", "link_url": "/admin/dashboard"},
+    "WEEKLY_INSIGHT": {
+        "category": "주간 인사이트",
+        "severity": "INFO",
+        "link_url": "/admin/dashboard",
+    },
 }
 
 
@@ -51,7 +92,9 @@ def _publish_to_channel(payload: Dict[str, Any]) -> None:
 
         client = sync_redis.Redis.from_url(REDIS_URL, decode_responses=True)
         try:
-            client.publish(NOTIFICATIONS_CHANNEL, json.dumps(payload, ensure_ascii=False))
+            client.publish(
+                NOTIFICATIONS_CHANNEL, json.dumps(payload, ensure_ascii=False)
+            )
         finally:
             client.close()
     except Exception as e:
@@ -137,7 +180,10 @@ def emit(
 # 호출부가 문구를 각자 지어내면 같은 사건이 화면마다 다르게 표시되므로,
 # 사건 유형별 문구를 여기서 한 번만 정의한다.
 
-def notify_hitl_required(job_id: str, book_title: str, ubci_score: Optional[int], reason: str = "") -> None:
+
+def notify_hitl_required(
+    job_id: str, book_title: str, ubci_score: Optional[int], reason: str = ""
+) -> None:
     emit(
         type="HITL_REQUIRED",
         title="관리자 수동 검수 필요",
@@ -163,7 +209,9 @@ def notify_agent_error(job_id: str, error_message: str) -> None:
     )
 
 
-def notify_restock_proposal(book_title: str, qty: int, proposal_id: Optional[str] = None) -> None:
+def notify_restock_proposal(
+    book_title: str, qty: int, proposal_id: Optional[str] = None
+) -> None:
     emit(
         type="RESTOCK_PROPOSAL",
         title="대체 발주 추천 생성",
@@ -206,7 +254,9 @@ def notify_outbound_event(
     )
 
 
-def notify_inspection_done(lpn: str, book_title: str, grade: str, ubci_score: Optional[int]) -> None:
+def notify_inspection_done(
+    lpn: str, book_title: str, grade: str, ubci_score: Optional[int]
+) -> None:
     emit(
         type="INSPECTION_DONE",
         title=f"AI 검수 완료 ({grade})",

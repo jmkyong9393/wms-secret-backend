@@ -30,6 +30,7 @@ DB에 심어 스캔이 정직하게 탐지하도록 한다.
     python -m app.scripts.seed_fds_demo --purge --apply    # 심은 것 되돌리기
     python -m app.scripts.seed_fds_demo --purge --only r3 --apply  # R3만 되돌리기
 """
+
 import sys
 from datetime import timedelta
 from uuid import uuid4
@@ -38,7 +39,13 @@ from sqlmodel import Session, select
 
 from app.db.session import engine
 from app.models.wms import (
-    AdminAuditLog, Book, Order, OrderItem, ReturnJob, User, now_kst,
+    AdminAuditLog,
+    Book,
+    Order,
+    OrderItem,
+    ReturnJob,
+    User,
+    now_kst,
 )
 
 APPLY = "--apply" in sys.argv
@@ -56,6 +63,7 @@ for _i, _a in enumerate(sys.argv):
 def _wants(rule: str) -> bool:
     return ONLY is None or ONLY == rule
 
+
 # 심은 행 식별 마커. AdminAuditLog는 상태 필드에, Order는 고객명에 붙인다.
 SEED_MARKER = "[FDS_DEMO_SEED]"
 SEED_CUSTOMER = f"세종문고 야간발주점 {SEED_MARKER}"
@@ -71,12 +79,20 @@ _TWO_STEPS_UP = {"REJECT": "GOOD", "NORMAL": "MINT"}
 
 
 def purge(db: Session) -> None:
-    logs = db.exec(
-        select(AdminAuditLog).where(AdminAuditLog.new_state.like(f"%{SEED_MARKER}%"))
-    ).all() if ONLY is None or ONLY in ("r1", "r2") else []
-    orders = db.exec(
-        select(Order).where(Order.customer_name.like(f"%{SEED_MARKER}%"))
-    ).all() if ONLY is None or ONLY == "r3" else []
+    logs = (
+        db.exec(
+            select(AdminAuditLog).where(
+                AdminAuditLog.new_state.like(f"%{SEED_MARKER}%")
+            )
+        ).all()
+        if ONLY is None or ONLY in ("r1", "r2")
+        else []
+    )
+    orders = (
+        db.exec(select(Order).where(Order.customer_name.like(f"%{SEED_MARKER}%"))).all()
+        if ONLY is None or ONLY == "r3"
+        else []
+    )
 
     print(f"제거 대상: 감사로그 {len(logs)}건 / 주문 {len(orders)}건")
     if not APPLY:
@@ -103,7 +119,9 @@ def main() -> None:
         if not admin:
             print(f"관리자를 찾을 수 없습니다: {TARGET_ADMIN}")
             return
-        print(f"적발 대상 관리자: {admin.employee_id}({admin.name})  모드: {'APPLY' if APPLY else 'DRY-RUN'}")
+        print(
+            f"적발 대상 관리자: {admin.employee_id}({admin.name})  모드: {'APPLY' if APPLY else 'DRY-RUN'}"
+        )
 
         now = now_kst()
         planned = []
@@ -113,51 +131,65 @@ def main() -> None:
         # 짧은 결재를 심으면 된다. 종전 누적 평균 방식이었다면 같은 효과를 내는 데
         # 1,325건이 필요했다 - 지표를 무력화하는 방식이라 채택하지 않았다.
         from app.domains.fds.service import (
-            BLIND_APPROVAL_MIN_SAMPLES, BLIND_APPROVAL_WINDOW_DAYS,
+            BLIND_APPROVAL_MIN_SAMPLES,
+            BLIND_APPROVAL_WINDOW_DAYS,
         )
 
         win_since = now - timedelta(days=BLIND_APPROVAL_WINDOW_DAYS)
         in_window = [
-            x for x in db.exec(
+            x
+            for x in db.exec(
                 select(AdminAuditLog).where(AdminAuditLog.admin_id == admin.id)
             ).all()
             if x.review_duration_ms and x.created_at and x.created_at >= win_since
         ]
         r1_jobs = db.exec(
-            select(ReturnJob).where(ReturnJob.status.in_(["APPROVED", "REJECTED"])).limit(12)
+            select(ReturnJob)
+            .where(ReturnJob.status.in_(["APPROVED", "REJECTED"]))
+            .limit(12)
         ).all()
 
         r1_rows = []
         for idx, job in enumerate(r1_jobs):
-            r1_rows.append(AdminAuditLog(
-                id=uuid4(),
-                admin_id=admin.id,
-                target_type="RETURN_JOB",
-                target_id=str(job.id),
-                action="APPROVE_NORMAL",
-                previous_state=f"HITL_REQUIRED {SEED_MARKER}",
-                new_state=f"APPROVED {SEED_MARKER}",
-                target_grade="NORMAL",
-                primary_reason_code="CLEAN",
-                review_duration_ms=380 + (idx % 5) * 90,  # 380~740ms (건당 검토시간)
-                created_at=now - timedelta(hours=5, minutes=idx * 2),
-            ))
+            r1_rows.append(
+                AdminAuditLog(
+                    id=uuid4(),
+                    admin_id=admin.id,
+                    target_type="RETURN_JOB",
+                    target_id=str(job.id),
+                    action="APPROVE_NORMAL",
+                    previous_state=f"HITL_REQUIRED {SEED_MARKER}",
+                    new_state=f"APPROVED {SEED_MARKER}",
+                    target_grade="NORMAL",
+                    primary_reason_code="CLEAN",
+                    review_duration_ms=380
+                    + (idx % 5) * 90,  # 380~740ms (건당 검토시간)
+                    created_at=now - timedelta(hours=5, minutes=idx * 2),
+                )
+            )
         # 룰은 "임계 미만 비율"을 보므로(평균이 아니라) 같은 기준으로 예측한다.
         from app.domains.fds.service import (
-            BLIND_APPROVAL_MIN_FAST_RATIO, BLIND_APPROVAL_THRESHOLD_MS,
+            BLIND_APPROVAL_MIN_FAST_RATIO,
+            BLIND_APPROVAL_THRESHOLD_MS,
         )
 
         win_ms = [x.review_duration_ms for x in in_window]
         all_ms = win_ms + [r.review_duration_ms for r in r1_rows]
         fast_n = len([d for d in all_ms if d < BLIND_APPROVAL_THRESHOLD_MS])
         ratio = fast_n / max(1, len(all_ms))
-        verdict = "적발됨" if (len(all_ms) >= BLIND_APPROVAL_MIN_SAMPLES
-                            and ratio >= BLIND_APPROVAL_MIN_FAST_RATIO) else "미적발"
+        verdict = (
+            "적발됨"
+            if (
+                len(all_ms) >= BLIND_APPROVAL_MIN_SAMPLES
+                and ratio >= BLIND_APPROVAL_MIN_FAST_RATIO
+            )
+            else "미적발"
+        )
         planned.append(
             f"R1 블라인드 결재: 감사로그 {len(r1_rows)}건 "
             f"(관측창 {BLIND_APPROVAL_WINDOW_DAYS}일 기존 {len(win_ms)}건 + 신규 {len(r1_rows)}건 "
-            f"-> 1초 미만 {fast_n}/{len(all_ms)}건 = {ratio*100:.0f}%, "
-            f"기준 {BLIND_APPROVAL_MIN_FAST_RATIO*100:.0f}% -> {verdict})"
+            f"-> 1초 미만 {fast_n}/{len(all_ms)}건 = {ratio * 100:.0f}%, "
+            f"기준 {BLIND_APPROVAL_MIN_FAST_RATIO * 100:.0f}% -> {verdict})"
         )
 
         # ---------- R2: 등급 오버라이드 남용 (2단계 상향 2건) ----------
@@ -171,22 +203,26 @@ def main() -> None:
             if sg not in _TWO_STEPS_UP:
                 continue
             up = _TWO_STEPS_UP[sg]
-            r2_rows.append(AdminAuditLog(
-                id=uuid4(),
-                admin_id=admin.id,
-                target_type="RETURN_JOB",
-                target_id=str(job.id),
-                action="APPROVE_UPGRADE",
-                previous_state=f"{sg} {SEED_MARKER}",
-                new_state=f"{up} {SEED_MARKER}",
-                target_grade=up,
-                primary_reason_code="MANUAL_OVERRIDE",
-                review_duration_ms=520,
-                created_at=now - timedelta(hours=3, minutes=len(r2_rows) * 11),
-            ))
+            r2_rows.append(
+                AdminAuditLog(
+                    id=uuid4(),
+                    admin_id=admin.id,
+                    target_type="RETURN_JOB",
+                    target_id=str(job.id),
+                    action="APPROVE_UPGRADE",
+                    previous_state=f"{sg} {SEED_MARKER}",
+                    new_state=f"{up} {SEED_MARKER}",
+                    target_grade=up,
+                    primary_reason_code="MANUAL_OVERRIDE",
+                    review_duration_ms=520,
+                    created_at=now - timedelta(hours=3, minutes=len(r2_rows) * 11),
+                )
+            )
             if len(r2_rows) >= 3:
                 break
-        planned.append(f"R2 등급 오버라이드: 감사로그 {len(r2_rows)}건 (2단계 상향, 기준 2건 이상)")
+        planned.append(
+            f"R2 등급 오버라이드: 감사로그 {len(r2_rows)}건 (2단계 상향, 기준 2건 이상)"
+        )
 
         # ---------- R3: 야간 대량 주문 (평소 대비 이례적인 규모) ----------
         # 초안은 야간 대형 주문 2건만 심었는데 **둘 다 적발되지 않았다.**
@@ -200,21 +236,43 @@ def main() -> None:
         # (1) 평소 거래 이력 - 주간, 소액. 기준선을 만든다.
         for n, price in enumerate([620_000, 740_000, 580_000, 810_000]):
             when = (now - timedelta(days=n + 2)).replace(hour=14, minute=20 + n)
-            r3_orders.append((Order(
-                id=uuid4(), customer_name=SEED_CUSTOMER, type="B2B_ORDER",
-                total_price=float(price), status="SHIPPED",
-                created_at=when, updated_at=when,
-            ), books, False))
+            r3_orders.append(
+                (
+                    Order(
+                        id=uuid4(),
+                        customer_name=SEED_CUSTOMER,
+                        type="B2B_ORDER",
+                        total_price=float(price),
+                        status="SHIPPED",
+                        created_at=when,
+                        updated_at=when,
+                    ),
+                    books,
+                    False,
+                )
+            )
 
         # (2) 이례 주문 - 야간 + 절대하한 초과 + 평소 평균의 3배 초과
         night_when = (now - timedelta(days=1)).replace(hour=2, minute=40)
-        r3_orders.append((Order(
-            id=uuid4(), customer_name=SEED_CUSTOMER, type="B2B_ORDER",
-            total_price=6_300_000.0, status="SHIPPED",   # 피킹 대기열을 건드리지 않는다
-            created_at=night_when, updated_at=night_when,
-        ), books, True))
+        r3_orders.append(
+            (
+                Order(
+                    id=uuid4(),
+                    customer_name=SEED_CUSTOMER,
+                    type="B2B_ORDER",
+                    total_price=6_300_000.0,
+                    status="SHIPPED",  # 피킹 대기열을 건드리지 않는다
+                    created_at=night_when,
+                    updated_at=night_when,
+                ),
+                books,
+                True,
+            )
+        )
 
-        baseline = sum(o.total_price for o, _b, is_night in r3_orders if not is_night) / 4
+        baseline = (
+            sum(o.total_price for o, _b, is_night in r3_orders if not is_night) / 4
+        )
         planned.append(
             f"R3 야간 대량주문: 주문 {len(r3_orders)}건 (평소 주간 4건 평균 {baseline:,.0f}원 "
             f"+ 야간 이례 1건 6,300,000원). 하한 200만원 통과 & 평소 대비 "
@@ -226,7 +284,9 @@ def main() -> None:
 
         if not APPLY:
             print("\nDRY-RUN입니다. 실제 반영하려면 --apply 를 붙이세요.")
-            print("반영 후 FDS 스캔(POST /api/v1/fds/scan)을 실행해야 적발 리포트가 생성됩니다.")
+            print(
+                "반영 후 FDS 스캔(POST /api/v1/fds/scan)을 실행해야 적발 리포트가 생성됩니다."
+            )
             return
 
         if not _wants("r1"):
@@ -242,12 +302,19 @@ def main() -> None:
             db.add(order)
             db.flush()
             for b in bks[:3]:
-                db.add(OrderItem(
-                    order_id=order.id, book_id=b.id, quantity=8,
-                    unit_price=float(b.base_price or 25000), condition_pref="NEW",
-                ))
+                db.add(
+                    OrderItem(
+                        order_id=order.id,
+                        book_id=b.id,
+                        quantity=8,
+                        unit_price=float(b.base_price or 25000),
+                        condition_pref="NEW",
+                    )
+                )
         db.commit()
-        print(f"\n완료: 감사로그 {len(r1_rows) + len(r2_rows)}건 + 주문 {len(r3_orders)}건 적재")
+        print(
+            f"\n완료: 감사로그 {len(r1_rows) + len(r2_rows)}건 + 주문 {len(r3_orders)}건 적재"
+        )
         print("이어서 FDS 스캔을 실행하세요: POST /api/v1/fds/scan")
 
 

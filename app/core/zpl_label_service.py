@@ -12,6 +12,7 @@ QR에는 LPN 원문 대신 /lpn/{lpn} URL을 넣어 작업자 스캔과 소비�
 
 실측 인쇄에서 테두리가 물리적 왼쪽 가장자리에 붙어 보인다는 피드백으로 _VISUAL_INSET_DOTS를 추가했다. 제조사 여백은 "인쇄 가능한 최소 여백"이지 "보기 좋은 여백"이 아니므로, 최소 여백 위에 순수 미관용 여유를 더 얹는다. 같은 실측에서 12dot(≈1.5mm) 폰트로 찍은 하단 문구 ("SCAN FOR ITEM OR CERTIFICATE")의 F/R 획이 열전사 헤드 해상도에서 뭉개져 읽기 어려웠던 것도 확인해, 하단 문구 폰트를 15dot로 키웠다.
 """
+
 from decimal import Decimal
 from pathlib import Path
 
@@ -21,7 +22,9 @@ from app.core.config import settings
 # 프린터 내장 폰트(A0)는 한글 글리프가 없어 한글 줄이 통째로 누락되거나 깨진다
 # 비ASCII 텍스트는 서버에서 비트맵(^GFA)으로 렌더한다.
 # Bold를 쓰는 이유: 203dpi 열전사에서 Regular의 가는 획이 끊겨 보인다 (실측 피드백).
-_KOREAN_FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NanumGothic-Bold.ttf"
+_KOREAN_FONT_PATH = (
+    Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NanumGothic-Bold.ttf"
+)
 
 
 def build_certificate_qr_url(lpn_barcode: str) -> str:
@@ -72,7 +75,9 @@ def _build_label_header() -> list[str]:
     """50mm * 31mm 라벨에 공통으로 적용할 ZPL 헤더다. 인쇄 여백 + 미관용 인셋만큼 원점을 민다."""
     label_width = _mm_to_dots(settings.LABEL_PRINTER_LABEL_WIDTH_MM)
     label_height = _mm_to_dots(settings.LABEL_PRINTER_LABEL_HEIGHT_MM)
-    margin_left = _mm_to_dots(settings.LABEL_PRINTER_MARGIN_LEFT_MM) + _VISUAL_INSET_DOTS
+    margin_left = (
+        _mm_to_dots(settings.LABEL_PRINTER_MARGIN_LEFT_MM) + _VISUAL_INSET_DOTS
+    )
     margin_top = _mm_to_dots(settings.LABEL_PRINTER_MARGIN_TOP_MM) + _VISUAL_INSET_DOTS
 
     return [

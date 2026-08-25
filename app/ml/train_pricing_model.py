@@ -15,6 +15,7 @@
 
 실행: python -m app.ml.train_pricing_model
 """
+
 from __future__ import annotations
 
 import json
@@ -26,6 +27,7 @@ _KST = timezone(timedelta(hours=9))
 
 def _now_kst() -> datetime:
     return datetime.now(_KST).replace(tzinfo=None)
+
 
 from pathlib import Path
 
@@ -93,12 +95,15 @@ def train(verbose: bool = True) -> dict:
         eval_metric="mae",
     )
     if verbose:
-        print(f"[학습 데이터] 표본 {N_SAMPLES:,}건 (train {split:,} / valid {len(X)-split:,})")
+        print(
+            f"[학습 데이터] 표본 {N_SAMPLES:,}건 (train {split:,} / valid {len(X) - split:,})"
+        )
         print(f"[특징] discount_rate, ubci_score, seasonality, dwell_days")
         print(f"[하이퍼파라미터] n_estimators=400, max_depth=5, lr=0.06, seed={SEED}")
         print("[학습 시작]")
     model.fit(
-        X[:split], y[:split],
+        X[:split],
+        y[:split],
         eval_set=[(X[:split], y[:split]), (X[split:], y[split:])],
         verbose=50 if verbose else False,
     )
@@ -112,19 +117,25 @@ def train(verbose: bool = True) -> dict:
     # 선형 산식만 썼을 때의 오차 — 모델이 무엇을 개선했는지 대조군
     d, u, s, dd = X[split:, 0], X[split:, 1], X[split:, 2], X[split:, 3]
     linear_only = np.clip(
-        0.30 + d * 0.80 - ((100 - u) / 100) * 0.60 + (s - 1) * 0.40
+        0.30
+        + d * 0.80
+        - ((100 - u) / 100) * 0.60
+        + (s - 1) * 0.40
         - np.minimum(dd, 365) / 365 * 0.10,
-        0.05, 0.98,
+        0.05,
+        0.98,
     )
     baseline_mae = float(np.mean(np.abs(linear_only - actual)))
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     model.save_model(MODEL_PATH)
 
-    importance = dict(zip(
-        ["discount_rate", "ubci_score", "seasonality", "dwell_days"],
-        [round(float(v), 4) for v in model.feature_importances_],
-    ))
+    importance = dict(
+        zip(
+            ["discount_rate", "ubci_score", "seasonality", "dwell_days"],
+            [round(float(v), 4) for v in model.feature_importances_],
+        )
+    )
     curve = model.evals_result()
     train_curve = curve["validation_0"]["mae"]
     valid_curve = curve["validation_1"]["mae"]
@@ -140,8 +151,12 @@ def train(verbose: bool = True) -> dict:
         "valid_size": len(X) - split,
         "seed": SEED,
         "hyperparams": {
-            "n_estimators": 400, "max_depth": 5, "learning_rate": 0.06,
-            "subsample": 0.9, "colsample_bytree": 0.9, "reg_lambda": 1.0,
+            "n_estimators": 400,
+            "max_depth": 5,
+            "learning_rate": 0.06,
+            "subsample": 0.9,
+            "colsample_bytree": 0.9,
+            "reg_lambda": 1.0,
         },
         "metrics": {"mae": round(mae, 5), "rmse": round(rmse, 5), "r2": round(r2, 5)},
         "baseline_linear_mae": round(baseline_mae, 5),
@@ -152,12 +167,16 @@ def train(verbose: bool = True) -> dict:
             "valid_mae": [round(v, 5) for v in valid_curve],
         },
     }
-    META_PATH.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    META_PATH.write_text(
+        json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     if verbose:
         print(f"\n[검증 결과] MAE {mae:.5f} / RMSE {rmse:.5f} / R² {r2:.5f}")
         print(f"[대조군] 선형 산식 단독 MAE {baseline_mae:.5f}")
-        print(f"[개선율] {(baseline_mae-mae)/baseline_mae*100:.1f}% (선형 대비 오차 감소)")
+        print(
+            f"[개선율] {(baseline_mae - mae) / baseline_mae * 100:.1f}% (선형 대비 오차 감소)"
+        )
         print(f"[특징 중요도] {importance}")
         print(f"[저장] {MODEL_PATH.name} / {META_PATH.name}")
     return meta

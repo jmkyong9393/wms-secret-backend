@@ -27,6 +27,7 @@ Zone A는 조장이 직접 검수하는 실촬영 영역으로 예약돼 있다.
 
 멱등하다 - 이미 변환된 건은 건너뛴다.
 """
+
 import sys
 from collections import defaultdict
 
@@ -55,12 +56,18 @@ def main() -> None:
         # ── 백업 ────────────────────────────────────────────────────────
         # 이미 존재하면(1차 실행분) 이번 회차 대상만 덧붙인다 - 원본을 덮어쓰지 않는다.
         for tbl, sel in (
-            ("_bak_20260806_demo_lpn",
-             f"SELECT id, lpn_barcode, location_id FROM inventory_used_items WHERE {NOT_CONFORMING}"),
-            ("_bak_20260806_demo_lpn_jobs",
-             f"SELECT id, agent_logs FROM return_jobs WHERE {NOT_CONFORMING_JOB}"),
+            (
+                "_bak_20260806_demo_lpn",
+                f"SELECT id, lpn_barcode, location_id FROM inventory_used_items WHERE {NOT_CONFORMING}",
+            ),
+            (
+                "_bak_20260806_demo_lpn_jobs",
+                f"SELECT id, agent_logs FROM return_jobs WHERE {NOT_CONFORMING_JOB}",
+            ),
         ):
-            exists = db.exec(text("SELECT to_regclass(:t)"), params={"t": tbl}).first()[0]
+            exists = db.exec(text("SELECT to_regclass(:t)"), params={"t": tbl}).first()[
+                0
+            ]
             if exists:
                 db.exec(text(f"INSERT INTO {tbl} {sel}"))
             else:
@@ -71,32 +78,38 @@ def main() -> None:
         # 재고 테이블만 보면 안 된다. 검수이력의 LPN은 agent_logs(JSON) 안에 있어서
         # lpn_barcode 컬럼 스캔에 잡히지 않고, 그대로 두면 이미 이력에 부여한 번호를
         # 재고에 중복 발급하게 된다. 두 테이블 합집합에서 최대값을 구한다.
-        rows = db.exec(text(
-            r"SELECT substring(lpn from '([A-Z])[0-9]{3}$'),"
-            r"       max(substring(lpn from '[A-Z]([0-9]{3})$')::int) FROM ("
-            rf"  SELECT lpn_barcode AS lpn FROM inventory_used_items"
-            rf"   WHERE lpn_barcode LIKE 'LPN-{SENTINEL_DATE}-%'"
-            r"  UNION ALL"
-            r"  SELECT agent_logs->>'lpn_barcode' FROM return_jobs"
-            rf"   WHERE agent_logs->>'lpn_barcode' LIKE 'LPN-{SENTINEL_DATE}-%'"
-            r") x GROUP BY 1"
-        )).all()
+        rows = db.exec(
+            text(
+                r"SELECT substring(lpn from '([A-Z])[0-9]{3}$'),"
+                r"       max(substring(lpn from '[A-Z]([0-9]{3})$')::int) FROM ("
+                rf"  SELECT lpn_barcode AS lpn FROM inventory_used_items"
+                rf"   WHERE lpn_barcode LIKE 'LPN-{SENTINEL_DATE}-%'"
+                r"  UNION ALL"
+                r"  SELECT agent_logs->>'lpn_barcode' FROM return_jobs"
+                rf"   WHERE agent_logs->>'lpn_barcode' LIKE 'LPN-{SENTINEL_DATE}-%'"
+                r") x GROUP BY 1"
+            )
+        ).all()
         seq: dict[str, int] = defaultdict(int)
         for z, mx in rows:
             if z:
                 seq[z] = int(mx or 0)
 
         # ── 1) 재고 항목: Zone A 탈출 + LPN 재채번 ─────────────────────
-        items = db.exec(text(
-            "SELECT i.id, i.lpn_barcode, l.zone "
-            "FROM inventory_used_items i LEFT JOIN locations l ON i.location_id = l.id "
-            f"WHERE i.{NOT_CONFORMING} ORDER BY i.lpn_barcode"
-        )).all()
+        items = db.exec(
+            text(
+                "SELECT i.id, i.lpn_barcode, l.zone "
+                "FROM inventory_used_items i LEFT JOIN locations l ON i.location_id = l.id "
+                f"WHERE i.{NOT_CONFORMING} ORDER BY i.lpn_barcode"
+            )
+        ).all()
 
         # A에서 빼낼 항목에 배정할 로케이션 (B~E)
-        alt_locs = db.exec(text(
-            "SELECT id, zone FROM locations WHERE zone IN ('B','C','D','E') ORDER BY zone, rack, shelf"
-        )).all()
+        alt_locs = db.exec(
+            text(
+                "SELECT id, zone FROM locations WHERE zone IN ('B','C','D','E') ORDER BY zone, rack, shelf"
+            )
+        ).all()
         alt_by_zone: dict[str, list] = defaultdict(list)
         for lid, z in alt_locs:
             alt_by_zone[z].append(lid)
@@ -116,7 +129,9 @@ def main() -> None:
                 pool = alt_by_zone.get(target_zone) or []
                 if pool:
                     db.exec(
-                        text("UPDATE inventory_used_items SET location_id = :l WHERE id = :i"),
+                        text(
+                            "UPDATE inventory_used_items SET location_id = :l WHERE id = :i"
+                        ),
                         params={"l": pool[moved % len(pool)], "i": item_id},
                     )
                     moved += 1
@@ -132,10 +147,12 @@ def main() -> None:
             renamed += 1
 
         # ── 2) 검수 이력(return_jobs.agent_logs.lpn_barcode) ───────────
-        jobs = db.exec(text(
-            "SELECT id, agent_logs->>'lpn_barcode' FROM return_jobs "
-            f"WHERE {NOT_CONFORMING_JOB} ORDER BY 2"
-        )).all()
+        jobs = db.exec(
+            text(
+                "SELECT id, agent_logs->>'lpn_barcode' FROM return_jobs "
+                f"WHERE {NOT_CONFORMING_JOB} ORDER BY 2"
+            )
+        ).all()
         job_renamed = job_linked = 0
         for job_id, old_lpn in jobs:
             if old_lpn in remap:
@@ -150,9 +167,11 @@ def main() -> None:
             # `:n::text` 형태는 SQLAlchemy 바인드 파서가 `::` 캐스트와 충돌해 구문 오류가
             # 나므로 CAST(...)를 쓴다.
             db.exec(
-                text("UPDATE return_jobs SET agent_logs = CAST(jsonb_set("
-                     "CAST(agent_logs AS jsonb), '{lpn_barcode}', to_jsonb(CAST(:n AS text))"
-                     ") AS json) WHERE id = :i"),
+                text(
+                    "UPDATE return_jobs SET agent_logs = CAST(jsonb_set("
+                    "CAST(agent_logs AS jsonb), '{lpn_barcode}', to_jsonb(CAST(:n AS text))"
+                    ") AS json) WHERE id = :i"
+                ),
                 params={"n": new_lpn, "i": job_id},
             )
             tag = " (재고 연동)" if old_lpn in remap else ""
