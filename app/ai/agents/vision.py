@@ -7,6 +7,7 @@ Vision Agent - GPT-4o 멀티모달 판독과 증거 대조 검증.
 
 증거 대조 검증은 판독과 별도 함수·별도 프롬프트다. 판독 프롬프트에 합치면 자기가 낸 결론을 자기가 심사하게 되어 동조 편향이 생긴다 (프리즈 규정).
 """
+
 import base64
 import io
 import json
@@ -17,11 +18,18 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.ai.state import WMSInspectionState
 from app.ai.agents.common import (
-    DEFECT_TRANSLATION_MAP, INNER_PAGE_EXCLUDED_TYPES, TRACK1_IMAGE_COUNT,
-    YOLO_TO_UBCI_TYPE, VLM_MAX_IMAGE_EDGE,
-    _downscale_for_vlm, _ensure_local_path, _is_inner_page, _load_image_as_base64,
+    DEFECT_TRANSLATION_MAP,
+    INNER_PAGE_EXCLUDED_TYPES,
+    TRACK1_IMAGE_COUNT,
+    YOLO_TO_UBCI_TYPE,
+    VLM_MAX_IMAGE_EDGE,
+    _downscale_for_vlm,
+    _ensure_local_path,
+    _is_inner_page,
+    _load_image_as_base64,
 )
 from app.ai.agents.detector import build_yolo_hint
+
 # llm_mini는 예비 감점 검증(Stage 3) 제거로 이 노드에서 쓰지 않는다.
 # Vision Agent는 GPT-4o만 쓴다 — 1차 판독(llm_vlm) + 증거 대조 검증(llm_verify).
 from app.ai.agents.llm import llm_verify, llm_vlm
@@ -147,7 +155,8 @@ def _flag_ungrounded_bboxes(defects: List[Dict[str, Any]]) -> int:
     같은 처리 계보다. YOLO 좌표(conf_source="yolo"/자동 채택분)는 실측이므로 대상이 아니다.
     """
     vlm_owned = [
-        d for d in defects
+        d
+        for d in defects
         if isinstance(d.get("bbox"), dict)
         and d.get("conf_source") != "yolo"
         and not d.get("adopted_from_candidate")
@@ -157,8 +166,12 @@ def _flag_ungrounded_bboxes(defects: List[Dict[str, Any]]) -> int:
 
     def key(d):
         b = d["bbox"]
-        return (int(b.get("xmin", 0)), int(b.get("ymin", 0)),
-                int(b.get("xmax", 0)), int(b.get("ymax", 0)))
+        return (
+            int(b.get("xmin", 0)),
+            int(b.get("ymin", 0)),
+            int(b.get("xmax", 0)),
+            int(b.get("ymax", 0)),
+        )
 
     flagged: set = set()
 
@@ -214,7 +227,9 @@ def _flag_ungrounded_bboxes(defects: List[Dict[str, Any]]) -> int:
 
 
 def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
-    print("[Agent] Vision Agent: GPT-4o VLM 정밀검수 -> GPT-4o-mini 예비감점 검증 중...")
+    print(
+        "[Agent] Vision Agent: GPT-4o VLM 정밀검수 -> GPT-4o-mini 예비감점 검증 중..."
+    )
     defects = state.get("defects") or []
     image_paths = state.get("image_paths") or []
     # Detector Node가 앞서 채워둔 앙상블 후보 (VLM 실패 시 폴백 근거로도 쓰인다)
@@ -246,7 +261,12 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             b64 = _load_image_as_base64(lp or path)
             if b64:
                 content_list.append({"type": "text", "text": f"[이미지 index={i}]"})
-                content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+                content_list.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    }
+                )
 
         # 크롭 첨부 킬스위치 - 시연 중 지연이 문제되면 재배포 없이 끈다.
         _crops_enabled = os.getenv("WMS_VLM_CROPS", "1") != "0"
@@ -268,15 +288,26 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             ix = max(0, min(ax2, bx2) - max(ax1, bx1))
             iy = max(0, min(ay2, by2) - max(ay1, by1))
             inter = ix * iy
-            union = (ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter
+            union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
             return inter / union if union > 0 else 0.0
 
         picked: List[Dict[str, Any]] = []
-        for cand in (sorted(yolo_candidates, key=lambda c: -(c.get("confidence") or 0)) if _crops_enabled else []):
+        for cand in (
+            sorted(yolo_candidates, key=lambda c: -(c.get("confidence") or 0))
+            if _crops_enabled
+            else []
+        ):
             cb, ck = cand.get("bbox"), cand.get("image_index")
-            if not isinstance(cb, dict) or not isinstance(ck, int) or not (0 <= ck < len(image_paths)):
+            if (
+                not isinstance(cb, dict)
+                or not isinstance(ck, int)
+                or not (0 <= ck < len(image_paths))
+            ):
                 continue
-            if any(p.get("image_index") == ck and _iou(p["bbox"], cb) > 0.55 for p in picked):
+            if any(
+                p.get("image_index") == ck and _iou(p["bbox"], cb) > 0.55
+                for p in picked
+            ):
                 continue
             picked.append(cand)
             if len(picked) >= 6:
@@ -286,21 +317,32 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             crop_b64 = _crop_around_bbox(local_frames.get(ck, image_paths[ck]), cb)
             if not crop_b64:
                 continue
-            content_list.append({"type": "text", "text": (
-                f"[후보 확대 크롭 - image_index={ck}의 좌표 ({cb.get('xmin')},{cb.get('ymin')},"
-                f"{cb.get('xmax')},{cb.get('ymax')}) 부위, 제보유형 {cand.get('type')}. "
-                "판정 참고용 확대본이며 새 image_index가 아님. 이 후보의 채택/기각은 "
-                "전체 컷의 인상이 아니라 이 확대본에서 결함 신호가 실제로 보이는지로 결정할 것]"
-            )})
-            content_list.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{crop_b64}"}})
-
+            content_list.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"[후보 확대 크롭 - image_index={ck}의 좌표 ({cb.get('xmin')},{cb.get('ymin')},"
+                        f"{cb.get('xmax')},{cb.get('ymax')}) 부위, 제보유형 {cand.get('type')}. "
+                        "판정 참고용 확대본이며 새 image_index가 아님. 이 후보의 채택/기각은 "
+                        "전체 컷의 인상이 아니라 이 확대본에서 결함 신호가 실제로 보이는지로 결정할 것]"
+                    ),
+                }
+            )
+            content_list.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{crop_b64}"},
+                }
+            )
 
         special_notes = None
         vision_error = None
         invalid_image_indexes: list = []
         inner_page_regions: list = []
         try:
-            res_vlm: VisionResult = structured_vlm.invoke([HumanMessage(content=content_list)])
+            res_vlm: VisionResult = structured_vlm.invoke(
+                [HumanMessage(content=content_list)]
+            )
             is_mint = res_vlm.is_mint
             defects = [d.model_dump() for d in res_vlm.defects]
             # VLM이 min/max 순서를 뒤집어 반환하는 경우가 있다(실측: 후보 좌표를 채택하며
@@ -311,20 +353,28 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
                 if isinstance(_b, dict):
                     for _lo, _hi in (("xmin", "xmax"), ("ymin", "ymax")):
                         try:
-                            if _b.get(_lo) is not None and _b.get(_hi) is not None and _b[_lo] > _b[_hi]:
+                            if (
+                                _b.get(_lo) is not None
+                                and _b.get(_hi) is not None
+                                and _b[_lo] > _b[_hi]
+                            ):
                                 _b[_lo], _b[_hi] = _b[_hi], _b[_lo]
                         except TypeError:
                             pass
             special_notes = res_vlm.special_notes
             # 범위를 벗어난 인덱스는 VLM 환각 신호이므로 버린다 (Critic의 image_index 검증과 동일 원칙)
-            invalid_image_indexes = sorted({
-                int(i) for i in (res_vlm.invalid_image_indexes or [])
-                if isinstance(i, (int, float)) and 0 <= int(i) < len(image_paths)
-            })
+            invalid_image_indexes = sorted(
+                {
+                    int(i)
+                    for i in (res_vlm.invalid_image_indexes or [])
+                    if isinstance(i, (int, float)) and 0 <= int(i) < len(image_paths)
+                }
+            )
             # 속지 지면 영역도 같은 원칙으로 범위 검증한다. 도서 미식별 컷은 제외한다
             # (판독 불가로 분류된 컷에 낙서 탐지를 돌릴 이유가 없다).
             inner_page_regions = [
-                r.model_dump() for r in (res_vlm.inner_page_regions or [])
+                r.model_dump()
+                for r in (res_vlm.inner_page_regions or [])
                 if 0 <= int(r.image_index) < len(image_paths)
                 and int(r.image_index) not in invalid_image_indexes
             ]
@@ -333,7 +383,9 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             # VLM 호출이 실패하면 defects가 빈 채로 남으므로 "결함 0건 = MINT(무결점)"으로 해석되어, OpenAI 장애/키 만료 시 모든 반품 도서가 UBCI 100점 MINT로 자동 승인·매입되었다.
             # "검수하지 못했다"와 "검수했더니 흠이 없다"는 완전히 다른 사실인데 이를 동일하게 취급한 것.
             # 판독 실패는 MINT로 승격시키지 않고 reason_code=HUMAN_REQUIRED를 세워 Supervisor의 기존 HITL 이관 분기를 타게 한다.
-            print(f"[Vision Agent] GPT-4o VLM 호출 실패 - MINT 자동승격 금지, HITL 이관: {e}")
+            print(
+                f"[Vision Agent] GPT-4o VLM 호출 실패 - MINT 자동승격 금지, HITL 이관: {e}"
+            )
             vision_error = f"{type(e).__name__}: {e}"
 
         if vision_error:
@@ -351,7 +403,9 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
                     f"(YOLO 사전탐지 후보 {len(yolo_candidates)}건 보존 / 원인: {vision_error[:160]})"
                 ),
                 "executed_agents": ["vision_agent"],
-                "messages": [AIMessage(content="[Vision Agent] VLM 판독 실패 - 재검수 루프 회부")],
+                "messages": [
+                    AIMessage(content="[Vision Agent] VLM 판독 실패 - 재검수 루프 회부")
+                ],
             }
     else:
         is_mint = len(defects) == 0
@@ -389,7 +443,7 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
     # --- Track 2·3: 속지 지면 크롭에 doodle 단독 추론 ---
     # VLM이 지정한 지면 영역만 잘라 doodle 모델에 넣는다. 인쇄면 전체를 넣으면 활자를 손글씨로 오인하므로(실측: 깨끗한 속지 1장에 오탐 12건), 학습 도메인인 "손글씨 크롭 패치"에 가까운 입력을 만들어 준다. 크롭본과 탐지 결과는 로컬에 적재해 나중에 검증한다.
     doodle_added = 0
-    for region in (inner_page_regions or []):
+    for region in inner_page_regions or []:
         try:
             idx = int(region.get("image_index", -1))
             if not (0 <= idx < len(image_paths)):
@@ -434,7 +488,9 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
                     "source_image": os.path.basename(local_path),
                     "image_index": idx,
                     "region_source": region_src,  # yoloworld | vlm(폴백)
-                    "vlm_region": {k: region.get(k) for k in ("xmin", "ymin", "xmax", "ymax")},
+                    "vlm_region": {
+                        k: region.get(k) for k in ("xmin", "ymin", "xmax", "ymax")
+                    },
                     "crop_px": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
                 },
             )
@@ -443,22 +499,35 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             cw, ch = (x2 - x1), (y2 - y1)
             for hd in hits:
                 b = hd["bbox"]
-                defects.append({
-                    "type": YOLO_TO_UBCI_TYPE.get("doodle_scribble", "DMG_INT_DOODLE"),
-                    "ratio": max(1, int((b["xmax"] - b["xmin"]) * (b["ymax"] - b["ymin"]) / 10000)),
-                    "confidence": hd.get("confidence"),
-                    "image_index": idx,
-                    "bbox": {
-                        "xmin": int((x1 + b["xmin"] / 1000 * cw) / iw * 1000),
-                        "ymin": int((y1 + b["ymin"] / 1000 * ch) / ih * 1000),
-                        "xmax": int((x1 + b["xmax"] / 1000 * cw) / iw * 1000),
-                        "ymax": int((y1 + b["ymax"] / 1000 * ch) / ih * 1000),
-                    },
-                })
+                defects.append(
+                    {
+                        "type": YOLO_TO_UBCI_TYPE.get(
+                            "doodle_scribble", "DMG_INT_DOODLE"
+                        ),
+                        "ratio": max(
+                            1,
+                            int(
+                                (b["xmax"] - b["xmin"])
+                                * (b["ymax"] - b["ymin"])
+                                / 10000
+                            ),
+                        ),
+                        "confidence": hd.get("confidence"),
+                        "image_index": idx,
+                        "bbox": {
+                            "xmin": int((x1 + b["xmin"] / 1000 * cw) / iw * 1000),
+                            "ymin": int((y1 + b["ymin"] / 1000 * ch) / ih * 1000),
+                            "xmax": int((x1 + b["xmax"] / 1000 * cw) / iw * 1000),
+                            "ymax": int((y1 + b["ymax"] / 1000 * ch) / ih * 1000),
+                        },
+                    }
+                )
                 doodle_added += 1
         except Exception as e:
             # 부가 탐지이므로 실패가 판독 결과를 폐기시키지 않는다.
-            print(f"[Vision Agent] 속지 크롭 doodle 추론 실패({type(e).__name__}) - 건너뜀: {e}")
+            print(
+                f"[Vision Agent] 속지 크롭 doodle 추론 실패({type(e).__name__}) - 건너뜀: {e}"
+            )
 
     if doodle_added:
         is_mint = False
@@ -482,19 +551,23 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             for d in defects
         ):
             continue
-        defects.append({
-            "type": "DMG_EDGE_WEAR",
-            "ratio": 0,                      # _effective_ratio가 BBox 면적에서 유도한다
-            "bbox": dict(cb),
-            "image_index": ci,
-            "confidence": cand.get("confidence"),
-            "conf_source": "yolo",
-            "adopted_from_candidate": True,  # 감사 추적: VLM 판독이 아니라 자동 채택분
-        })
+        defects.append(
+            {
+                "type": "DMG_EDGE_WEAR",
+                "ratio": 0,  # _effective_ratio가 BBox 면적에서 유도한다
+                "bbox": dict(cb),
+                "image_index": ci,
+                "confidence": cand.get("confidence"),
+                "conf_source": "yolo",
+                "adopted_from_candidate": True,  # 감사 추적: VLM 판독이 아니라 자동 채택분
+            }
+        )
         auto_adopted += 1
     if auto_adopted:
         is_mint = False
-        print(f"[Vision Agent] 마모 후보 {auto_adopted}건 자동 채택 (판정은 크롭 검증이 담당)")
+        print(
+            f"[Vision Agent] 마모 후보 {auto_adopted}건 자동 채택 (판정은 크롭 검증이 담당)"
+        )
 
     # --- 속지 마모 제외 ---
     # 모서리 마모는 책의 겉면에서 발생한다. 속지 컷에 측면 마모가 걸려 보이더라도 그 부위는 표지·책등 컷에서 이미 검출되므로, 속지에서 또 세면 같은 손상을 이중으로 계산하게 된다.
@@ -502,7 +575,8 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
     # 자동 채택분도 이 필터를 통과해야 하므로 채택 뒤에 둔다.
     before = len(defects)
     defects = [
-        d for d in defects
+        d
+        for d in defects
         if not (
             _is_inner_page(d.get("image_index"))
             and str(d.get("type", "")) in INNER_PAGE_EXCLUDED_TYPES
@@ -510,7 +584,9 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
     ]
     inner_wear_dropped = before - len(defects)
     if inner_wear_dropped:
-        print(f"[Vision Agent] 속지 마모 {inner_wear_dropped}건 제외 (겉면에서 중복 검출되는 부위)")
+        print(
+            f"[Vision Agent] 속지 마모 {inner_wear_dropped}건 제외 (겉면에서 중복 검출되는 부위)"
+        )
 
     # --- 확신도 출처 확정 + YOLO 제보 복사 탐지 (결정론적) ---
     # 출처(conf_source): BBox가 제보와 일치하면 확신도를 제보 실측값으로 교체하고 VLM 자기 신고는 conf_vlm_selfreported 에 보존한다. 제보에 없으면 "vlm"(추정치).
@@ -523,7 +599,7 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             if c.get("confidence") is not None
         }
         for d in defects:
-            # 자동 채택분은 제보 확신도를 그대로 쓰는 것이 설계다. 이걸 복사 위반으로 잡으면 Critic Stage A가 전건을 HITL로 올려 자동화가 성립하지 않는다. 
+            # 자동 채택분은 제보 확신도를 그대로 쓰는 것이 설계다. 이걸 복사 위반으로 잡으면 Critic Stage A가 전건을 HITL로 올려 자동화가 성립하지 않는다.
             # 복사 탐지의 대상은 "VLM이 판독했다고 주장하면서 실제로는 제보를 되돌려준 것" 뿐이다.
             if d.get("adopted_from_candidate"):
                 continue
@@ -543,7 +619,11 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
                 iou = _bbox_iou(d.get("bbox"), c.get("bbox"))
                 if iou > best_iou:
                     best, best_iou = c, iou
-            if best is not None and best_iou >= 0.9 and best.get("confidence") is not None:
+            if (
+                best is not None
+                and best_iou >= 0.9
+                and best.get("confidence") is not None
+            ):
                 d["conf_source"] = "yolo"
                 d["conf_vlm_selfreported"] = d.get("confidence")
                 d["confidence"] = round(float(best["confidence"]), 4)
@@ -571,7 +651,9 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
     # "손상 없음"이 나와 실제 결함의 감점이 지워진다 (실측: LPN-260810-A012 재검수).
     ungrounded_cnt = _flag_ungrounded_bboxes(defects)
     if ungrounded_cnt:
-        print(f"[Vision Agent] ⚠ 비접지 BBox {ungrounded_cnt}건 - VLM이 좌표를 지어낸 패턴 (HITL 승격 대상)")
+        print(
+            f"[Vision Agent] ⚠ 비접지 BBox {ungrounded_cnt}건 - VLM이 좌표를 지어낸 패턴 (HITL 승격 대상)"
+        )
 
     # --- 증거 대조 검증 (GPT-4o, BBox 크롭 건별 심사) ---
     # [호출 위치] 속지 마모 제외와 확신도 출처 확정이 끝난 뒤에 돈다.
@@ -592,9 +674,8 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             if i in suspects:
                 d["evidence_suspect"] = True
         if verify_verdict.decision == "REJECTED":
-            verify_note = (
-                f"증거 대조 검증 반려 - {verify_verdict.reason}"
-                + (f" (오탐 의심 인덱스: {sorted(suspects)})" if suspects else "")
+            verify_note = f"증거 대조 검증 반려 - {verify_verdict.reason}" + (
+                f" (오탐 의심 인덱스: {sorted(suspects)})" if suspects else ""
             )
         else:
             verify_note = f"증거 대조 검증 통과 - {verify_verdict.reason}"
@@ -606,11 +687,15 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
             f"결함 0건, MINT(무결점) 판정"
         )
     else:
-        type_summary = ", ".join(sorted({str(d.get("type")) for d in defects if d.get("type")})) or "미분류"
+        type_summary = (
+            ", ".join(sorted({str(d.get("type")) for d in defects if d.get("type")}))
+            or "미분류"
+        )
         copy_warn = (
             f" / ⚠ 판독 신뢰 불가: 확정 결함 {copied_conf}건의 확신도가 YOLO 제보 값과 동일합니다"
             f"(이미지를 직접 판단한 것이 아니라 제보를 되돌려준 것으로 보임) - 관리자 확인 필요"
-            if copied_conf else ""
+            if copied_conf
+            else ""
         )
         vision_text = (
             f"{scanned_cnt}장 다각도 스캔 완료 - 결함 {len(defects)}건 검출 ({type_summary}), "
@@ -629,11 +714,16 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
         "vision_text": vision_text,
         "invalid_image_indexes": invalid_image_indexes,
         "executed_agents": ["vision_agent"],
-        "messages": [AIMessage(content=f"[Vision Agent] WBF+GPT-4o VLM 검수 & GPT-4o 검증 완료 (is_mint: {is_mint}, 결함 {len(defects)}건)")]
+        "messages": [
+            AIMessage(
+                content=f"[Vision Agent] WBF+GPT-4o VLM 검수 & GPT-4o 검증 완료 (is_mint: {is_mint}, 결함 {len(defects)}건)"
+            )
+        ],
     }
     if special_notes:
         result["special_notes"] = special_notes
     return result
+
 
 # ==========================================
 # 1-b. 증거 대조 검증 (Vision 종합 검증) - GPT-4o
@@ -679,10 +769,10 @@ UNCLEAR_EXCLUDES_DEDUCTION = os.getenv("WMS_UNCLEAR_EXCLUDES_DEDUCTION", "0") ==
 # 크롭 기하. 결함만 딱 자르면 주변 면과의 대비가 사라져 판단할 수 없으므로 여백을 준다.
 VERIFY_CROP_EXPAND = 3.0
 VERIFY_CROP_SIZE = 512
-VERIFY_CROP_MAX_ASPECT = 3.0      # 띠 형태 결함의 짧은 축에 맥락을 확보
-VERIFY_CROP_MIN_SHORT = 224       # 배율 기준축 (긴 변 기준이면 띠에서 확대가 안 된다.)
+VERIFY_CROP_MAX_ASPECT = 3.0  # 띠 형태 결함의 짧은 축에 맥락을 확보
+VERIFY_CROP_MIN_SHORT = 224  # 배율 기준축 (긴 변 기준이면 띠에서 확대가 안 된다.)
 VERIFY_CROP_MAX_LONG = 896
-VERIFY_CROP_MAX_UPSCALE = 4.0     # 원본에 없는 정보는 확대해도 생기지 않는다.
+VERIFY_CROP_MAX_UPSCALE = 4.0  # 원본에 없는 정보는 확대해도 생기지 않는다.
 
 
 def _crop_around_bbox(
@@ -749,8 +839,6 @@ def _crop_around_bbox(
     except Exception as e:
         print(f"[Vision Verify] 크롭 실패({type(e).__name__}) - 해당 건 심사 생략: {e}")
         return None
-
-
 
 
 def verify_defects_with_images(
@@ -820,15 +908,24 @@ def verify_defects_with_images(
 - 확신이 서지 않으면 NO가 아니라 UNCLEAR를 고르세요. NO는 "명백히 손상이 없다"는 뜻이며, 이 판단은 실제 손상을 감점에서 지우는 데 쓰입니다.
 """
         try:
-            res: DefectEvidenceVerdict = structured.invoke([
-                HumanMessage(content=[
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
-                ])
-            ])
+            res: DefectEvidenceVerdict = structured.invoke(
+                [
+                    HumanMessage(
+                        content=[
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                            },
+                        ]
+                    )
+                ]
+            )
         except Exception as e:
             # 건별 fail-open: 한 건이 실패해도 나머지 심사는 계속한다.
-            print(f"[Vision Verify] 결함 #{i} 심사 실패({type(e).__name__}) - 건너뜀: {e}")
+            print(
+                f"[Vision Verify] 결함 #{i} 심사 실패({type(e).__name__}) - 건너뜀: {e}"
+            )
             d["verify_status"] = "skipped_llm_error"
             skipped += 1
             continue
@@ -837,7 +934,9 @@ def verify_defects_with_images(
         d["verify_visible"] = res.visible
         d["verify_reason"] = res.reason
         # 감점 제외 대상. 기본은 NO(명백히 손상 없음)만이며, UNCLEAR(판단 어려움)까지 뺄지는 UNCLEAR_EXCLUDES_DEDUCTION 이 정한다(선언부 주석 참조).
-        d["verify_status"] = {"YES": "confirmed", "NO": "rejected"}.get(res.visible, "unclear")
+        d["verify_status"] = {"YES": "confirmed", "NO": "rejected"}.get(
+            res.visible, "unclear"
+        )
         excluded = res.visible == "NO" or (
             res.visible == "UNCLEAR" and UNCLEAR_EXCLUDES_DEDUCTION
         )
@@ -873,8 +972,18 @@ def _bbox_iou(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> float
     if not isinstance(a, dict) or not isinstance(b, dict):
         return 0.0
     try:
-        ax1, ay1, ax2, ay2 = (int(a["xmin"]), int(a["ymin"]), int(a["xmax"]), int(a["ymax"]))
-        bx1, by1, bx2, by2 = (int(b["xmin"]), int(b["ymin"]), int(b["xmax"]), int(b["ymax"]))
+        ax1, ay1, ax2, ay2 = (
+            int(a["xmin"]),
+            int(a["ymin"]),
+            int(a["xmax"]),
+            int(a["ymax"]),
+        )
+        bx1, by1, bx2, by2 = (
+            int(b["xmin"]),
+            int(b["ymin"]),
+            int(b["xmax"]),
+            int(b["ymax"]),
+        )
     except (KeyError, TypeError, ValueError):
         return 0.0
 
@@ -885,5 +994,3 @@ def _bbox_iou(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> float
         return 0.0
     union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
     return (inter / union) if union > 0 else 0.0
-
-

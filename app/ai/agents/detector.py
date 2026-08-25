@@ -4,6 +4,7 @@ Detector 노드 - WBF 3-YOLO 앙상블 사전탐지.
 LLM을 쓰지 않는 결정론적 노드다. 결함 후보를 좌표와 함께 뽑아 Vision Agent에게
 제보로 넘긴다. 판정 권한은 없다 (프리즈 규정: Detector = 결정론적, VLM = 의미 판독).
 """
+
 import json
 import os
 from typing import Any, Dict, List
@@ -12,9 +13,14 @@ from langchain_core.messages import AIMessage
 
 from app.ai.state import WMSInspectionState
 from app.ai.agents.common import (
-    DEFECT_TRANSLATION_MAP, INNER_PAGE_EXCLUDED_TYPES, TRACK1_IMAGE_COUNT,
-    YOLO_TO_UBCI_TYPE, _ensure_local_path, _is_inner_page,
+    DEFECT_TRANSLATION_MAP,
+    INNER_PAGE_EXCLUDED_TYPES,
+    TRACK1_IMAGE_COUNT,
+    YOLO_TO_UBCI_TYPE,
+    _ensure_local_path,
+    _is_inner_page,
 )
+
 
 # ==========================================
 # 0. Detector Node (WBF 3-YOLO 앙상블 사전탐지 - LLM 미사용, 결정론적)
@@ -43,17 +49,22 @@ def detector_node(state: WMSInspectionState) -> WMSInspectionState:
 
     try:
         from app.ai.wbf_detector import wbf_detector
+
         for idx, path in enumerate(track1_paths):
             local_path = _ensure_local_path(path)
             if not local_path:
                 continue
             for d in wbf_detector.detect_defects_wbf(local_path):
-                yolo_candidates.append({
-                    "image_index": idx,
-                    "type": YOLO_TO_UBCI_TYPE.get(d["defect_type"], d["defect_type"]),
-                    "confidence": d["confidence"],
-                    "bbox": d["bbox"],
-                })
+                yolo_candidates.append(
+                    {
+                        "image_index": idx,
+                        "type": YOLO_TO_UBCI_TYPE.get(
+                            d["defect_type"], d["defect_type"]
+                        ),
+                        "confidence": d["confidence"],
+                        "bbox": d["bbox"],
+                    }
+                )
         skipped = len(image_paths) - len(track1_paths)
         detector_text = (
             f"WBF 3-YOLO 앙상블 사전탐지 완료 - Track 1 {len(track1_paths)}장"
@@ -104,7 +115,8 @@ def build_yolo_hint(yolo_candidates: List[Dict[str, Any]]) -> str:
         for c in yolo_candidates
         if not (
             _is_inner_page(c.get("image_index"))
-            and YOLO_TO_UBCI_TYPE.get(c.get("defect_type", ""), "") in INNER_PAGE_EXCLUDED_TYPES
+            and YOLO_TO_UBCI_TYPE.get(c.get("defect_type", ""), "")
+            in INNER_PAGE_EXCLUDED_TYPES
         )
     ]
     if not hint_items:
@@ -120,5 +132,3 @@ def build_yolo_hint(yolo_candidates: List[Dict[str, Any]]) -> str:
         "후보에 없는 결함만 직접 좌표를 잡되, 위치를 특정할 수 없으면 bbox를 null로 두라.\n"
         "confidence는 제보 값이 아니라 **당신이 이미지를 보고 판단한 확신도**를 적어라."
     )
-
-

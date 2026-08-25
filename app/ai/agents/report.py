@@ -6,6 +6,7 @@ Report Agent - 고객 공개용 품질 보증서 발행, 그리고 HITL 인계 �
   · 근거 조항은 번호만 남긴다 - "제13조 고객 귀책 추정 기준"처럼 제목에 귀책이 든 조항이 있어 그대로 실으면 고객이 책임 통보로 읽는다.
   · 내부 chunk_id를 노출하지 않는다 (제0조의2 ⑥).
 """
+
 import json
 import re
 import uuid
@@ -19,6 +20,7 @@ from app.ai.agents.common import DEFECT_TRANSLATION_MAP, now_kst
 from app.ai.agents.llm import llm_mini
 from app.ai.agents.schemas import CertificateDocument
 
+
 def _grade_label(ubci_score: int) -> str:
     if ubci_score >= 95:
         return "S급 (MINT)"
@@ -29,7 +31,9 @@ def _grade_label(ubci_score: int) -> str:
     return "REJECT C급 (폐기)"
 
 
-def _fallback_certificate(ubci_score: int, defects: List[dict], special_notes: Optional[str]) -> dict:
+def _fallback_certificate(
+    ubci_score: int, defects: List[dict], special_notes: Optional[str]
+) -> dict:
     """
     LLM 호출이 불가능하거나 실패했을 때 쓰는 결정론적 보증서 본문.
     문장은 여기(백엔드)에서만 만든다 - 프론트가 등급별 문장을 하드코딩하지 않게 하기 위함.
@@ -40,18 +44,18 @@ def _fallback_certificate(ubci_score: int, defects: List[dict], special_notes: O
         dtype = str(d.get("type") or "")
         label = DEFECT_TRANSLATION_MAP.get(dtype, dtype or "상태 결함")
         deduction = int(d.get("preliminary_deduction") or 0)
-        findings.append({
-            "image_index": int(d.get("image_index") or 0),
-            "label": label,
-            "deduction": deduction,
-            "reason": f"{label} 흔적이 확인되어 UBCI {deduction}점을 차감했습니다. 읽는 데는 지장이 없는 수준입니다.",
-        })
+        findings.append(
+            {
+                "image_index": int(d.get("image_index") or 0),
+                "label": label,
+                "deduction": deduction,
+                "reason": f"{label} 흔적이 확인되어 UBCI {deduction}점을 차감했습니다. 읽는 데는 지장이 없는 수준입니다.",
+            }
+        )
 
     if not findings:
         headline = "꼼꼼히 검수했지만, 트집 잡을 곳이 없었습니다"
-        condition_detail = (
-            "결함 없음. 표지 모서리부터 내지 마지막 장까지 전수 스캔했지만 감점 사유를 단 한 건도 찾지 못했습니다."
-        )
+        condition_detail = "결함 없음. 표지 모서리부터 내지 마지막 장까지 전수 스캔했지만 감점 사유를 단 한 건도 찾지 못했습니다."
         care_tip = "직사광선만 피해 보관하시면 지금 이 상태가 오래갑니다."
     else:
         headline = f"정직하게 {len(findings)}가지 사용 흔적을 짚어드립니다"
@@ -79,8 +83,16 @@ def _fallback_certificate(ubci_score: int, defects: List[dict], special_notes: O
 
 # 고객 보증서에 실리면 안 되는 귀책 표현. 표준 운영 정책서 제0장 ④에 따라 귀책은 관리자가 증빙 2개 이상으로 확정하는 값이며, 고객이 받는 문서에 단정적으로 적히면 그 문서가 분쟁의 근거가 된다.
 _LIABILITY_WORDS = (
-    "귀책", "과실", "부주의", "책임이 있", "잘못으로", "고객 책임", "고객의 책임",
-    "배송사 책임", "판매자 책임", "물류센터 책임",
+    "귀책",
+    "과실",
+    "부주의",
+    "책임이 있",
+    "잘못으로",
+    "고객 책임",
+    "고객의 책임",
+    "배송사 책임",
+    "판매자 책임",
+    "물류센터 책임",
 )
 
 
@@ -92,9 +104,9 @@ def _sanitize_policy_basis(basis: Optional[List[str]]) -> List[str]:
     내부 chunk_id가 섞여 들어온 항목도 제거한다 (표준 운영 정책서 제0조의2 ⑥).
     """
     out: List[str] = []
-    for raw in (basis or []):
+    for raw in basis or []:
         text = str(raw or "").strip()
-        if not text or re.search(r"[a-z0-9_]{6,}", text):   # chunk_id 형태
+        if not text or re.search(r"[a-z0-9_]{6,}", text):  # chunk_id 형태
             continue
         # "WMS 표준 운영 정책서 제13조 고객 귀책 추정 기준" -> "WMS 표준 운영 정책서 제13조"
         m = re.match(r"(.*?제\s*\d+조(?:의\d+)?(?:\s*제?\s*\d+항)?)", text)
@@ -117,7 +129,8 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
     all_defects = state.get("defects") or []
     # 감점에 실제로 반영된 항목만 고객 문서의 대상이다. 걸러진 항목은 "검토했으나 결함이 아니라고 판단한 것"이므로 결함으로 보이면 안 된다. 다만 **입력에서 지우지는 않고** 아래 프롬프트에 사실로 알려 준 뒤 출력 형식으로 통제한다 - 몇 건을 검토해서 몇 건을 확정했는지는 문서의 신뢰도를 만드는 정보라 작성자가 알아야 한다.
     defects = [
-        d for d in all_defects
+        d
+        for d in all_defects
         if not d.get("evidence_suspect") and d.get("deduction_scope") != "excluded"
     ]
     dismissed_cnt = len(all_defects) - len(defects)
@@ -131,10 +144,14 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
     defect_brief = [
         {
             "type": d.get("type"),
-            "korean_label": DEFECT_TRANSLATION_MAP.get(str(d.get("type") or ""), d.get("type")),
+            "korean_label": DEFECT_TRANSLATION_MAP.get(
+                str(d.get("type") or ""), d.get("type")
+            ),
             "image_index": d.get("image_index") or 0,
             # Policy가 실제로 적용한 감점. preliminary_deduction은 Vision 단계의 예비값이라 그룹 산정(마모 부위 합산)·Cap·오탐 제외를 전혀 반영하지 않는다 - 보증서에 실제와 다른 감점이 찍히던 원인.
-            "deduction": d.get("applied_deduction", d.get("preliminary_deduction") or 0),
+            "deduction": d.get(
+                "applied_deduction", d.get("preliminary_deduction") or 0
+            ),
             "ratio": d.get("ratio"),
             "text_overlap": d.get("text_overlap"),
         }
@@ -147,7 +164,8 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
         "\n[중요 - 판정 미확정]\n"
         f"이 도서는 결함 {len(defects)}건이 보고됐으나 증거 대조 검증이 전건을 오탐으로 "
         "지목해 점수의 근거가 확정되지 않았습니다. 무결점·최상급이라는 표현을 절대 쓰지 말고, 관리자 확인이 진행 중이라는 사실을 담담하게 밝히세요. 아래 규칙 1(결함 없음 문구)은 이 경우 적용하지 않습니다.\n"
-        if unverified else ""
+        if unverified
+        else ""
     )
 
     # ── 반품 처분 안내 (Policy Stage B 결과) ────────────────────────────────
@@ -218,16 +236,20 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
         # findings는 부위 단위로 묶이므로 결함 개수와 일치할 필요가 없다. 다만 확정 결함이 있는데 비면 결함을 숨긴 문서가 되고, 결함 수보다 많으면 지어낸 것이다.
         findings = result.get("findings") or []
         if defects and (not findings or len(findings) > len(defects)):
-            result["findings"] = _fallback_certificate(ubci_score, defects, special_notes)["findings"]
+            result["findings"] = _fallback_certificate(
+                ubci_score, defects, special_notes
+            )["findings"]
         elif not defects and findings:
             result["findings"] = []
 
         # 묶음 감점은 한 번만 표시한다. 같은 라벨·같은 값이 반복되면 첫 항목만 남긴다. (합계가 항목마다 반복되면 고객이 그 수를 더해서 읽는다.)
         seen: set = set()
-        for f in (result.get("findings") or []):
+        for f in result.get("findings") or []:
             key = (f.get("label"), f.get("deduction"))
             if f.get("deduction") and key in seen:
-                f["deduction"] = 0      # 같은 묶음의 두 번째 이후 항목 - 합계 중복 표기 방지
+                f["deduction"] = (
+                    0  # 같은 묶음의 두 번째 이후 항목 - 합계 중복 표기 방지
+                )
             else:
                 seen.add(key)
 
@@ -241,7 +263,9 @@ def build_certificate_document(state: WMSInspectionState) -> dict:
         # 귀책 표현이 새어 나갔으면 안내 자체를 내린다.
         notice = result.get("policy_notice") or ""
         if notice and any(w in notice for w in _LIABILITY_WORDS):
-            print("[Report Agent] 보증서에서 귀책 표현이 감지되어 반품 안내를 제거합니다.")
+            print(
+                "[Report Agent] 보증서에서 귀책 표현이 감지되어 반품 안내를 제거합니다."
+            )
             result["policy_notice"] = None
             result["policy_basis"] = []
         return result
@@ -276,7 +300,11 @@ def report_agent(state: WMSInspectionState) -> WMSInspectionState:
         "certificate": doc,
         "auto_refund_eligible": auto_refund_eligible,
         "executed_agents": ["report_agent"],
-        "messages": [AIMessage(content=f"[Report Agent] 디지털 품질 보증서 발행 완료 ({cert_id}) - {doc['headline']}")]
+        "messages": [
+            AIMessage(
+                content=f"[Report Agent] 디지털 품질 보증서 발행 완료 ({cert_id}) - {doc['headline']}"
+            )
+        ],
     }
 
 
@@ -290,6 +318,9 @@ def human_node(state: WMSInspectionState) -> WMSInspectionState:
     print(f"[Agent] Human Node (HITL): Supervisor 이관 지시 집행 - {rationale}")
     return {
         "reason_code": "AWAITING_HUMAN_REVIEW",
-        "messages": [AIMessage(content=f"[Human Node (HITL)] 관리자 수동 검수 대기 (HITL_REQUIRED) - {rationale}")]
+        "messages": [
+            AIMessage(
+                content=f"[Human Node (HITL)] 관리자 수동 검수 대기 (HITL_REQUIRED) - {rationale}"
+            )
+        ],
     }
-

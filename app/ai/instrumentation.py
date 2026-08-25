@@ -10,6 +10,7 @@
 
 계측 실패가 검수를 막아서는 안 되므로 모든 예외를 삼킨다(fail-open).
 """
+
 import contextvars
 import functools
 import logging
@@ -22,12 +23,16 @@ logger = logging.getLogger(__name__)
 # 현재 실행 중인 노드 이름과 그 노드의 토큰 수집함.
 # langchain_community(get_openai_callback)가 설치돼 있지 않아 직접 만든다.
 # 콜백은 전역 인스턴스라 "어느 노드에서 부른 호출인가"를 알 수 없으므로 contextvar로 잇는다.
-_current_node: contextvars.ContextVar = contextvars.ContextVar("wms_current_node", default=None)
-_token_sink: contextvars.ContextVar = contextvars.ContextVar("wms_token_sink", default=None)
+_current_node: contextvars.ContextVar = contextvars.ContextVar(
+    "wms_current_node", default=None
+)
+_token_sink: contextvars.ContextVar = contextvars.ContextVar(
+    "wms_token_sink", default=None
+)
 
 # gpt-4o / gpt-4o-mini 1K 토큰당 단가(USD). 요금 개정 시 이 표만 고친다.
 _PRICE = {
-    "gpt-4o":      {"in": 0.0025, "out": 0.010},
+    "gpt-4o": {"in": 0.0025, "out": 0.010},
     "gpt-4o-mini": {"in": 0.00015, "out": 0.0006},
 }
 
@@ -61,13 +66,17 @@ class TokenCollector(BaseCallbackHandler):
             model = out.get("model_name") or ""
             if not usage:
                 # 일부 경로는 generations[].message.usage_metadata에만 담긴다
-                for gen in (getattr(response, "generations", None) or []):
+                for gen in getattr(response, "generations", None) or []:
                     for g in gen:
-                        um = getattr(getattr(g, "message", None), "usage_metadata", None)
+                        um = getattr(
+                            getattr(g, "message", None), "usage_metadata", None
+                        )
                         if um:
-                            usage = {"prompt_tokens": um.get("input_tokens", 0),
-                                     "completion_tokens": um.get("output_tokens", 0),
-                                     "total_tokens": um.get("total_tokens", 0)}
+                            usage = {
+                                "prompt_tokens": um.get("input_tokens", 0),
+                                "completion_tokens": um.get("output_tokens", 0),
+                                "total_tokens": um.get("total_tokens", 0),
+                            }
                             break
             if not usage:
                 return
@@ -76,13 +85,15 @@ class TokenCollector(BaseCallbackHandler):
                 return
             p = int(usage.get("prompt_tokens") or 0)
             c = int(usage.get("completion_tokens") or 0)
-            sink.append({
-                "model": model,
-                "prompt": p,
-                "completion": c,
-                "total": int(usage.get("total_tokens") or (p + c)),
-                "cost_usd": round(_cost(model, p, c), 6),
-            })
+            sink.append(
+                {
+                    "model": model,
+                    "prompt": p,
+                    "completion": c,
+                    "total": int(usage.get("total_tokens") or (p + c)),
+                    "cost_usd": round(_cost(model, p, c), 6),
+                }
+            )
         except Exception as e:
             logger.debug(f"[계측] 토큰 수집 실패({type(e).__name__}) - 무시한다")
 
@@ -126,17 +137,21 @@ def instrument(name: str, fn: Callable) -> Callable:
             # 토큰이 0인 노드(결정론적 노드)는 기록하지 않는다 — 목록이 의미 없이 길어진다.
             if sink:
                 out.setdefault("node_tokens", [])
-                out["node_tokens"] = list(out["node_tokens"]) + [{
-                    "node": name,
-                    "prompt": sum(x["prompt"] for x in sink),
-                    "completion": sum(x["completion"] for x in sink),
-                    "total": sum(x["total"] for x in sink),
-                    "cost_usd": round(sum(x["cost_usd"] for x in sink), 6),
-                    "calls": len(sink),
-                    "models": sorted({x["model"] for x in sink if x.get("model")}),
-                }]
+                out["node_tokens"] = list(out["node_tokens"]) + [
+                    {
+                        "node": name,
+                        "prompt": sum(x["prompt"] for x in sink),
+                        "completion": sum(x["completion"] for x in sink),
+                        "total": sum(x["total"] for x in sink),
+                        "cost_usd": round(sum(x["cost_usd"] for x in sink), 6),
+                        "calls": len(sink),
+                        "models": sorted({x["model"] for x in sink if x.get("model")}),
+                    }
+                ]
         except Exception as e:
-            logger.warning(f"[계측] state 적재 실패({type(e).__name__}) - 검수는 계속한다: {e}")
+            logger.warning(
+                f"[계측] state 적재 실패({type(e).__name__}) - 검수는 계속한다: {e}"
+            )
         return out
 
     return wrapped
@@ -149,14 +164,18 @@ def summarize(timings, tokens) -> Dict[str, Any]:
         n = t.get("node")
         if not n:
             continue
-        d = by_node.setdefault(n, {"ms": 0, "runs": 0, "tokens": 0, "cost_usd": 0.0, "calls": 0})
+        d = by_node.setdefault(
+            n, {"ms": 0, "runs": 0, "tokens": 0, "cost_usd": 0.0, "calls": 0}
+        )
         d["ms"] += int(t.get("ms") or 0)
         d["runs"] += 1
     for k in tokens or []:
         n = k.get("node")
         if not n:
             continue
-        d = by_node.setdefault(n, {"ms": 0, "runs": 0, "tokens": 0, "cost_usd": 0.0, "calls": 0})
+        d = by_node.setdefault(
+            n, {"ms": 0, "runs": 0, "tokens": 0, "cost_usd": 0.0, "calls": 0}
+        )
         d["tokens"] += int(k.get("total") or 0)
         d["cost_usd"] = round(d["cost_usd"] + float(k.get("cost_usd") or 0.0), 6)
         d["calls"] += int(k.get("calls") or 0)
