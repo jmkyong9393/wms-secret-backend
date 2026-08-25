@@ -14,11 +14,12 @@ from app.domains.orders.pricing import (  # noqa: F401  (기존 import 경로 �
     normalize_category,
 )
 
+
 def calculate_price_elasticity_revenue_optimization(
     list_price: float,
     ubci_score: float,
     days_in_inventory: int = 120,
-    category: str = "Novel"
+    category: str = "Novel",
 ) -> Dict[str, Any]:
     """
     [PM 마스터 명세서 29_DynamicPricing_합성데이터_생성_명세서 연동]
@@ -31,11 +32,13 @@ def calculate_price_elasticity_revenue_optimization(
     # 카테고리별 차등이 사라진다.
     canonical_category = normalize_category(category)
     seasonality = CATEGORY_SEASONALITY.get(canonical_category, 1.0)
-    base_price = list_price * CATEGORY_BASE_RATE.get(canonical_category, CATEGORY_BASE_RATE["General"])
-    
+    base_price = list_price * CATEGORY_BASE_RATE.get(
+        canonical_category, CATEGORY_BASE_RATE["General"]
+    )
+
     # Non-perishable Book Dwell Defense (-10% max penalty)
     dwell_decay = round(min(days_in_inventory, 365) / 365.0 * 0.10, 3)
-    trend_badge_text = f"비부패성 보관료 방어: -{round(dwell_decay*100, 1)}% ({days_in_inventory}일 체류)"
+    trend_badge_text = f"비부패성 보관료 방어: -{round(dwell_decay * 100, 1)}% ({days_in_inventory}일 체류)"
 
     best_discount = 0.05
     max_expected_revenue = 0.0
@@ -45,13 +48,15 @@ def calculate_price_elasticity_revenue_optimization(
     # 후보 전체를 한 번에 넘겨 그리드 탐색 1회당 추론도 1회만 일어나게 한다.
     # 모델 파일이 없으면 predictor가 기존 선형 산식으로 자동 폴백한다.
     candidates = [step / 100.0 for step in range(5, 90, 5)]
-    p_sold_list = predict_p_sold_batch(candidates, ubci_score, seasonality, days_in_inventory)
+    p_sold_list = predict_p_sold_batch(
+        candidates, ubci_score, seasonality, days_in_inventory
+    )
 
     # Step 2: 기대매출 E(delta) = P(구매) x 할인 적용가 가 최대인 할인율을 고른다.
     for delta, p_sold in zip(candidates, p_sold_list):
         discounted_price = base_price * (1.0 - delta)
         expected_revenue = p_sold * discounted_price
-        
+
         if expected_revenue > max_expected_revenue:
             max_expected_revenue = expected_revenue
             best_discount = delta
@@ -68,7 +73,7 @@ def calculate_price_elasticity_revenue_optimization(
         "max_expected_revenue": round(max_expected_revenue, -1),
         "final_price": final_price,
         "trend_badge_text": trend_badge_text,
-        "optimization_model": model_label()
+        "optimization_model": model_label(),
     }
 
 
@@ -138,17 +143,19 @@ def calculate_order_pricing(items: List[Dict[str, Any]]) -> Dict[str, Any]:
             category=item.get("category") or "Novel",
         )
         line_total = line["unit_price"] * qty
-        lines.append({
-            "title": item.get("title"),
-            "isbn": item.get("isbn"),
-            "is_new": is_new,
-            "quantity": qty,
-            "list_price": list_price,
-            "unit_price": line["unit_price"],
-            "line_total": line_total,
-            "discount_rate": line["discount_rate"],
-            "pricing_basis": line["pricing_basis"],
-        })
+        lines.append(
+            {
+                "title": item.get("title"),
+                "isbn": item.get("isbn"),
+                "is_new": is_new,
+                "quantity": qty,
+                "list_price": list_price,
+                "unit_price": line["unit_price"],
+                "line_total": line_total,
+                "discount_rate": line["discount_rate"],
+                "pricing_basis": line["pricing_basis"],
+            }
+        )
         total_list += list_price * qty
         total_final += line_total
         if is_new:
@@ -191,12 +198,18 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.models.wms import (
-    Book, InventoryUsedItem, ItemStatusEnum, PickingInstruction, now_kst,
+    Book,
+    InventoryUsedItem,
+    ItemStatusEnum,
+    PickingInstruction,
+    now_kst,
 )
 from app.domains.orders.schemas import OrderLineRequest
 
 
-def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> List[Dict[str, Any]]:
+def _resolve_order_lines(
+    session: Session, items: List[OrderLineRequest]
+) -> List[Dict[str, Any]]:
     """
     프론트 선택 항목을 (book, is_new, quantity, ubci, days) 라인으로 해석.
     같은 book의 중고 LPN 여러 개는 개별 라인(각 1권)으로 유지해 LPN별 UBCI 가격을 보존한다.
@@ -224,26 +237,40 @@ def _resolve_order_lines(session: Session, items: List[OrderLineRequest]) -> Lis
                     f"발주(SCM) 승인으로 재고를 채운 뒤 주문해 주세요.",
                 )
 
-            lines.append({
-                "book": book, "is_new": True, "quantity": qty,
-                "ubci_score": None, "days_in_inventory": 1,
-                "used_item": None,
-            })
+            lines.append(
+                {
+                    "book": book,
+                    "is_new": True,
+                    "quantity": qty,
+                    "ubci_score": None,
+                    "days_in_inventory": 1,
+                    "used_item": None,
+                }
+            )
         else:
             used = session.get(InventoryUsedItem, UUID(line.id))
             if not used:
-                raise HTTPException(404, f"중고 재고(LPN)를 찾을 수 없습니다: {line.id}")
+                raise HTTPException(
+                    404, f"중고 재고(LPN)를 찾을 수 없습니다: {line.id}"
+                )
             if used.item_status != ItemStatusEnum.IN_STOCK.value:
-                raise HTTPException(409, f"이미 할당/출고된 LPN입니다: {used.lpn_barcode}")
+                raise HTTPException(
+                    409, f"이미 할당/출고된 LPN입니다: {used.lpn_barcode}"
+                )
             book = session.get(Book, used.book_id)
             days = max(1, (now - used.created_at).days) if used.created_at else 120
-            lines.append({
-                "book": book, "is_new": False, "quantity": 1,
-                "ubci_score": used.ubci_score, "days_in_inventory": days,
-                # 고른 LPN을 그대로 들고 간다. 여기서 흘리면 할당 엔진이 같은 책의
-                # 다른 개체를 FIFO로 다시 골라, 주문한 책과 다른 책이 출고된다.
-                "used_item": used,
-            })
+            lines.append(
+                {
+                    "book": book,
+                    "is_new": False,
+                    "quantity": 1,
+                    "ubci_score": used.ubci_score,
+                    "days_in_inventory": days,
+                    # 고른 LPN을 그대로 들고 간다. 여기서 흘리면 할당 엔진이 같은 책의
+                    # 다른 개체를 FIFO로 다시 골라, 주문한 책과 다른 책이 출고된다.
+                    "used_item": used,
+                }
+            )
     return lines
 
 
@@ -268,29 +295,34 @@ def fetch_aladin_real_packing_spec(isbn: str) -> dict:
     # http는 알라딘 서버가 https로 301 리다이렉트한다 - 리다이렉트 왕복 지연(0.8s 타임아웃 내
     # 예산 초과 위험)을 피하기 위해 https를 직접 호출한다.
     url = f"https://www.aladin.co.kr/ttb/api/ItemLookUp.aspx?ttbkey={ttb_key}&itemIdType=ISBN13&ItemId={isbn}&output=js&Version=20130701&OptResult=packing"
-    
+
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=0.8) as response:
-            data = json.loads(response.read().decode('utf-8'))
+            data = json.loads(response.read().decode("utf-8"))
             items = data.get("item", [])
             if items:
                 item = items[0]
                 sub_info = item.get("subInfo", {})
                 packing = sub_info.get("packing", {})
-                
+
                 size_w = packing.get("sizeWidth")
                 size_d = packing.get("sizeHeight")
                 size_h = packing.get("sizeDepth")
                 weight = packing.get("weight")
                 item_page = sub_info.get("itemPage") or item.get("itemPage")
-                
+
                 res = {}
-                if size_w and int(size_w) > 0: res["width_mm"] = float(size_w)
-                if size_d and int(size_d) > 0: res["depth_mm"] = float(size_d)
-                if size_h and int(size_h) > 0: res["thickness_mm"] = float(size_h)
-                if weight and int(weight) > 0: res["weight_g"] = float(weight)
-                if item_page and int(item_page) > 0: res["page_count"] = int(item_page)
+                if size_w and int(size_w) > 0:
+                    res["width_mm"] = float(size_w)
+                if size_d and int(size_d) > 0:
+                    res["depth_mm"] = float(size_d)
+                if size_h and int(size_h) > 0:
+                    res["thickness_mm"] = float(size_h)
+                if weight and int(weight) > 0:
+                    res["weight_g"] = float(weight)
+                if item_page and int(item_page) > 0:
+                    res["page_count"] = int(item_page)
                 if res:
                     res["source"] = "ALADIN_API_1ST_PRIORITY"
                     return res

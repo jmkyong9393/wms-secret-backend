@@ -17,8 +17,11 @@ logger = logging.getLogger(__name__)
 # 라우터 전체에 인증을 건다. 엔드포인트마다 붙이면 새 경로를 추가할 때 또 빠뜨린다 -
 # 실제로 재고·피킹지시서·발주제안이 무인증으로 조회되던 것을 전수 점검에서 발견했다.
 # 알림은 로그인 필수
-router = APIRouter(prefix="/notifications", tags=["Notifications"],
-                   dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/notifications",
+    tags=["Notifications"],
+    dependencies=[Depends(get_current_user)],
+)
 
 # 전역 알림 브로드캐스트 채널 (job 단위가 아닌 대시보드 전역 알림용)
 NOTIFICATIONS_CHANNEL = "notifications:global"
@@ -35,7 +38,9 @@ HEARTBEAT_INTERVAL_SEC = 25
 def list_notifications(
     limit: int = Query(20, ge=1, le=100),
     unread_only: bool = Query(False),
-    role: Optional[str] = Query(None, description="조회자 역할. 해당 역할 전용 알림 + 전체 공개 알림만 반환"),
+    role: Optional[str] = Query(
+        None, description="조회자 역할. 해당 역할 전용 알림 + 전체 공개 알림만 반환"
+    ),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -72,7 +77,9 @@ def list_notifications(
 
 
 @router.post("/{notification_id}/read", summary="알림 1건 읽음 처리")
-def mark_notification_read(notification_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
+def mark_notification_read(
+    notification_id: str, db: Session = Depends(get_db)
+) -> Dict[str, Any]:
     from uuid import UUID
     from app.core.exceptions import BadRequestException, NotFoundException
 
@@ -118,7 +125,9 @@ def mark_all_notifications_read(
 @router.delete("", summary="알림 전체 삭제 (일괄 정리)")
 @router.delete("/", include_in_schema=False)
 def clear_all_notifications(
-    role: Optional[str] = Query(None, description="조회자 역할. 해당 역할 전용 알림 + 전체 공개 알림만 삭제"),
+    role: Optional[str] = Query(
+        None, description="조회자 역할. 해당 역할 전용 알림 + 전체 공개 알림만 삭제"
+    ),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -141,13 +150,16 @@ def clear_all_notifications(
 
 
 @router.get("/stream", summary="실시간 WMS 전역 알림 SSE 스트리밍")
-async def stream_notifications(request: Request, _user: User = Depends(require_stream_access)):
+async def stream_notifications(
+    request: Request, _user: User = Depends(require_stream_access)
+):
     """
     실시간 WMS 알림 SSE (Server-Sent Events) 스트리밍 엔드포인트.
     Redis Pub/Sub(notifications:global 채널)을 구독하여, POST /trigger-fds 등으로
     발행된 이벤트를 그대로 중계한다. (app/domains/inbound/router.py의 SSE 패턴과 동일하게
     구현 - sse_starlette 등 별도 의존성 없이 표준 StreamingResponse만 사용)
     """
+
     async def event_generator():
         import redis.asyncio as aioredis
         from app.core.redis_pubsub import REDIS_URL

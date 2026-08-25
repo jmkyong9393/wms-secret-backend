@@ -25,14 +25,24 @@ ALLOWED_UPLOAD_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/hei
 # 게시판 첨부 전용 화이트리스트 — 검수 사진(이미지 전용)과 별도 관리.
 # 실행 가능한 형식(.html/.svg/.js 등)은 제외, 사무용 문서만 추가 허용.
 BOARD_ALLOWED_EXTENSIONS = ALLOWED_UPLOAD_EXTENSIONS | {
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".hwp", ".txt",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".hwp",
+    ".txt",
 }
 
 # S3 키에 그대로 넣어도 안전한 문자만 남긴다 (한글/공백/특수문자 → '_')
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]")
 
 
-def sanitize_upload_filename(file_name: str, allowed_extensions: Set[str] = ALLOWED_UPLOAD_EXTENSIONS) -> str:
+def sanitize_upload_filename(
+    file_name: str, allowed_extensions: Set[str] = ALLOWED_UPLOAD_EXTENSIONS
+) -> str:
     """
     업로드 파일명을 S3 키로 쓰기 안전한 형태로 정규화한다.
 
@@ -45,7 +55,9 @@ def sanitize_upload_filename(file_name: str, allowed_extensions: Set[str] = ALLO
     base = os.path.basename(file_name.replace("\\", "/")).strip()
     base = base.lstrip(".")  # 숨김 파일(.htaccess 등) 형태 차단
     if not base:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="파일명이 비어 있습니다.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="파일명이 비어 있습니다."
+        )
 
     stem, ext = os.path.splitext(base)
     ext = ext.lower()
@@ -68,6 +80,7 @@ def validate_upload_mime(file_type: str) -> str:
             detail=f"허용되지 않는 Content-Type입니다. 허용 형식: {', '.join(sorted(ALLOWED_UPLOAD_MIME_TYPES))}",
         )
     return normalized
+
 
 @router.get("/authorize")
 def authorize_cloudfront_upload(
@@ -93,11 +106,13 @@ def authorize_cloudfront_upload(
     """
     # 서명 쿠키는 uploads/* 전체에 대한 쓰기 권한이므로, 요청 파일명도 함께 검증해
     # 허용 형식이 아닌 업로드 시도에는 자격을 내주지 않는다.
-    allowed_extensions = BOARD_ALLOWED_EXTENSIONS if category == "board" else ALLOWED_UPLOAD_EXTENSIONS
+    allowed_extensions = (
+        BOARD_ALLOWED_EXTENSIONS if category == "board" else ALLOWED_UPLOAD_EXTENSIONS
+    )
     sanitize_upload_filename(file_name, allowed_extensions)
     # 임시 URL (실제로는 CDN 주소 매핑)
     resource_url = f"https://cdn.wms-ai.com/uploads/*"
-    
+
     try:
         cookies = generate_signed_cookies(resource_url=resource_url, expire_minutes=15)
         # Set cookies on the response
@@ -106,14 +121,17 @@ def authorize_cloudfront_upload(
                 key=cookie_name,
                 value=cookie_value,
                 httponly=True,
-                secure=True, # HTTPS 환경 필수
+                secure=True,  # HTTPS 환경 필수
                 samesite="none",
-                domain="wms-ai.com" # 실제 환경의 도메인
+                domain="wms-ai.com",  # 실제 환경의 도메인
             )
-        
+
         return {"message": "CloudFront Signed Cookies have been set successfully."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate signed cookies: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to generate signed cookies: {str(e)}"
+        )
+
 
 @router.get("/presigned-url")
 def get_presigned_url(
@@ -133,40 +151,42 @@ def get_presigned_url(
 
     if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
         # S3 설정이 없을 경우 임시 Mock URL 반환 (로컬 개발용) - 실제 업로드로 착각하지 않도록 명시적으로 로그
-        print(f"[MOCK MODE] AWS 자격증명 미설정 - {safe_name}에 대해 가짜 업로드 URL을 반환합니다 (실제 S3 업로드 아님).")
+        print(
+            f"[MOCK MODE] AWS 자격증명 미설정 - {safe_name}에 대해 가짜 업로드 URL을 반환합니다 (실제 S3 업로드 아님)."
+        )
         unique_id = uuid.uuid4().hex[:8]
         return {
             "upload_url": f"http://localhost:8000/mock-upload/{unique_id}_{safe_name}",
-            "file_url": f"https://mock-s3.com/{unique_id}_{safe_name}"
+            "file_url": f"https://mock-s3.com/{unique_id}_{safe_name}",
         }
 
     s3_client = boto3.client(
-        's3',
+        "s3",
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_REGION
+        region_name=settings.AWS_REGION,
     )
 
     unique_file_name = f"{uuid.uuid4()}_{safe_name}"
 
     try:
         response = s3_client.generate_presigned_url(
-            'put_object',
+            "put_object",
             Params={
-                'Bucket': settings.AWS_S3_BUCKET,
-                'Key': unique_file_name,
+                "Bucket": settings.AWS_S3_BUCKET,
+                "Key": unique_file_name,
                 # presigned URL에 서명된 ContentType과 다른 타입으로는 업로드가 거부되므로,
                 # 여기서 허용 목록 값을 박아두면 클라이언트가 형식을 바꿔치기할 수 없다.
-                'ContentType': safe_type
+                "ContentType": safe_type,
             },
-            ExpiresIn=3600 # 1 hour
+            ExpiresIn=3600,  # 1 hour
         )
     except ClientError as e:
         raise HTTPException(status_code=500, detail="Failed to generate presigned URL")
 
     return {
         "upload_url": response,
-        "file_url": f"https://{settings.AWS_S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/{unique_file_name}"
+        "file_url": f"https://{settings.AWS_S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/{unique_file_name}",
     }
 
 
@@ -190,7 +210,7 @@ def get_presigned_url(
 # 파일 바이트는 API 서버를 거치지 않고 브라우저→S3로 직행하므로(①) 대역폭 부담이 없고,
 # 검사는 격리 구역에서만 수행되므로(②) 미검증 파일이 노출되는 창이 존재하지 않는다.
 
-ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024   # 5MB — 프론트가 아니라 S3가 강제한다
+ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024  # 5MB — 프론트가 아니라 S3가 강제한다
 QUARANTINE_PREFIX = "quarantine/"
 CLEAN_PREFIX = "attachments/"
 # S3 키 길이 상한. 파일명은 sanitize에서 80자로 잘리지만, 키 전체를 한 번 더 막아
@@ -219,6 +239,7 @@ def _assert_safe_key(key: str, expected_prefix: str) -> None:
     if not key.startswith(expected_prefix):
         raise HTTPException(status_code=403, detail="이 파일에 대한 권한이 없습니다.")
 
+
 # 게시판 첨부에 허용할 Content-Type (BOARD_ALLOWED_EXTENSIONS와 짝을 이룬다)
 BOARD_ALLOWED_MIME_TYPES = ALLOWED_UPLOAD_MIME_TYPES | {
     "application/pdf",
@@ -228,9 +249,11 @@ BOARD_ALLOWED_MIME_TYPES = ALLOWED_UPLOAD_MIME_TYPES | {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.ms-powerpoint",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/x-hwp", "application/haansofthwp", "application/vnd.hancom.hwp",
+    "application/x-hwp",
+    "application/haansofthwp",
+    "application/vnd.hancom.hwp",
     "text/plain",
-    "application/octet-stream",   # 브라우저가 .hwp 등의 타입을 못 잡는 경우
+    "application/octet-stream",  # 브라우저가 .hwp 등의 타입을 못 잡는 경우
 }
 
 
@@ -241,7 +264,9 @@ def _attachment_s3_client():
     엔드포인트로 URL을 만들어 서명 리전 불일치가 난다 (92번 §5-3b).
     """
     if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
-        raise HTTPException(status_code=503, detail="스토리지 자격증명이 설정되지 않았습니다.")
+        raise HTTPException(
+            status_code=503, detail="스토리지 자격증명이 설정되지 않았습니다."
+        )
     return boto3.client(
         "s3",
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
@@ -255,7 +280,9 @@ def _attachment_s3_client():
 @router.post("/attachment/presign")
 def presign_attachment_upload(
     file_name: str = Query(..., description="원본 파일명"),
-    file_type: str = Query("application/octet-stream", description="브라우저가 보고한 MIME"),
+    file_type: str = Query(
+        "application/octet-stream", description="브라우저가 보고한 MIME"
+    ),
     current_user: User = Depends(get_current_user),
 ):
     """게시판 첨부 업로드용 Presigned POST 발급 (격리 구역 대상).
@@ -273,7 +300,9 @@ def presign_attachment_upload(
 
     declared = (file_type or "").split(";")[0].strip().lower()
     if declared and declared not in BOARD_ALLOWED_MIME_TYPES:
-        raise HTTPException(status_code=400, detail=f"허용되지 않는 Content-Type입니다: {declared}")
+        raise HTTPException(
+            status_code=400, detail=f"허용되지 않는 Content-Type입니다: {declared}"
+        )
 
     owner_prefix = _owner_prefix(QUARANTINE_PREFIX, current_user)
     object_key = f"{owner_prefix}{uuid.uuid4()}_{safe_name}"
@@ -290,7 +319,7 @@ def presign_attachment_upload(
                 # 자기 격리 구역 밖으로는 쓸 수 없다 — 남의 구역에 파일을 심어 두는 경로를 막는다.
                 ["starts-with", "$key", owner_prefix],
             ],
-            ExpiresIn=300,   # 5분 — 서명 유출 시 악용 창을 좁힌다
+            ExpiresIn=300,  # 5분 — 서명 유출 시 악용 창을 좁힌다
         )
     except ClientError:
         raise HTTPException(status_code=500, detail="업로드 자격 발급에 실패했습니다.")
@@ -329,7 +358,9 @@ def verify_attachment_upload(
     size = head.get("ContentLength", 0)
     if size > ATTACHMENT_MAX_BYTES:
         s3.delete_object(Bucket=bucket, Key=object_key)
-        raise HTTPException(status_code=400, detail="파일 크기가 허용치를 초과했습니다.")
+        raise HTTPException(
+            status_code=400, detail="파일 크기가 허용치를 초과했습니다."
+        )
 
     body = s3.get_object(Bucket=bucket, Key=object_key)["Body"].read()
     ext = os.path.splitext(object_key)[1].lower()
@@ -339,11 +370,14 @@ def verify_attachment_upload(
     except FileSecurityError as e:
         # 검사 실패분은 격리 구역에서 즉시 제거한다 — 재시도·열람 경로를 남기지 않는다
         s3.delete_object(Bucket=bucket, Key=object_key)
-        raise HTTPException(status_code=400, detail=e.reason, headers={"X-Scan-Code": e.code})
+        raise HTTPException(
+            status_code=400, detail=e.reason, headers={"X-Scan-Code": e.code}
+        )
 
     clean_key = object_key.replace(QUARANTINE_PREFIX, CLEAN_PREFIX, 1)
     s3.copy_object(
-        Bucket=bucket, Key=clean_key,
+        Bucket=bucket,
+        Key=clean_key,
         CopySource={"Bucket": bucket, "Key": object_key},
         MetadataDirective="REPLACE",
         ContentType=head.get("ContentType", "application/octet-stream"),
@@ -363,7 +397,9 @@ ATTACHMENT_DOWNLOAD_MAX_KEYS = 20
 
 @router.post("/attachment/download-urls")
 def issue_attachment_download_urls(
-    object_keys: List[str] = Body(..., embed=True, description="attachments/ 하위 키 목록"),
+    object_keys: List[str] = Body(
+        ..., embed=True, description="attachments/ 하위 키 목록"
+    ),
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Dict[str, str]]:
     """첨부 열람용 Presigned GET URL을 **일괄** 발급한다.
@@ -375,7 +411,9 @@ def issue_attachment_download_urls(
     if not object_keys:
         return {"urls": {}}
     if len(object_keys) > ATTACHMENT_DOWNLOAD_MAX_KEYS:
-        raise HTTPException(status_code=400, detail="한 번에 요청할 수 있는 첨부 수를 초과했습니다.")
+        raise HTTPException(
+            status_code=400, detail="한 번에 요청할 수 있는 첨부 수를 초과했습니다."
+        )
 
     s3 = _attachment_s3_client()
     urls: Dict[str, str] = {}

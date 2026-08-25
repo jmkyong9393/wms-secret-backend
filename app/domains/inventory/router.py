@@ -11,8 +11,9 @@ from app.domains.inventory.service import generate_lpn, get_all_lpn
 # 라우터 전체에 인증을 건다. 엔드포인트마다 붙이면 새 경로를 추가할 때 또 빠뜨린다 -
 # 실제로 재고·피킹지시서·발주제안이 무인증으로 조회되던 것을 전수 점검에서 발견했다.
 # 재고 조회는 로그인 필수
-router = APIRouter(prefix="/inventory", tags=["Inventory"],
-                   dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/inventory", tags=["Inventory"], dependencies=[Depends(get_current_user)]
+)
 
 # 하드 삭제는 관리자 전용 (MASTER/ADMIN)
 from app.models.wms import UserRoleEnum
@@ -26,6 +27,7 @@ from app.models.wms import InventoryUsedItem, Book, Location, now_kst
 from datetime import datetime, timezone, timedelta
 
 KST = timezone(timedelta(hours=9))
+
 
 def to_kst_str(dt: Optional[datetime]) -> str:
     if not dt:
@@ -51,7 +53,9 @@ def to_browser_image_urls(raw_urls: Optional[List[str]]) -> List[str]:
 
     from app.core.config import settings
 
-    api_base = (getattr(settings, "PUBLIC_API_BASE_URL", "") or "http://localhost:8000").rstrip("/")
+    api_base = (
+        getattr(settings, "PUBLIC_API_BASE_URL", "") or "http://localhost:8000"
+    ).rstrip("/")
 
     normalized: List[str] = []
     for url in raw_urls:
@@ -119,11 +123,14 @@ def resolve_inspector(item: Optional[Any], job: Optional[Any]) -> Dict[str, Any]
     return {
         "inspection_source": source,
         "inspected_by": inspected_by,
-        "inspected_at": to_kst_str(getattr(item, "inspected_at", None)) if getattr(item, "inspected_at", None) else None,
+        "inspected_at": to_kst_str(getattr(item, "inspected_at", None))
+        if getattr(item, "inspected_at", None)
+        else None,
         # 입고 촬영을 실제로 수행한 작업자 (등급 확정 주체와 다를 수 있어 별도 노출)
         "inbound_worker_id": inbound_worker,
         "label": label,
     }
+
 
 # 끝 슬래시 유무를 모두 직접 받는다 (리다이렉트 금지).
 #
@@ -176,7 +183,9 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             .order_by(InventoryLog.created_at.desc())
         ).all()
         for lg in log_rows:
-            new_inbound_at_by_book.setdefault(lg.book_id, lg.created_at)  # 최신순이라 첫 값이 최근
+            new_inbound_at_by_book.setdefault(
+                lg.book_id, lg.created_at
+            )  # 최신순이라 첫 값이 최근
             if lg.worker_id:  # 작업자 미기록 로그(레거시)는 일시만 취한다
                 new_worker_by_book.setdefault(lg.book_id, lg.worker_id)
 
@@ -188,36 +197,42 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
             new_name_by_emp[u.employee_id] = u.name
 
     for inv, book, loc in new_results:
-        zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone-A-4-2 (신품존)"
+        zone_str = (
+            f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone-A-4-2 (신품존)"
+        )
         cover_url = book.cover_image_url if (book and book.cover_image_url) else ""
-        output.append({
-            "id": str(inv.id),
-            "lpn_barcode": "LPN 미발급 (신품)",
-            "cover_image_url": cover_url,
-            "book": {
-                "title": book.title if book else "도서 정보 없음",
-                "author": book.author if book else "-",
-                "publisher": book.publisher if book else "-",
-                "isbn": book.isbn if book else "-",
-                "base_price": book.base_price if book else 0.0,
+        output.append(
+            {
+                "id": str(inv.id),
+                "lpn_barcode": "LPN 미발급 (신품)",
                 "cover_image_url": cover_url,
-            },
-            "grade": "NEW_FASTTRACK",
-            "ubci_score": None,
-            "zone": zone_str,
-            "quantity": inv.quantity,
-            # 신품 Fast-track은 AI 비전 검수를 타지 않는다(출판사 직송 무검수 입고).
-            # 입고 원장(InventoryLog.worker_id)에서 읽은 실제 입고 작업자.
-            # 마이그레이션 이전에 입고된 행은 기록이 없어 미기록으로 표기된다.
-            "worker_label": format_worker_label(
-                new_worker_by_book.get(inv.book_id),
-                new_name_by_emp.get(new_worker_by_book.get(inv.book_id) or ""),
-            ),
-            "track": "신품",
-            "worker_id": "신품 Fast-track (무검수 입고)",
-            # 입고 일시 = 최근 INBOUND 원장 시각. 로그 도입 전 레거시 행은 created_at 폴백.
-            "date": to_kst_str(new_inbound_at_by_book.get(inv.book_id) or inv.created_at)
-        })
+                "book": {
+                    "title": book.title if book else "도서 정보 없음",
+                    "author": book.author if book else "-",
+                    "publisher": book.publisher if book else "-",
+                    "isbn": book.isbn if book else "-",
+                    "base_price": book.base_price if book else 0.0,
+                    "cover_image_url": cover_url,
+                },
+                "grade": "NEW_FASTTRACK",
+                "ubci_score": None,
+                "zone": zone_str,
+                "quantity": inv.quantity,
+                # 신품 Fast-track은 AI 비전 검수를 타지 않는다(출판사 직송 무검수 입고).
+                # 입고 원장(InventoryLog.worker_id)에서 읽은 실제 입고 작업자.
+                # 마이그레이션 이전에 입고된 행은 기록이 없어 미기록으로 표기된다.
+                "worker_label": format_worker_label(
+                    new_worker_by_book.get(inv.book_id),
+                    new_name_by_emp.get(new_worker_by_book.get(inv.book_id) or ""),
+                ),
+                "track": "신품",
+                "worker_id": "신품 Fast-track (무검수 입고)",
+                # 입고 일시 = 최근 INBOUND 원장 시각. 로그 도입 전 레거시 행은 created_at 폴백.
+                "date": to_kst_str(
+                    new_inbound_at_by_book.get(inv.book_id) or inv.created_at
+                ),
+            }
+        )
 
     # 2. 중고/반품 검수 LPN 품목 (InventoryUsedItem 테이블) 조회
     #
@@ -229,6 +244,7 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     # REJECTED(Zone E 격리·폐기분)는 실물이 남아 있어 노출을 유지한다.
     # item_status가 NULL인 레거시 row도 노출을 유지한다 (NOT IN의 NULL 삼단논리 주의).
     from sqlalchemy import or_
+
     NOT_YET_STOCKED = ["HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION"]
     NO_LONGER_STOCKED = ["SHIPPED"]
     used_stmt = (
@@ -238,7 +254,9 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
         .where(
             or_(
                 InventoryUsedItem.item_status.is_(None),
-                InventoryUsedItem.item_status.notin_(NOT_YET_STOCKED + NO_LONGER_STOCKED),
+                InventoryUsedItem.item_status.notin_(
+                    NOT_YET_STOCKED + NO_LONGER_STOCKED
+                ),
             )
         )
     )
@@ -270,7 +288,9 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     # 검수 접수 작업자 + 선부착 작업자 사번을 한 번에 모아 이름을 조회한다.
     all_emp_ids = set(worker_by_job.values())
     all_emp_ids.update(
-        it.prelabel_worker_id for it, _b, _l in used_results if getattr(it, "prelabel_worker_id", None)
+        it.prelabel_worker_id
+        for it, _b, _l in used_results
+        if getattr(it, "prelabel_worker_id", None)
     )
     name_by_emp: Dict[str, str] = {}
     if all_emp_ids:
@@ -280,56 +300,61 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     for item, book, loc in used_results:
         zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "검수대기 (미할당)"
         cover_url = book.cover_image_url if (book and book.cover_image_url) else ""
-        output.append({
-            "id": str(item.id),
-            "lpn_barcode": item.lpn_barcode,
-            "cover_image_url": cover_url,
-            "book": {
-                "title": book.title if book else "도서 정보 없음",
-                "author": book.author if book else "-",
-                "publisher": book.publisher if book else "-",
-                "isbn": book.isbn if book else "-",
-                "base_price": book.base_price if book else 0.0,
+        output.append(
+            {
+                "id": str(item.id),
+                "lpn_barcode": item.lpn_barcode,
                 "cover_image_url": cover_url,
-            },
-            # UBCI 점수는 매입가를 결정하는 규정 산식의 출력이므로 기본값으로 채우지 않는다.
-            # 검수 전이라 값이 없으면 None을 그대로 내려보내고 화면이 "미산출"로 표기한다.
-            "grade": item.condition_grade or None,
-            "ubci_score": item.ubci_score,
-            "zone": zone_str,
-            "quantity": 1,
-            # 작업자(사람)와 확정 트랙(AI/HITL)을 분리해 내려준다.
-            # 종전에는 "Nexus Vision AI (LangGraph 4-Agent)" 한 문자열이 작업자 칸을 채워
-            # 실제 검수를 수행한 사람이 화면에 전혀 나오지 않았다.
-            # 검수 기록이 없으면 선부착(라벨 발급) 작업자로 폴백.
-            "worker_label": format_worker_label(
-                worker_by_job.get(str(item.source_job_id or ""))
-                or getattr(item, "prelabel_worker_id", None),
-                name_by_emp.get(
+                "book": {
+                    "title": book.title if book else "도서 정보 없음",
+                    "author": book.author if book else "-",
+                    "publisher": book.publisher if book else "-",
+                    "isbn": book.isbn if book else "-",
+                    "base_price": book.base_price if book else 0.0,
+                    "cover_image_url": cover_url,
+                },
+                # UBCI 점수는 매입가를 결정하는 규정 산식의 출력이므로 기본값으로 채우지 않는다.
+                # 검수 전이라 값이 없으면 None을 그대로 내려보내고 화면이 "미산출"로 표기한다.
+                "grade": item.condition_grade or None,
+                "ubci_score": item.ubci_score,
+                "zone": zone_str,
+                "quantity": 1,
+                # 작업자(사람)와 확정 트랙(AI/HITL)을 분리해 내려준다.
+                # 종전에는 "Nexus Vision AI (LangGraph 4-Agent)" 한 문자열이 작업자 칸을 채워
+                # 실제 검수를 수행한 사람이 화면에 전혀 나오지 않았다.
+                # 검수 기록이 없으면 선부착(라벨 발급) 작업자로 폴백.
+                "worker_label": format_worker_label(
                     worker_by_job.get(str(item.source_job_id or ""))
-                    or getattr(item, "prelabel_worker_id", None)
-                    or ""
+                    or getattr(item, "prelabel_worker_id", None),
+                    name_by_emp.get(
+                        worker_by_job.get(str(item.source_job_id or ""))
+                        or getattr(item, "prelabel_worker_id", None)
+                        or ""
+                    ),
                 ),
-            ),
-            "track": resolve_track(getattr(item, "inspection_source", None)),
-            # 구 필드는 화면 호환을 위해 유지한다 (등급 확정 주체 서술).
-            "worker_id": resolve_inspector(item, None)["label"],
-            # 입고 일시 = 최종 검수 확정 시각. HITL 결재·재검수로 등급이 바뀌면 이 값도 갱신된다
-            # (row 생성 시각인 created_at은 AI 판정 시점에 고정되어 결재 시각을 반영하지 못한다).
-            # 상세 응답과 동일한 기준을 쓴다 - 목록과 상세가 다른 시각을 보이면 안 된다.
-            "date": to_kst_str(item.inspected_at or item.created_at)
-        })
+                "track": resolve_track(getattr(item, "inspection_source", None)),
+                # 구 필드는 화면 호환을 위해 유지한다 (등급 확정 주체 서술).
+                "worker_id": resolve_inspector(item, None)["label"],
+                # 입고 일시 = 최종 검수 확정 시각. HITL 결재·재검수로 등급이 바뀌면 이 값도 갱신된다
+                # (row 생성 시각인 created_at은 AI 판정 시점에 고정되어 결재 시각을 반영하지 못한다).
+                # 상세 응답과 동일한 기준을 쓴다 - 목록과 상세가 다른 시각을 보이면 안 된다.
+                "date": to_kst_str(item.inspected_at or item.created_at),
+            }
+        )
 
     return output
 
+
 from typing import Optional
 from pydantic import BaseModel
+
 
 class CreateLpnRequest(BaseModel):
     book_id: Optional[str] = None
     isbn: Optional[str] = None
     worker_id: Optional[str] = None
-    zone: Optional[str] = None # Zone A, B, C, D, E
+    zone: Optional[str] = None  # Zone A, B, C, D, E
+
 
 @router.post("/lpn")
 async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
@@ -361,7 +386,9 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
             meta = await lookup_book_by_isbn(isbn) or {}
             category_name = meta.get("categoryName", "")
             parts = [p.strip() for p in category_name.split(">") if p.strip()]
-            parsed_category = parts[1] if len(parts) > 1 else (parts[0] if parts else "GENERAL")
+            parsed_category = (
+                parts[1] if len(parts) > 1 else (parts[0] if parts else "GENERAL")
+            )
 
             book_kwargs: Dict[str, Any] = dict(
                 isbn=isbn,
@@ -374,7 +401,13 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
                 cover_image_url=meta.get("imageUrl"),
                 category_type=parsed_category,
             )
-            for field in ("width_mm", "depth_mm", "thickness_mm", "weight_g", "page_count"):
+            for field in (
+                "width_mm",
+                "depth_mm",
+                "thickness_mm",
+                "weight_g",
+                "page_count",
+            ):
                 if meta.get(field) is not None:
                     book_kwargs[field] = meta[field]
 
@@ -402,7 +435,7 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
         "lpn_barcode": new_lpn.lpn_barcode,
         "book": book_row_to_lookup_payload(book),
         "location_id": str(new_lpn.location_id),
-        "worker_id": req.worker_id
+        "worker_id": req.worker_id,
     }
 
 
@@ -436,7 +469,9 @@ async def cancel_lpn(lpn_barcode: str, db: Session = Depends(get_db)):
         )
 
     linked_job = db.exec(
-        select(ReturnJob).where(ReturnJob.agent_logs["lpn_barcode"].astext == lpn_barcode)
+        select(ReturnJob).where(
+            ReturnJob.agent_logs["lpn_barcode"].astext == lpn_barcode
+        )
     ).first()
     if linked_job:
         raise HTTPException(
@@ -451,7 +486,9 @@ async def cancel_lpn(lpn_barcode: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/items/{row_id}")
-def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), current_admin=Depends(_admin_only)):
+def hard_delete_inventory_row(
+    row_id: UUID, db: Session = Depends(get_db), current_admin=Depends(_admin_only)
+):
     """
     재고 행 하드 삭제 (관리자 전용) - 시연·오입고 건을 흔적 없이 리셋하는 캐스케이드.
 
@@ -466,7 +503,13 @@ def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), curre
     """
     from app.models.wms import Inventory, InventoryLog, Notification, ReturnJob
 
-    deleted = {"used_item": 0, "new_inventory": 0, "jobs": 0, "logs": 0, "notifications": 0}
+    deleted = {
+        "used_item": 0,
+        "new_inventory": 0,
+        "jobs": 0,
+        "logs": 0,
+        "notifications": 0,
+    }
 
     # 1) 중고 LPN 낱권
     item = db.get(InventoryUsedItem, row_id)
@@ -475,7 +518,7 @@ def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), curre
             raise HTTPException(
                 status_code=409,
                 detail=f"피킹/출고에 연결된 재고라 삭제할 수 없습니다 (상태: {item.item_status}). "
-                       f"해당 지시서를 먼저 취소해 주세요.",
+                f"해당 지시서를 먼저 취소해 주세요.",
             )
         lpn = item.lpn_barcode
 
@@ -491,13 +534,16 @@ def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), curre
         if job_ids:
             for n in db.exec(
                 select(Notification).where(
-                    Notification.ref_type == "RETURN_JOB", Notification.ref_id.in_(job_ids)
+                    Notification.ref_type == "RETURN_JOB",
+                    Notification.ref_id.in_(job_ids),
                 )
             ).all():
                 db.delete(n)
                 deleted["notifications"] += 1
 
-        for lg in db.exec(select(InventoryLog).where(InventoryLog.target_lpn == lpn)).all():
+        for lg in db.exec(
+            select(InventoryLog).where(InventoryLog.target_lpn == lpn)
+        ).all():
             db.delete(lg)
             deleted["logs"] += 1
 
@@ -508,7 +554,9 @@ def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), curre
             deleted["jobs"] += 1
 
         db.commit()
-        print(f"[재고 하드삭제] {lpn}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})")
+        print(
+            f"[재고 하드삭제] {lpn}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})"
+        )
         return {"status": "success", "lpn_barcode": lpn, "deleted": deleted}
 
     # 2) 신품 Fast-track 묶음 재고
@@ -521,7 +569,9 @@ def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), curre
         # 이 책의 신품 재고가 0이 되면 입고 원장도 함께 지워 검수 내역 목록에서 사라지게 한다.
         # 다른 위치에 재고가 남아 있으면 원장은 이력이므로 보존한다.
         remaining = db.exec(
-            select(Inventory).where(Inventory.book_id == book_id, Inventory.id != row_id)
+            select(Inventory).where(
+                Inventory.book_id == book_id, Inventory.id != row_id
+            )
         ).all()
         if not remaining:
             for lg in db.exec(
@@ -535,7 +585,9 @@ def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), curre
                 deleted["logs"] += 1
 
         db.commit()
-        print(f"[재고 하드삭제] 신품 book={book_id}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})")
+        print(
+            f"[재고 하드삭제] 신품 book={book_id}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})"
+        )
         return {"status": "success", "book_id": str(book_id), "deleted": deleted}
 
     raise HTTPException(status_code=404, detail=f"재고 행을 찾을 수 없습니다: {row_id}")
@@ -545,21 +597,28 @@ def hard_delete_inventory_row(row_id: UUID, db: Session = Depends(get_db), curre
 async def get_lpn_list(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     """발급된 모든 LPN 내역을 조회합니다 (프론트 대시보드 연동용)."""
     lpns = get_all_lpn(db, skip=skip, limit=limit)
-    return [{"lpn_barcode": l.lpn_barcode, "book_id": l.book_id, "status": l.item_status} for l in lpns]
+    return [
+        {"lpn_barcode": l.lpn_barcode, "book_id": l.book_id, "status": l.item_status}
+        for l in lpns
+    ]
+
 
 class BinPackRequest(BaseModel):
     books: List[Dict[str, Any]]
+
 
 @router.post("/bin-pack")
 def recommend_box_packing(req: BinPackRequest):
     """주문 도서들의 판정 체적 기반 3D Bin Packing 최적 박스 추천 알고리즘 API입니다."""
     from app.domains.inventory.bin_packing import recommend_optimal_box
+
     recommended_box = recommend_optimal_box(req.books)
     return {
         "recommended_box": recommended_box,
         "item_count": len(req.books),
-        "message": f"3D 패킹 연산 결과 최적 포장 상자: [{recommended_box}] 추천 완료"
+        "message": f"3D 패킹 연산 결과 최적 포장 상자: [{recommended_box}] 추천 완료",
     }
+
 
 @router.get("/{item_id}")
 def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
@@ -592,9 +651,12 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
     if new_inv:
         book = db.query(Book).filter(Book.id == new_inv.book_id).first()
         loc = db.query(Location).filter(Location.id == new_inv.location_id).first()
-        zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone-A-4-2 (신품존)"
+        zone_str = (
+            f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "Zone-A-4-2 (신품존)"
+        )
         # 입고 일시 = 최근 INBOUND 원장 시각 (목록 API와 동일 원칙 — updated_at은 출고 시에도 갱신됨)
         from app.models.wms import InventoryLog as _Log
+
         last_inbound = db.exec(
             select(_Log)
             .where(
@@ -613,7 +675,11 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
                 "publisher": book.publisher if book else "-",
                 "isbn": book.isbn if book else "9791185553658",
                 "base_price": book.base_price if book else 22000.0,
-                "cover_image_url": (book.cover_image_url if (book and book.cover_image_url) else f"https://contents.kyobobook.co.kr/s3mh/BJCMD/B000000000000_{book.isbn if book else '9791185553658'}.jpg"),
+                "cover_image_url": (
+                    book.cover_image_url
+                    if (book and book.cover_image_url)
+                    else f"https://contents.kyobobook.co.kr/s3mh/BJCMD/B000000000000_{book.isbn if book else '9791185553658'}.jpg"
+                ),
             },
             "grade": "NEW_FASTTRACK",
             "ubci_score": None,
@@ -628,7 +694,10 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
                 "inbound_worker_id": None,
                 "label": "신품 Fast-track (무검수 입고)",
             },
-            "date": to_kst_str((last_inbound.created_at if last_inbound else None) or new_inv.created_at),
+            "date": to_kst_str(
+                (last_inbound.created_at if last_inbound else None)
+                or new_inv.created_at
+            ),
             "image_urls": [],
             "agent_logs": {},
             "final_report": None,
@@ -643,12 +712,20 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
     item = None
     try:
         parsed_id = UUID(item_id)
-        item = db.query(InventoryUsedItem).filter(InventoryUsedItem.id == parsed_id).first()
+        item = (
+            db.query(InventoryUsedItem)
+            .filter(InventoryUsedItem.id == parsed_id)
+            .first()
+        )
     except Exception:
         pass
 
     if not item:
-        item = db.query(InventoryUsedItem).filter(InventoryUsedItem.lpn_barcode == item_id).first()
+        item = (
+            db.query(InventoryUsedItem)
+            .filter(InventoryUsedItem.lpn_barcode == item_id)
+            .first()
+        )
 
     if not item:
         # [수정 이력] ReturnJob에는 lpn_barcode 컬럼이 없다(LPN은 agent_logs JSONB 안에 있음).
@@ -672,7 +749,8 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
             book = db.query(Book).filter(Book.id == job.book_id).first()
             return {
                 "id": str(job.id),
-                "lpn_barcode": (job.agent_logs or {}).get("lpn_barcode") or "LPN-PENDING",
+                "lpn_barcode": (job.agent_logs or {}).get("lpn_barcode")
+                or "LPN-PENDING",
                 "book": {
                     "title": book.title if book else "알 수 없는 도서",
                     "author": book.author if book else "-",
@@ -681,7 +759,9 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
                     "base_price": book.base_price if book else 0.0,
                     "cover_image_url": book.cover_image_url if book else "",
                 },
-                "grade": job.agent_logs.get("suggested_grade") if (job.agent_logs and job.agent_logs.get("suggested_grade")) else "NORMAL",
+                "grade": job.agent_logs.get("suggested_grade")
+                if (job.agent_logs and job.agent_logs.get("suggested_grade"))
+                else "NORMAL",
                 "ubci_score": job.ubci_score or 75,
                 "zone": "Zone Z (임시적재)",
                 "quantity": 1,
@@ -690,7 +770,9 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
                     "inspection_source": "PENDING_HITL",
                     "inspected_by": None,
                     "inspected_at": None,
-                    "inbound_worker_id": (job.agent_logs or {}).get("inbound_worker_id"),
+                    "inbound_worker_id": (job.agent_logs or {}).get(
+                        "inbound_worker_id"
+                    ),
                     "label": "HITL 결재 대기",
                 },
                 "date": to_kst_str(job.created_at),
@@ -705,15 +787,26 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
         # 반환해버려서, 전혀 다른 도서의 이미지/등급/에이전트 로그가 남의 상세페이지에
         # 표시됐다. 데이터 정합성을 깨는 폴백이므로 정직하게 404를 낸다.
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"재고를 찾을 수 없습니다: {item_id}")
+
+        raise HTTPException(
+            status_code=404, detail=f"재고를 찾을 수 없습니다: {item_id}"
+        )
 
     book = db.query(Book).filter(Book.id == item.book_id).first()
-    loc = db.query(Location).filter(Location.id == item.location_id).first() if item.location_id else None
+    loc = (
+        db.query(Location).filter(Location.id == item.location_id).first()
+        if item.location_id
+        else None
+    )
 
     # [수정 이력] source_job_id가 없을 때 `db.query(ReturnJob).first()`로 아무 검수 작업이나
     # 끌어와 그 이미지와 agent_logs를 이 품목의 것인 양 붙여주고 있었다. 남의 검수 결과가
     # 표시되는 원인이므로, 연결된 작업이 없으면 비워둔다.
-    job = db.query(ReturnJob).filter(ReturnJob.id == item.source_job_id).first() if item.source_job_id else None
+    job = (
+        db.query(ReturnJob).filter(ReturnJob.id == item.source_job_id).first()
+        if item.source_job_id
+        else None
+    )
 
     zone_str = f"{loc.zone}-{loc.rack}-{loc.shelf}" if loc else "검수대기 (미할당)"
     agent_logs = (job.agent_logs if job else {}) or {}
@@ -722,11 +815,18 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
     # 목록(GET /inventory)과 같은 표기 정본을 쓴다 - "작업자"는 AI/HITL 판정 주체가 아니라
     # 실제 입고 처리한 사람이어야 한다(라벨 인쇄가 이 값을 그대로 쓴다).
     from app.models.wms import User as _User
+
     inbound_worker_name = None
     if inspector.get("inbound_worker_id"):
-        _u = db.query(_User).filter(_User.employee_id == inspector["inbound_worker_id"]).first()
+        _u = (
+            db.query(_User)
+            .filter(_User.employee_id == inspector["inbound_worker_id"])
+            .first()
+        )
         inbound_worker_name = _u.name if _u else None
-    worker_label = format_worker_label(inspector.get("inbound_worker_id"), inbound_worker_name)
+    worker_label = format_worker_label(
+        inspector.get("inbound_worker_id"), inbound_worker_name
+    )
 
     # [수정 이력] 가격을 프론트가 `정가 × UBCI/100`으로 직접 계산하고 있었다. UBCI 100점(MINT)
     # 이면 계수가 1.0이라 **중고 판매가가 신품 정가와 완전히 동일**하게 표시됐고(정가 20,000원 /

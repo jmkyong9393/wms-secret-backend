@@ -15,6 +15,7 @@ RAG(`rag_service.cite_deduction_basis`)는 조문 전문 발췌를 덧붙이는 
 [이 파일이 정하지 않는 것]
 반품 수용 여부·배송비 부담·귀책 판단은 여기 없다. 그것들은 조건이 여럿이고 플랫폼마다 달라 매트릭스로 환원되지 않는다. Policy Agent Stage B(LLM+RAG)가 담당한다.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ class DeductionRule:
     면적 3구간(minor/moderate/severe)을 쓰거나, 면적과 무관한 고정값(flat)을 쓴다.
     둘을 섞어 쓰지 않는다 - 같은 결함을 두 기준으로 재면 어느 쪽이 적용됐는지 화면에서 읽을 수 없다.
     """
+
     label: str
     clause: str
     minor: Optional[int] = None
@@ -67,7 +69,11 @@ CRUSH = DeductionRule("찍힘/구겨짐", "제4조⑤", minor=3, moderate=5, sev
 # 코드는 둘을 분리하고 오염을 -5/-10/-20으로 더 엄격하게 본다 - 오염 면적 15% 이상은 재판매가 사실상 곤란한 수준인데 -10이면 85점(A급)이 유지되어 상품가치를 과대평가한다.
 # 조장 결정(2026-08-14): 코드 기준을 정본으로 삼고 정책서를 이에 맞춰 개정한다.
 STAIN = DeductionRule(
-    "내지 오염/이물질", "제4조⑤", minor=5, moderate=10, severe=20,
+    "내지 오염/이물질",
+    "제4조⑤",
+    minor=5,
+    moderate=10,
+    severe=20,
     text_overlap_weighted=False,
 )
 
@@ -78,7 +84,9 @@ DISCOLOR = DeductionRule("변색/황변", "제4조⑤", text_overlap_weighted=Fa
 STICKER = DeductionRule("스티커/가격표 자국", "제4조⑤", minor=2, moderate=3, severe=5)
 
 # 정책서 제4조⑤ 특수 마킹: 책등 갈라짐 미세(-5) / 깊음(-10). 구간이 2단이라 minor와 moderate를 같은 값으로 두어 "15% 미만이면 -5"를 표현한다.
-SPINE_CRACK = DeductionRule("책등 갈라짐", "제4조⑤ 특수 마킹", minor=5, moderate=5, severe=10)
+SPINE_CRACK = DeductionRule(
+    "책등 갈라짐", "제4조⑤ 특수 마킹", minor=5, moderate=5, severe=10
+)
 
 # 정책서 제4조⑤ 특수 마킹: 도서관/장서인 도장은 크기 무관 -15(중징계). 정책서 v2.1.0.0 제3조에서 "장서인은 장물 의심으로 즉시 반려하지 않고 감점 처리"로 완화됐다(구버전은 REJECT였다).
 STAMP = DeductionRule("도서관 장서인/도장", "제4조⑤ 특수 마킹", flat=15)
@@ -96,9 +104,11 @@ BINDING_LOOSE = DeductionRule("제본 벌어짐", "제3조 제본 파손", flat=
 # ─────────────────────────────────────────────────────────────
 # 마모는 건수가 아니라 "책의 서로 다른 모서리 몇 곳이 닳았는가"로 센다. 같은 구석이 앞표지·뒤표지·책등 컷에 모두 잡혀도 물리적으로는 한 곳이기 때문이다.
 # 종전에는 상태와 무관하게 -5 단일 고정이라, 살짝 닳은 책과 헤질 정도로 닳은 책이 같은 점수를 받았고 모서리 마모만으로는 어떤 경우에도 S급(>=95)을 벗어날 수 없었다(=95점 고정). 등급이 매입가를 결정하므로 차등이 필요하다.
-EDGE_WEAR = DeductionRule("모서리 마모", "제4조⑤ (내부 신설)", minor=3, moderate=5, severe=10)
-EDGE_WEAR_SPREAD_STEP = 2   # 마모 부위가 1곳 늘 때마다 추가 감점
-EDGE_WEAR_CAP = 15          # 마모 총 감점 상한
+EDGE_WEAR = DeductionRule(
+    "모서리 마모", "제4조⑤ (내부 신설)", minor=3, moderate=5, severe=10
+)
+EDGE_WEAR_SPREAD_STEP = 2  # 마모 부위가 1곳 늘 때마다 추가 감점
+EDGE_WEAR_CAP = 15  # 마모 총 감점 상한
 
 
 # ─────────────────────────────────────────────────────────────
@@ -114,7 +124,9 @@ DOODLE = DeductionRule("필기/낙서", "제3조 사용 흔적", minor=10, moder
 # REJECT로 떨어진다. 도서 전체에 대해 단일 Cap을 적용한다.
 WORKBOOK_DOODLE_CAP = 15
 WORKBOOK_DOODLE = DeductionRule(
-    "수험서/문제집 전체 필기", "제3조 문제집 사용 흔적", flat=WORKBOOK_DOODLE_CAP,
+    "수험서/문제집 전체 필기",
+    "제3조 문제집 사용 흔적",
+    flat=WORKBOOK_DOODLE_CAP,
     text_overlap_weighted=False,
 )
 
@@ -126,7 +138,7 @@ WORKBOOK_DOODLE = DeductionRule(
 # 크다. 정책서 제3조는 "내지 2페이지 이상"을 기준으로 두지만 코드는 감지 즉시 반려한다.
 REJECT_CLAUSE_WET = "제3조 물젖음"
 REJECT_CLAUSE_BINDING = "제3조 제본 파손"
-BINDING_FATAL_RATIO = 15.0   # 제본 벌어짐이 이 면적을 넘으면 즉시 반려
+BINDING_FATAL_RATIO = 15.0  # 제본 벌어짐이 이 면적을 넘으면 즉시 반려
 
 
 # ─────────────────────────────────────────────────────────────

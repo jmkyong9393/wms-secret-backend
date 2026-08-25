@@ -19,6 +19,7 @@ LPN으로 이력↔재고를 조인하는 화면에서 엉뚱한 책의 검수 �
 잘못 물린 검수이력에만 그 날짜의 미사용 순번을 새로 발급해 오연결을 끊는다.
 멱등하다 - 오연결이 없으면 아무것도 하지 않는다.
 """
+
 import sys
 import re
 
@@ -33,29 +34,39 @@ from app.db.session import engine
 
 def main() -> None:
     with Session(engine) as db:
-        bad = db.exec(text(
-            "SELECT r.id, r.agent_logs->>'lpn_barcode' "
-            "FROM return_jobs r JOIN inventory_used_items i "
-            "  ON i.lpn_barcode = r.agent_logs->>'lpn_barcode' "
-            "WHERE r.book_id <> i.book_id ORDER BY 2"
-        )).all()
+        bad = db.exec(
+            text(
+                "SELECT r.id, r.agent_logs->>'lpn_barcode' "
+                "FROM return_jobs r JOIN inventory_used_items i "
+                "  ON i.lpn_barcode = r.agent_logs->>'lpn_barcode' "
+                "WHERE r.book_id <> i.book_id ORDER BY 2"
+            )
+        ).all()
         if not bad:
             print("오연결 없음 - 복구할 것이 없습니다.")
             return
 
-        db.exec(text(
-            "CREATE TABLE IF NOT EXISTS _bak_20260806_lpn_misllink AS "
-            "SELECT r.id, r.agent_logs FROM return_jobs r JOIN inventory_used_items i "
-            "  ON i.lpn_barcode = r.agent_logs->>'lpn_barcode' WHERE r.book_id <> i.book_id"
-        ))
+        db.exec(
+            text(
+                "CREATE TABLE IF NOT EXISTS _bak_20260806_lpn_misllink AS "
+                "SELECT r.id, r.agent_logs FROM return_jobs r JOIN inventory_used_items i "
+                "  ON i.lpn_barcode = r.agent_logs->>'lpn_barcode' WHERE r.book_id <> i.book_id"
+            )
+        )
         db.commit()
 
         # 이미 쓰인 LPN 전체 (재고 + 이력) - 새 번호가 여기에 걸리면 안 된다
-        used = {r[0] for r in db.exec(text(
-            "SELECT lpn_barcode FROM inventory_used_items "
-            "UNION SELECT agent_logs->>'lpn_barcode' FROM return_jobs "
-            "WHERE agent_logs->>'lpn_barcode' IS NOT NULL"
-        )).all() if r[0]}
+        used = {
+            r[0]
+            for r in db.exec(
+                text(
+                    "SELECT lpn_barcode FROM inventory_used_items "
+                    "UNION SELECT agent_logs->>'lpn_barcode' FROM return_jobs "
+                    "WHERE agent_logs->>'lpn_barcode' IS NOT NULL"
+                )
+            ).all()
+            if r[0]
+        }
 
         fixed = 0
         for job_id, old in bad:
@@ -71,9 +82,11 @@ def main() -> None:
             used.add(new)
 
             db.exec(
-                text("UPDATE return_jobs SET agent_logs = CAST(jsonb_set("
-                     "CAST(agent_logs AS jsonb), '{lpn_barcode}', to_jsonb(CAST(:n AS text))"
-                     ") AS json) WHERE id = :i"),
+                text(
+                    "UPDATE return_jobs SET agent_logs = CAST(jsonb_set("
+                    "CAST(agent_logs AS jsonb), '{lpn_barcode}', to_jsonb(CAST(:n AS text))"
+                    ") AS json) WHERE id = :i"
+                ),
                 params={"n": new, "i": job_id},
             )
             print(f"  [job] {old} -> {new}")

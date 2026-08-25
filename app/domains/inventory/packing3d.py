@@ -13,6 +13,7 @@
 
 좌표계: x=박스 length(긴 변), y=박스 width(짧은 변), z=수직 높이 (단위 mm)
 """
+
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -26,9 +27,9 @@ SUPPORT_RATIO_MIN = 0.75  # 상부 적재 시 하부 지지면적 최소 비율
 class PackItem:
     id: str
     name: str
-    length: float   # 도서 긴 변 (mm)
-    width: float    # 도서 짧은 변 (mm)
-    height: float   # 도서 두께 (mm)
+    length: float  # 도서 긴 변 (mm)
+    width: float  # 도서 짧은 변 (mm)
+    height: float  # 도서 두께 (mm)
     weight_g: float = 500.0
 
     @property
@@ -47,10 +48,10 @@ class Placement:
     x: float
     y: float
     z: float
-    length: float   # 배치 후 x축 점유 길이 (회전 반영)
-    width: float    # 배치 후 y축 점유 길이 (회전 반영)
+    length: float  # 배치 후 x축 점유 길이 (회전 반영)
+    width: float  # 배치 후 y축 점유 길이 (회전 반영)
     height: float
-    rotated: bool   # True = 90도 회전 배치
+    rotated: bool  # True = 90도 회전 배치
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -92,8 +93,9 @@ def _overlap_1d(a0: float, a1: float, b0: float, b1: float) -> float:
     return max(0.0, min(a1, b1) - max(a0, b0))
 
 
-def _collides(x: float, y: float, z: float, l: float, w: float, h: float,
-              placed: List[Placement]) -> bool:
+def _collides(
+    x: float, y: float, z: float, l: float, w: float, h: float, placed: List[Placement]
+) -> bool:
     for p in placed:
         if (
             _overlap_1d(x, x + l, p.x, p.x + p.length) > EPS
@@ -104,29 +106,33 @@ def _collides(x: float, y: float, z: float, l: float, w: float, h: float,
     return False
 
 
-def _support_ratio(x: float, y: float, z: float, l: float, w: float,
-                   placed: List[Placement]) -> float:
+def _support_ratio(
+    x: float, y: float, z: float, l: float, w: float, placed: List[Placement]
+) -> float:
     """z 높이에 놓일 바닥면(l x w)이 기존 적재물 상면으로 지지되는 면적 비율"""
     if z <= EPS:
         return 1.0  # 박스 바닥
     supported = 0.0
     for p in placed:
         if abs((p.z + p.height) - z) <= EPS:
-            supported += (
-                _overlap_1d(x, x + l, p.x, p.x + p.length)
-                * _overlap_1d(y, y + w, p.y, p.y + p.width)
+            supported += _overlap_1d(x, x + l, p.x, p.x + p.length) * _overlap_1d(
+                y, y + w, p.y, p.y + p.width
             )
     return supported / (l * w) if l * w > 0 else 0.0
 
 
-def _prune_eps(eps: List[Tuple[float, float, float]],
-               placed: List[Placement],
-               box: Dict[str, Any]) -> List[Tuple[float, float, float]]:
+def _prune_eps(
+    eps: List[Tuple[float, float, float]], placed: List[Placement], box: Dict[str, Any]
+) -> List[Tuple[float, float, float]]:
     """박스 밖이거나 기존 적재물 내부에 매몰된 Extreme Point 제거 + 중복 제거"""
     result = []
     seen = set()
-    for (x, y, z) in eps:
-        if x >= box["length"] - EPS or y >= box["width"] - EPS or z >= box["height"] - EPS:
+    for x, y, z in eps:
+        if (
+            x >= box["length"] - EPS
+            or y >= box["width"] - EPS
+            or z >= box["height"] - EPS
+        ):
             continue
         inside = False
         for p in placed:
@@ -169,7 +175,9 @@ def pack_into_box(
         return PackResult(box=box, unplaced=list(items))
 
     # BFD 'Decreasing': 바닥면적 -> 중량 -> 두께 내림차순 (Bottom-Heavy 안정 적재)
-    ordered = sorted(items, key=lambda it: (it.footprint, it.weight_g, it.height), reverse=True)
+    ordered = sorted(
+        items, key=lambda it: (it.footprint, it.weight_g, it.height), reverse=True
+    )
 
     result = PackResult(box=box)
     placed: List[Placement] = []
@@ -209,8 +217,15 @@ def pack_into_box(
         l = item.width if rotated else item.length
         w = item.length if rotated else item.width
         pl = Placement(
-            item_id=item.id, name=item.name,
-            x=x, y=y, z=z, length=l, width=w, height=item.height, rotated=rotated,
+            item_id=item.id,
+            name=item.name,
+            x=x,
+            y=y,
+            z=z,
+            length=l,
+            width=w,
+            height=item.height,
+            rotated=rotated,
         )
         placed.append(pl)
         result.total_weight_g += item.weight_g
@@ -239,7 +254,9 @@ def recommend_and_pack(
     전량 배치에 성공하는 최소 박스를 선택한다.
     단일 박스 수용 불가 시 마스터 카톤(FFD) 다중 분할 결과를 반환한다.
     """
-    sorted_boxes = sorted(BOX_CATALOG, key=lambda b: b["length"] * b["width"] * b["height"])
+    sorted_boxes = sorted(
+        BOX_CATALOG, key=lambda b: b["length"] * b["width"] * b["height"]
+    )
 
     for box in sorted_boxes:
         res = pack_into_box(items, box, side_margin_mm, top_margin_mm)

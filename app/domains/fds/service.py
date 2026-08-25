@@ -15,6 +15,7 @@ FDS(Fraud Detection System) 서비스 - 룰 엔진 + Analyst Agent 2단 구조.
   R3_NIGHT_BULK     : 야간(22~06시) 대량 주문 (비정상 발주 패턴)
   R4_RETURN_ABUSE   : 동일 고객 반복 반품 요청 (반품 어뷰징)
 """
+
 import json
 import logging
 from datetime import timedelta
@@ -25,7 +26,12 @@ from sqlmodel import Session, select, func
 
 from app.core.constants import format_worker_label
 from app.models.wms import (
-    AdminAuditLog, FdsReport, Order, OrderStatusEnum, User, now_kst,
+    AdminAuditLog,
+    FdsReport,
+    Order,
+    OrderStatusEnum,
+    User,
+    now_kst,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,31 +40,34 @@ logger = logging.getLogger(__name__)
 _GRADE_RANK = {"REJECT": 0, "NORMAL": 1, "GOOD": 2, "MINT": 3}
 
 # 룰별 임계값 (결정론적 상수 - 변경 시 이 파일만 수정)
-BLIND_APPROVAL_THRESHOLD_MS = 1000     # R1: 평균 결재시간 1초 미만
-BLIND_APPROVAL_WINDOW_DAYS = 7         # R1: 관측창 (누적 평균은 이력에 희석돼 탐지 불능)
-BLIND_APPROVAL_MIN_SAMPLES = 5         # R1: 관측창 내 최소 결재 건수 (표본 부족 오탐 방지)
+BLIND_APPROVAL_THRESHOLD_MS = 1000  # R1: 평균 결재시간 1초 미만
+BLIND_APPROVAL_WINDOW_DAYS = 7  # R1: 관측창 (누적 평균은 이력에 희석돼 탐지 불능)
+BLIND_APPROVAL_MIN_SAMPLES = 5  # R1: 관측창 내 최소 결재 건수 (표본 부족 오탐 방지)
 # R1: 관측창 내 "임계 미만" 결재의 비율 하한. 평균 대신 비율을 쓰는 이유는 아래 룰 주석 참조.
 BLIND_APPROVAL_MIN_FAST_RATIO = 0.6
-GRADE_OVERRIDE_MIN_STEPS = 2           # R2: 2단계 이상 상향
-GRADE_OVERRIDE_MIN_COUNT = 2           # R2: 반복 기준 횟수
-GRADE_OVERRIDE_WINDOW_DAYS = 30        # R2: 관측창 (누적 카운트는 영구 적발 상태로 굳는다)
+GRADE_OVERRIDE_MIN_STEPS = 2  # R2: 2단계 이상 상향
+GRADE_OVERRIDE_MIN_COUNT = 2  # R2: 반복 기준 횟수
+GRADE_OVERRIDE_WINDOW_DAYS = 30  # R2: 관측창 (누적 카운트는 영구 적발 상태로 굳는다)
 # R3: 야간 주문 임계 금액. B2B 서점 발주는 50만원(수십 권)이 일상 규모라 금액 단독으로는
 # 정상 거래를 무더기로 잡는다. 절대 하한을 올리고, 이력이 있는 고객은 "평소 대비 배수"를
 # 함께 본다 - 같은 금액이라도 그 거래처에게 이례적인지가 실제 이상 신호다.
-NIGHT_BULK_MIN_PRICE = 2_000_000       # R3: 야간 주문 절대 하한 (원)
-NIGHT_BULK_OUTLIER_RATIO = 3.0         # R3: 해당 고객 평소 주문 평균 대비 배수
-NIGHT_BULK_HISTORY_DAYS = 90           # R3: 평소 주문 평균을 낼 관측 구간
-RETURN_ABUSE_MIN_COUNT = 3             # R4: 반복 반품 기준 횟수
-DEDUP_WINDOW_HOURS = 24                # 동일 룰+대상 재적발 억제 창
+NIGHT_BULK_MIN_PRICE = 2_000_000  # R3: 야간 주문 절대 하한 (원)
+NIGHT_BULK_OUTLIER_RATIO = 3.0  # R3: 해당 고객 평소 주문 평균 대비 배수
+NIGHT_BULK_HISTORY_DAYS = 90  # R3: 평소 주문 평균을 낼 관측 구간
+RETURN_ABUSE_MIN_COUNT = 3  # R4: 반복 반품 기준 횟수
+DEDUP_WINDOW_HOURS = 24  # 동일 룰+대상 재적발 억제 창
 
 
 class _AnalystVerdict(BaseModel):
     fraud_reason: str = Field(description="적발 정황 한 문장 해석 (한국어, 255자 이내)")
-    recommended_action: str = Field(description="관리자가 취해야 할 권고 조치 1~2문장 (한국어)")
+    recommended_action: str = Field(
+        description="관리자가 취해야 할 권고 조치 1~2문장 (한국어)"
+    )
 
 
 try:
     from langchain_openai import ChatOpenAI
+
     _analyst_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 except Exception:
     _analyst_llm = None
@@ -110,24 +119,34 @@ class FdsService:
                 continue
 
             user = session.get(User, admin_id)
-            target = format_worker_label(user.employee_id, user.name) if user else str(admin_id)
+            target = (
+                format_worker_label(user.employee_id, user.name)
+                if user
+                else str(admin_id)
+            )
             # 점수: 날림 결재 비율이 높을수록 위험 (60% = 60점 기준, 100% = 95점)
-            score = min(95, 60 + int((fast_ratio - BLIND_APPROVAL_MIN_FAST_RATIO) * 100))
-            detections.append({
-                "rule_code": "R1_BLIND_APPROVAL",
-                "target_type": "ADMIN",
-                "target_name": target,
-                "fraud_score": score,
-                "evidence": {
-                    "window_days": BLIND_APPROVAL_WINDOW_DAYS,
-                    "total_reviews": total,
-                    "fast_reviews": len(fast),
-                    "fast_ratio_pct": round(fast_ratio * 100, 1),
-                    "median_duration_ms": sorted(durations)[total // 2],
-                    "threshold_ms": BLIND_APPROVAL_THRESHOLD_MS,
-                    "required_ratio_pct": round(BLIND_APPROVAL_MIN_FAST_RATIO * 100),
-                },
-            })
+            score = min(
+                95, 60 + int((fast_ratio - BLIND_APPROVAL_MIN_FAST_RATIO) * 100)
+            )
+            detections.append(
+                {
+                    "rule_code": "R1_BLIND_APPROVAL",
+                    "target_type": "ADMIN",
+                    "target_name": target,
+                    "fraud_score": score,
+                    "evidence": {
+                        "window_days": BLIND_APPROVAL_WINDOW_DAYS,
+                        "total_reviews": total,
+                        "fast_reviews": len(fast),
+                        "fast_ratio_pct": round(fast_ratio * 100, 1),
+                        "median_duration_ms": sorted(durations)[total // 2],
+                        "threshold_ms": BLIND_APPROVAL_THRESHOLD_MS,
+                        "required_ratio_pct": round(
+                            BLIND_APPROVAL_MIN_FAST_RATIO * 100
+                        ),
+                    },
+                }
+            )
         return detections
 
     def _rule_grade_override(self, session: Session) -> List[Dict[str, Any]]:
@@ -153,12 +172,18 @@ class FdsService:
                 continue
             # 당시 AI 제안 등급은 대상 ReturnJob의 agent_logs.suggested_grade에 있음
             from app.models.wms import ReturnJob
+
             try:
                 from uuid import UUID as _UUID
+
                 job = session.get(ReturnJob, _UUID(log.target_id))
             except Exception:
                 job = None
-            suggested = ((job.agent_logs or {}).get("suggested_grade") or "").upper() if job else ""
+            suggested = (
+                ((job.agent_logs or {}).get("suggested_grade") or "").upper()
+                if job
+                else ""
+            )
             if suggested not in _GRADE_RANK:
                 continue
             steps_up = _GRADE_RANK[target_grade] - _GRADE_RANK[suggested]
@@ -170,19 +195,25 @@ class FdsService:
             if len(ups) < GRADE_OVERRIDE_MIN_COUNT:
                 continue
             user = session.get(User, admin_id)
-            target = format_worker_label(user.employee_id, user.name) if user else str(admin_id)
+            target = (
+                format_worker_label(user.employee_id, user.name)
+                if user
+                else str(admin_id)
+            )
             score = min(95, 55 + len(ups) * 10 + max(ups) * 5)
-            detections.append({
-                "rule_code": "R2_GRADE_OVERRIDE",
-                "target_type": "ADMIN",
-                "target_name": target,
-                "fraud_score": score,
-                "evidence": {
-                    "override_count": len(ups),
-                    "max_steps_up": max(ups),
-                    "min_required_steps": GRADE_OVERRIDE_MIN_STEPS,
-                },
-            })
+            detections.append(
+                {
+                    "rule_code": "R2_GRADE_OVERRIDE",
+                    "target_type": "ADMIN",
+                    "target_name": target,
+                    "fraud_score": score,
+                    "evidence": {
+                        "override_count": len(ups),
+                        "max_steps_up": max(ups),
+                        "min_required_steps": GRADE_OVERRIDE_MIN_STEPS,
+                    },
+                }
+            )
         return detections
 
     def _rule_night_bulk(self, session: Session) -> List[Dict[str, Any]]:
@@ -227,21 +258,25 @@ class FdsService:
 
             ratio = round(price / baseline, 1) if baseline > 0 else None
             score = min(90, 50 + int((price - NIGHT_BULK_MIN_PRICE) / 500_000) * 5)
-            detections.append({
-                "rule_code": "R3_NIGHT_BULK",
-                "target_type": "CUSTOMER",
-                "target_name": o.customer_name or "미상 고객",
-                "fraud_score": score,
-                "evidence": {
-                    "order_id": str(o.id),
-                    "order_hour_kst": hour,
-                    "total_price": price,
-                    "threshold_price": NIGHT_BULK_MIN_PRICE,
-                    "customer_avg_90d": round(baseline) if baseline else None,
-                    "outlier_ratio": ratio,
-                    "required_ratio": NIGHT_BULK_OUTLIER_RATIO if baseline > 0 else None,
-                },
-            })
+            detections.append(
+                {
+                    "rule_code": "R3_NIGHT_BULK",
+                    "target_type": "CUSTOMER",
+                    "target_name": o.customer_name or "미상 고객",
+                    "fraud_score": score,
+                    "evidence": {
+                        "order_id": str(o.id),
+                        "order_hour_kst": hour,
+                        "total_price": price,
+                        "threshold_price": NIGHT_BULK_MIN_PRICE,
+                        "customer_avg_90d": round(baseline) if baseline else None,
+                        "outlier_ratio": ratio,
+                        "required_ratio": NIGHT_BULK_OUTLIER_RATIO
+                        if baseline > 0
+                        else None,
+                    },
+                }
+            )
         return detections
 
     def _rule_return_abuse(self, session: Session) -> List[Dict[str, Any]]:
@@ -270,16 +305,18 @@ class FdsService:
             if cnt < RETURN_ABUSE_MIN_COUNT:
                 continue
             score = min(90, 45 + int(cnt) * 10)
-            detections.append({
-                "rule_code": "R4_RETURN_ABUSE",
-                "target_type": "CUSTOMER",
-                "target_name": customer,
-                "fraud_score": score,
-                "evidence": {
-                    "return_count_30d": int(cnt),
-                    "threshold_count": RETURN_ABUSE_MIN_COUNT,
-                },
-            })
+            detections.append(
+                {
+                    "rule_code": "R4_RETURN_ABUSE",
+                    "target_type": "CUSTOMER",
+                    "target_name": customer,
+                    "fraud_score": score,
+                    "evidence": {
+                        "return_count_30d": int(cnt),
+                        "threshold_count": RETURN_ABUSE_MIN_COUNT,
+                    },
+                }
+            )
         return detections
 
     # ---------- Analyst Agent (gpt-4o-mini, 서술만) ----------
@@ -302,13 +339,18 @@ class FdsService:
         """룰 엔진이 확정한 사실만 입력으로 받아 해석/권고 서술을 생성. 실패 시 템플릿 폴백."""
         rule = detection["rule_code"]
         fallback = {
-            "fraud_reason": f"[{self._RULE_LABEL.get(rule, rule)}] 대상: {detection['target_name']} / 근거: {json.dumps(detection['evidence'], ensure_ascii=False)}"[:255],
-            "recommended_action": self._FALLBACK_ACTION.get(rule, "관리자 수동 검토가 필요합니다."),
+            "fraud_reason": f"[{self._RULE_LABEL.get(rule, rule)}] 대상: {detection['target_name']} / 근거: {json.dumps(detection['evidence'], ensure_ascii=False)}"[
+                :255
+            ],
+            "recommended_action": self._FALLBACK_ACTION.get(
+                rule, "관리자 수동 검토가 필요합니다."
+            ),
         }
         if not _analyst_llm:
             return fallback
         try:
             from langchain_core.messages import HumanMessage
+
             structured = _analyst_llm.with_structured_output(_AnalystVerdict)
             prompt = f"""당신은 B2B 도서 물류센터의 FDS(이상거래 탐지) 분석 담당 AI입니다.
 아래는 결정론적 룰 엔진이 이미 확정한 적발 사실입니다. 수치를 새로 판단하거나 바꾸지 말고,
@@ -316,9 +358,9 @@ class FdsService:
 (2) 관리자가 취할 권고 조치 1~2문장(recommended_action)만 한국어로 작성하세요.
 
 적발 룰: {rule} ({self._RULE_LABEL.get(rule, rule)})
-적발 대상: {detection['target_name']} (유형: {detection['target_type']})
-위험 점수: {detection['fraud_score']}점 (룰 엔진 산출 - 변경 금지)
-근거 수치: {json.dumps(detection['evidence'], ensure_ascii=False)}
+적발 대상: {detection["target_name"]} (유형: {detection["target_type"]})
+위험 점수: {detection["fraud_score"]}점 (룰 엔진 산출 - 변경 금지)
+근거 수치: {json.dumps(detection["evidence"], ensure_ascii=False)}
 """
             verdict: _AnalystVerdict = structured.invoke([HumanMessage(content=prompt)])
             return {
@@ -326,7 +368,9 @@ class FdsService:
                 "recommended_action": verdict.recommended_action,
             }
         except Exception as e:
-            logger.warning(f"[FDS Analyst Agent] LLM 서술 생성 실패, 결정론적 템플릿 폴백: {e}")
+            logger.warning(
+                f"[FDS Analyst Agent] LLM 서술 생성 실패, 결정론적 템플릿 폴백: {e}"
+            )
             return fallback
 
     # ---------- 오케스트레이션 ----------
@@ -338,8 +382,12 @@ class FdsService:
         동일 룰+대상은 DEDUP_WINDOW_HOURS 내 재적발을 억제한다 (알림 스팸 방지).
         """
         detections: List[Dict[str, Any]] = []
-        for rule_fn in (self._rule_blind_approval, self._rule_grade_override,
-                        self._rule_night_bulk, self._rule_return_abuse):
+        for rule_fn in (
+            self._rule_blind_approval,
+            self._rule_grade_override,
+            self._rule_night_bulk,
+            self._rule_return_abuse,
+        ):
             try:
                 detections.extend(rule_fn(session))
             except Exception as e:
@@ -361,10 +409,18 @@ class FdsService:
                 skipped += 1
                 continue
 
-            narrative = self._analyze_with_agent(det) if use_agent else {
-                "fraud_reason": f"[{self._RULE_LABEL.get(det['rule_code'], det['rule_code'])}] {det['target_name']}"[:255],
-                "recommended_action": self._FALLBACK_ACTION.get(det["rule_code"], ""),
-            }
+            narrative = (
+                self._analyze_with_agent(det)
+                if use_agent
+                else {
+                    "fraud_reason": f"[{self._RULE_LABEL.get(det['rule_code'], det['rule_code'])}] {det['target_name']}"[
+                        :255
+                    ],
+                    "recommended_action": self._FALLBACK_ACTION.get(
+                        det["rule_code"], ""
+                    ),
+                }
+            )
 
             report = FdsReport(
                 customer_name=det["target_name"],
@@ -436,11 +492,18 @@ class FdsService:
     def summary(self, session: Session) -> Dict[str, Any]:
         week_ago = now_kst() - timedelta(days=7)
         total = session.exec(select(func.count(FdsReport.id))).one() or 0
-        this_week = session.exec(
-            select(func.count(FdsReport.id)).where(FdsReport.detected_at >= week_ago)
-        ).one() or 0
+        this_week = (
+            session.exec(
+                select(func.count(FdsReport.id)).where(
+                    FdsReport.detected_at >= week_ago
+                )
+            ).one()
+            or 0
+        )
         by_rule = session.exec(
-            select(FdsReport.rule_code, func.count(FdsReport.id)).group_by(FdsReport.rule_code)
+            select(FdsReport.rule_code, func.count(FdsReport.id)).group_by(
+                FdsReport.rule_code
+            )
         ).all()
         recent = self.list_reports(session, limit=3)
         return {

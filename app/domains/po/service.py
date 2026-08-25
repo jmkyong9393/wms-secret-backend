@@ -36,7 +36,7 @@ class POService:
       "발주 승인 즉시 MINT 중고 LPN 생성"이던 기존 오류 경로는 제거되었다.
     """
 
-    SCAN_LIMIT = 8               # 스캔 1회당 최대 제안 생성 수 (LLM 비용 상한)
+    SCAN_LIMIT = 8  # 스캔 1회당 최대 제안 생성 수 (LLM 비용 상한)
     # [2026-08-09 리팩토링] 저재고 스캔 기준(신품+중고 합산 가용 재고)이 코드 상수라 UI에서
     # 바꿀 수 없었다 (app/ai/agents/restock.py의 발주수량 바닥값 MIN_SAFETY_STOCK과 서로
     # 다른 값으로 따로 놀던 버그도 이게 원인). system_settings 테이블의 단일 값으로 통합했다
@@ -46,7 +46,9 @@ class POService:
     # 조회 (칸반보드)
     # ------------------------------------------------------------------
 
-    def list_proposals(self, db: Session, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_proposals(
+        self, db: Session, status: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         statement = select(OrderProposal).order_by(OrderProposal.created_at.desc())
         if status:
             statement = statement.where(OrderProposal.status == status.upper())
@@ -94,7 +96,11 @@ class POService:
     # ------------------------------------------------------------------
 
     def approve_proposals(
-        self, db: Session, proposal_ids: List[str], decided_by: str, worker_employee_id: str = None
+        self,
+        db: Session,
+        proposal_ids: List[str],
+        decided_by: str,
+        worker_employee_id: str = None,
     ) -> Dict[str, Any]:
         """
         제안 승인 집행: Order(AUTO_PO)+OrderItem 생성 → 신품 Fast-Track 입고.
@@ -124,19 +130,23 @@ class POService:
             )
             db.add(new_order)
             db.flush()
-            db.add(OrderItem(
-                order_id=new_order.id,
-                book_id=book.id,
-                quantity=qty,
-                unit_price=float(proposal.unit_cost or 0.0),
-                condition_pref="NEW",
-            ))
+            db.add(
+                OrderItem(
+                    order_id=new_order.id,
+                    book_id=book.id,
+                    quantity=qty,
+                    unit_price=float(proposal.unit_cost or 0.0),
+                    condition_pref="NEW",
+                )
+            )
 
             # 신품 입고는 현장 스캔 입고와 동일한 Fast-Track 관문을 통과한다 (LPN 미발급).
             # 이 경로는 현장 촬영이 아니라 발주 결재로 들어오는 입고이므로 결재자를 기록한다.
             # worker_id는 사번만 넣는다 - 표시용 라벨(`WM2608001 (장문경)`)을 넣으면 사용자
             # 조회가 실패해 화면에 그 문자열이 그대로 노출된다.
-            fasttrack_new_stock_inbound(db, book, qty, worker_id=worker_employee_id or None)
+            fasttrack_new_stock_inbound(
+                db, book, qty, worker_id=worker_employee_id or None
+            )
 
             proposal.status = "APPROVED"
             proposal.decided_by = decided_by
@@ -146,13 +156,15 @@ class POService:
             db.add(proposal)
             db.commit()
             db.refresh(proposal)
-            approved.append({
-                "proposalId": str(proposal.id),
-                "orderId": str(new_order.id),
-                "title": book.title,
-                "quantity": qty,
-                "zone": "A-1-1",
-            })
+            approved.append(
+                {
+                    "proposalId": str(proposal.id),
+                    "orderId": str(new_order.id),
+                    "title": book.title,
+                    "quantity": qty,
+                    "zone": "A-1-1",
+                }
+            )
 
         return {
             "status": "success",
@@ -161,7 +173,9 @@ class POService:
             "skipped": skipped,
         }
 
-    def dismiss_proposals(self, db: Session, proposal_ids: List[str], decided_by: str) -> Dict[str, Any]:
+    def dismiss_proposals(
+        self, db: Session, proposal_ids: List[str], decided_by: str
+    ) -> Dict[str, Any]:
         dismissed, skipped = [], []
         for pid in proposal_ids:
             proposal = self._get_pending(db, pid)
@@ -175,7 +189,11 @@ class POService:
             db.add(proposal)
             dismissed.append(str(proposal.id))
         db.commit()
-        return {"status": "success", "dismissedCount": len(dismissed), "skipped": skipped}
+        return {
+            "status": "success",
+            "dismissedCount": len(dismissed),
+            "skipped": skipped,
+        }
 
     def delete_proposals(self, db: Session, proposal_ids: List[str]) -> Dict[str, Any]:
         """
@@ -231,15 +249,19 @@ class POService:
         """
         from app.ai.agents.restock import generate_and_store_proposal
 
-        pending_book_ids = set(db.exec(
-            select(OrderProposal.book_id).where(OrderProposal.status == "PENDING")
-        ).all())
+        pending_book_ids = set(
+            db.exec(
+                select(OrderProposal.book_id).where(OrderProposal.status == "PENDING")
+            ).all()
+        )
 
-        used_counts = dict(db.exec(
-            select(InventoryUsedItem.book_id, func.count(InventoryUsedItem.id))
-            .where(InventoryUsedItem.item_status == "IN_STOCK")
-            .group_by(InventoryUsedItem.book_id)
-        ).all())
+        used_counts = dict(
+            db.exec(
+                select(InventoryUsedItem.book_id, func.count(InventoryUsedItem.id))
+                .where(InventoryUsedItem.item_status == "IN_STOCK")
+                .group_by(InventoryUsedItem.book_id)
+            ).all()
+        )
 
         # 실보유 수량은 Inventory 합으로 계산한다. Book.virtual_stock은
         # 위치 없는 중복 기록이라 실재고를 반영하지 못했다.
@@ -248,17 +270,25 @@ class POService:
         new_stock_map = get_new_stock_map(db)
 
         since = now_kst() - timedelta(days=30)
-        recent_demand_ids = set(db.exec(
-            select(InventoryLog.book_id).distinct().where(
-                InventoryLog.transaction_type == "OUTBOUND",
-                InventoryLog.created_at >= since,
-            )
-        ).all())
-        ever_sold_ids = set(db.exec(
-            select(InventoryLog.book_id).distinct().where(
-                InventoryLog.transaction_type == "OUTBOUND",
-            )
-        ).all())
+        recent_demand_ids = set(
+            db.exec(
+                select(InventoryLog.book_id)
+                .distinct()
+                .where(
+                    InventoryLog.transaction_type == "OUTBOUND",
+                    InventoryLog.created_at >= since,
+                )
+            ).all()
+        )
+        ever_sold_ids = set(
+            db.exec(
+                select(InventoryLog.book_id)
+                .distinct()
+                .where(
+                    InventoryLog.transaction_type == "OUTBOUND",
+                )
+            ).all()
+        )
 
         safety_stock_threshold = get_int_setting(
             db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD
@@ -285,17 +315,20 @@ class POService:
             if book.id in pending_book_ids:
                 continue
             proposal = generate_and_store_proposal(
-                db, book,
+                db,
+                book,
                 trigger_type="SAFETY_STOCK",
             )
             if proposal:
-                created.append({
-                    "proposalId": str(proposal.id),
-                    "title": book.title,
-                    "currentStock": proposal.current_stock,
-                    "proposedQuantity": proposal.proposed_quantity,
-                    "urgency": proposal.urgency,
-                })
+                created.append(
+                    {
+                        "proposalId": str(proposal.id),
+                        "title": book.title,
+                        "currentStock": proposal.current_stock,
+                        "proposedQuantity": proposal.proposed_quantity,
+                        "urgency": proposal.urgency,
+                    }
+                )
 
         return {"status": "success", "createdCount": len(created), "created": created}
 

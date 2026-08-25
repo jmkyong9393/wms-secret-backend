@@ -9,6 +9,7 @@ from app.domains.users.service import user_service
 from app.core.exceptions import UnauthorizedException, ForbiddenException
 from app.models.wms import User, UserRoleEnum, UserStatusEnum
 
+
 def get_token_from_cookie(request: Request) -> str:
     token = request.cookies.get("token")
     if not token:
@@ -19,30 +20,39 @@ def get_token_from_cookie(request: Request) -> str:
             raise UnauthorizedException("Not authenticated")
     return token
 
-def get_current_user(token: str = Depends(get_token_from_cookie), session: Session = Depends(get_db)) -> User:
+
+def get_current_user(
+    token: str = Depends(get_token_from_cookie), session: Session = Depends(get_db)
+) -> User:
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
         employee_id: str = payload.get("sub")
         if employee_id is None:
             raise UnauthorizedException("Could not validate credentials")
     except jwt.PyJWTError:
         raise UnauthorizedException("Could not validate credentials")
-    
+
     user = user_service.get_user_by_employee_id(session, employee_id)
     if user is None:
         raise UnauthorizedException("User not found")
-    
-    user_status_str = str(user.status.value) if hasattr(user.status, 'value') else str(user.status)
+
+    user_status_str = (
+        str(user.status.value) if hasattr(user.status, "value") else str(user.status)
+    )
     if user_status_str != "ACTIVE":
         raise ForbiddenException("Inactive user account")
-        
+
     return user
+
 
 class RoleChecker:
     """
     의존성 주입(DI) 기반 선언적 권한 인가 클래스
     사용 예: @router.get("/...", dependencies=[Depends(RoleChecker(["MASTER", "WORKER"]))])
     """
+
     def __init__(self, allowed_roles: List[str]):
         self.allowed_roles = allowed_roles
 

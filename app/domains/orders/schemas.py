@@ -5,6 +5,7 @@ router.py에서 이관. 라우터가 스키마까지 들고 있으면 service가
 참조할 때 순환 import가 생긴다(service ← router ← service). auth·returns·users·board
 슬라이스가 이미 쓰던 구조에 맞춘다.
 """
+
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -29,7 +30,7 @@ class AcceptInstructionRequest(BaseModel):
 
 
 class PickingScanRequest(BaseModel):
-    barcode: str                      # LPN(중고) 또는 13자리 ISBN(신품)
+    barcode: str  # LPN(중고) 또는 13자리 ISBN(신품)
     worker_id: str = "WM2608001"
     instruction_id: Optional[UUID] = None  # 미지정 시 활성 지시서 전체에서 매칭
 

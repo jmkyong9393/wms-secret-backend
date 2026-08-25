@@ -12,6 +12,7 @@ class LoginResponse(BaseModel):
     로그인 응답 본문. JWT는 여기 포함하지 않는다 - HttpOnly 쿠키(Set-Cookie)로만 전달되어
     JS에서 절대 접근할 수 없게 한다 (XSS로 토큰이 탈취되는 경로 원천 차단).
     """
+
     message: str = "Login successful"
     employee_id: str
     name: str
@@ -35,6 +36,7 @@ class PrivacyConsentRequest(BaseModel):
     필수 동의만 존재하므로 agreed=False는 거부한다 - 동의하지 않으면 서비스 이용이 불가하다는
     사실을 화면에서 먼저 고지한다.
     """
+
     agreed: bool
 
 
@@ -43,6 +45,7 @@ class PasswordPolicyResponse(BaseModel):
     화면이 안내 문구와 사전검증 기준을 서버에서 받아가기 위한 응답.
     규칙을 프론트에 복제해두면 서버가 바뀔 때 조용히 어긋나므로 서버를 단일 진실 공급원으로 둔다.
     """
+
     descriptions: list[str]
     min_length_two_classes: int
     min_length_three_classes: int

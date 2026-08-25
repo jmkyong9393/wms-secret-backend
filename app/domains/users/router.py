@@ -4,10 +4,15 @@ from sqlmodel import Session, select
 from app.db.session import get_db
 from app.core.config import settings
 from app.domains.users.schemas import (
-    UserCreate, UserResponse,
-    EmployeeListResponse, BulkCreateEmployeeRequest, BulkCreateEmployeeResponse,
-    UpdateEmployeeStatusRequest, UpdateEmployeeStatusResponse,
-    UpdateEmployeeRoleRequest, UpdateEmployeeRoleResponse
+    UserCreate,
+    UserResponse,
+    EmployeeListResponse,
+    BulkCreateEmployeeRequest,
+    BulkCreateEmployeeResponse,
+    UpdateEmployeeStatusRequest,
+    UpdateEmployeeStatusResponse,
+    UpdateEmployeeRoleRequest,
+    UpdateEmployeeRoleResponse,
 )
 from app.domains.users.service import user_service
 from app.core.limiter import limiter
@@ -32,7 +37,9 @@ def _reject_in_prod() -> None:
     # reset-all-passwords는 데모 중 잠긴 계정을 즉시 복구하기 위한 것 - 둘 다 인증을 요구하면
     # 존재 목적 자체가 성립하지 않는다) 대신 운영 환경에서는 호출 자체를 차단한다.
     if settings.APP_ENV == "prod":
-        raise HTTPException(status_code=403, detail="This endpoint is disabled in production.")
+        raise HTTPException(
+            status_code=403, detail="This endpoint is disabled in production."
+        )
 
 
 @router.post("/init-master", status_code=status.HTTP_201_CREATED)
@@ -45,11 +52,13 @@ def init_master(request: Request, session: Session = Depends(get_db)):
     _reject_in_prod()
     existing_user = session.exec(select(User)).first()
     if existing_user:
-        raise HTTPException(status_code=400, detail="Database is already initialized with users.")
-        
+        raise HTTPException(
+            status_code=400, detail="Database is already initialized with users."
+        )
+
     user_in = UserCreate(company_prefix="WM", name="장문경", role="MASTER")
     user, temp_password = user_service.register_user(session=session, user_in=user_in)
-    
+
     # 개발/시연 편의를 위한 1234 해시 자동 세팅
     user.password_hash = user_service.get_password_hash("1234")
     user.must_change_password = False
@@ -63,8 +72,9 @@ def init_master(request: Request, session: Session = Depends(get_db)):
         "name": user.name,
         "role": user.role,
         "password": "1234",
-        "note": f"Initial Master account initialized with employee_id '{user.employee_id}' and password '1234'."
+        "note": f"Initial Master account initialized with employee_id '{user.employee_id}' and password '1234'.",
     }
+
 
 @router.post("/reset-all-passwords")
 def reset_all_passwords(session: Session = Depends(get_db)):
@@ -86,16 +96,21 @@ def reset_all_passwords(session: Session = Depends(get_db)):
         "status": "success",
         "message": f"Successfully reset passwords for {len(updated_ids)} accounts to '1234'.",
         "updated_employee_ids": updated_ids,
-        "standard_password": "1234"
+        "standard_password": "1234",
     }
+
 
 @router.post("/issue", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
-def issue_account(request: Request, user_in: UserCreate, session: Session = Depends(get_db),
-                  # docstring에는 "(Admin 전용)"이라 적혀 있었으나 실제 인가가 없어
-                  # 인증 없이 계정을 만들 수 있었다. 라우터 단위로 걸 수 없는 것은
-                  # 같은 라우터의 init-master/reset-all-passwords가 무인증이어야 하기 때문이다.
-                  current_admin=Depends(_users_admin_only)):
+def issue_account(
+    request: Request,
+    user_in: UserCreate,
+    session: Session = Depends(get_db),
+    # docstring에는 "(Admin 전용)"이라 적혀 있었으나 실제 인가가 없어
+    # 인증 없이 계정을 만들 수 있었다. 라우터 단위로 걸 수 없는 것은
+    # 같은 라우터의 init-master/reset-all-passwords가 무인증이어야 하기 때문이다.
+    current_admin=Depends(_users_admin_only),
+):
     """
     (Admin 전용) 사번 발급 및 계정 생성
     - company_prefix 기반 사번 자동 채번
@@ -105,7 +120,9 @@ def issue_account(request: Request, user_in: UserCreate, session: Session = Depe
     # 실제 운영에서는 메일 발송이나 Admin에게만 리턴하는 구조 추가 가능
     return user
 
+
 # --- Admin / Employee Management Endpoints ---
+
 
 @router.get("/admin", response_model=EmployeeListResponse)
 def get_employee_list(
@@ -117,89 +134,106 @@ def get_employee_list(
     page: int = 1,
     size: int = 20,
     session: Session = Depends(get_db),
-    _: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
+    _: User = Depends(RoleChecker(["MASTER", "ADMIN"])),
 ):
     skip = (page - 1) * size
-    items, total = user_service.get_all_users_for_admin(session, keyword, role, status, sort_by, sort_order, skip, size)
-    
+    items, total = user_service.get_all_users_for_admin(
+        session, keyword, role, status, sort_by, sort_order, skip, size
+    )
+
     items_out = []
     for u in items:
-        items_out.append({
-            "employee_id": u.employee_id,
-            "name": u.name,
-            "role": u.role,
-            "status": u.status,
-            "created_at": u.created_at.isoformat() if u.created_at else ""
-        })
+        items_out.append(
+            {
+                "employee_id": u.employee_id,
+                "name": u.name,
+                "role": u.role,
+                "status": u.status,
+                "created_at": u.created_at.isoformat() if u.created_at else "",
+            }
+        )
     return {"items": items_out, "total": total, "page": page, "size": size}
+
 
 @router.get("/admin/next-employee-id")
 def get_next_employee_id(
     prefix: str = "WM",
     session: Session = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
+    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"])),
 ):
     next_id = user_service.get_next_employee_id(session, prefix)
     return {"next_employee_id": next_id}
+
 
 @router.post("/admin/create-accounts", response_model=BulkCreateEmployeeResponse)
 def bulk_create_employees(
     req: BulkCreateEmployeeRequest,
     session: Session = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
+    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"])),
 ):
     users_in = [u.model_dump() for u in req.employees]
     results = user_service.bulk_create_users(session, users_in)
     return {"results": results}
 
-@router.patch("/admin/{employee_id}/status", response_model=UpdateEmployeeStatusResponse)
+
+@router.patch(
+    "/admin/{employee_id}/status", response_model=UpdateEmployeeStatusResponse
+)
 def update_employee_status(
     employee_id: str,
     req: UpdateEmployeeStatusRequest,
     session: Session = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
+    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"])),
 ):
     target_user = user_service.get_user_by_employee_id(session, employee_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     if current_user.role != "MASTER" and target_user.role == "MASTER":
-        raise HTTPException(status_code=403, detail="ADMIN cannot modify MASTER accounts.")
-        
+        raise HTTPException(
+            status_code=403, detail="ADMIN cannot modify MASTER accounts."
+        )
+
     user = user_service.update_user_status(session, employee_id, req.status)
     return {"employee_id": user.employee_id, "status": user.status}
+
 
 @router.patch("/admin/{employee_id}/role", response_model=UpdateEmployeeRoleResponse)
 def update_employee_role(
     employee_id: str,
     req: UpdateEmployeeRoleRequest,
     session: Session = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
+    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"])),
 ):
     target_user = user_service.get_user_by_employee_id(session, employee_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     if current_user.role != "MASTER":
         if target_user.role == "MASTER" or req.role == "MASTER":
-            raise HTTPException(status_code=403, detail="ADMIN cannot manage MASTER roles.")
-            
+            raise HTTPException(
+                status_code=403, detail="ADMIN cannot manage MASTER roles."
+            )
+
     user = user_service.update_user_role(session, employee_id, req.role)
     return {"employee_id": user.employee_id, "role": user.role}
+
 
 @router.delete("/admin/{employee_id}")
 def delete_employee(
     employee_id: str,
     session: Session = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"]))
+    current_user: User = Depends(RoleChecker(["MASTER", "ADMIN"])),
 ):
     target_user = user_service.get_user_by_employee_id(session, employee_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     if current_user.role != "MASTER" and target_user.role == "MASTER":
-        raise HTTPException(status_code=403, detail="ADMIN cannot delete MASTER accounts.")
-        
+        raise HTTPException(
+            status_code=403, detail="ADMIN cannot delete MASTER accounts."
+        )
+
     try:
         success = user_service.delete_user(session, employee_id)
         if not success:

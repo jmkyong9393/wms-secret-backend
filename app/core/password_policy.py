@@ -10,6 +10,7 @@
 정책을 서버가 단일 진실 공급원으로 들고, 화면은 같은 규칙을 안내/사전검증용으로만 쓴다
 (프론트 검증만으로는 API 직접 호출을 막지 못하므로 서버 검증이 최종 관문이다).
 """
+
 import re
 from typing import List, Optional
 
@@ -50,7 +51,9 @@ def _has_sequential_run(password: str) -> bool:
     return False
 
 
-def validate_password(password: str, employee_id: Optional[str] = None, name: Optional[str] = None) -> List[str]:
+def validate_password(
+    password: str, employee_id: Optional[str] = None, name: Optional[str] = None
+) -> List[str]:
     """
     규칙 위반 사유 목록을 반환한다 (빈 리스트면 통과).
     예외를 던지지 않고 목록을 돌려주는 이유: 화면이 "무엇이 부족한지"를 항목별로 표시할 수 있어야 하기 때문이다. 첫 위반에서 끊으면 사용자가 시행착오를 반복하게 된다.
@@ -72,7 +75,9 @@ def validate_password(password: str, employee_id: Optional[str] = None, name: Op
         reasons.append(f"3종류 조합은 {MIN_LENGTH_THREE_CLASSES}자 이상이어야 합니다.")
 
     if _has_sequential_run(password):
-        reasons.append("연속되거나 동일한 문자/숫자를 4자 이상 사용할 수 없습니다. (예: 1234, aaaa)")
+        reasons.append(
+            "연속되거나 동일한 문자/숫자를 4자 이상 사용할 수 없습니다. (예: 1234, aaaa)"
+        )
 
     lowered = password.lower()
     if employee_id and employee_id.lower() in lowered:

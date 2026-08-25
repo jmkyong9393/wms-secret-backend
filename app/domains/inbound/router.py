@@ -10,7 +10,15 @@ import uuid
 import datetime
 from app.db.session import get_db
 from app.core.security import get_current_user
-from app.models.wms import now_kst, InboundJob, Book, ReturnJob, InventoryUsedItem, JobStatusEnum, ubci_grade_from_score
+from app.models.wms import (
+    now_kst,
+    InboundJob,
+    Book,
+    ReturnJob,
+    InventoryUsedItem,
+    JobStatusEnum,
+    ubci_grade_from_score,
+)
 from app.domains.inbound.service import (
     generate_signed_cookie,
     lookup_book_by_isbn,
@@ -28,6 +36,7 @@ from app.models.wms import User
 class UploadCookieRequest(BaseModel):
     filename: str
 
+
 class EvaluateRequest(BaseModel):
     lpn: str
     images: List[str]
@@ -36,12 +45,15 @@ class EvaluateRequest(BaseModel):
     # 하드코딩 상수가 아니라 실제 담당자를 가리키도록 하기 위해 받는다 (미전달 시 AI 자동 판정으로 표기).
     worker_id: Optional[str] = None
 
+
 # Inbound 도메인 라우터: 협력사(B2B) 또는 일반 사용자의 입고 요청 및 처리 이력을 담당합니다.
 # 라우터 전체에 인증을 건다. 엔드포인트마다 붙이면 새 경로를 추가할 때 또 빠뜨린다 -
 # 실제로 재고·피킹지시서·발주제안이 무인증으로 조회되던 것을 전수 점검에서 발견했다.
 # 입고 검수는 로그인 필수
-router = APIRouter(prefix="/inbound", tags=["Inbound"],
-                   dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/inbound", tags=["Inbound"], dependencies=[Depends(get_current_user)]
+)
+
 
 @router.get("/history")
 async def get_inbound_history(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
@@ -51,19 +63,24 @@ async def get_inbound_history(db: Session = Depends(get_db)) -> List[Dict[str, A
     """
     statement = select(InboundJob).order_by(InboundJob.created_at.desc()).limit(50)
     jobs = db.exec(statement).all()
-    
+
     result = []
     for job in jobs:
-        result.append({
-            "inbound_id": str(job.id),
-            "inbound_type": job.inbound_type,
-            "supplier_name": job.supplier_name or "N/A",
-            "status": job.status,
-            "date": job.created_at.isoformat()
-        })
+        result.append(
+            {
+                "inbound_id": str(job.id),
+                "inbound_type": job.inbound_type,
+                "supplier_name": job.supplier_name or "N/A",
+                "status": job.status,
+                "date": job.created_at.isoformat(),
+            }
+        )
     return result
 
-@router.get("/book-lookup", summary="ISBN 바코드 스캔 시 도서 정보/택배 규격 조회 (원장 우선)")
+
+@router.get(
+    "/book-lookup", summary="ISBN 바코드 스캔 시 도서 정보/택배 규격 조회 (원장 우선)"
+)
 async def get_book_lookup(isbn: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     프론트 입고 화면(ISBN 바코드 스캔)이 호출하는 도서 메타데이터 조회 API.
@@ -94,7 +111,10 @@ async def get_book_lookup(isbn: str, db: Session = Depends(get_db)) -> Dict[str,
             status_code=503,
             detail="도서 정보 서버(알라딘)에 연결하지 못했습니다. 잠시 후 다시 스캔해주세요.",
         )
-    raise HTTPException(status_code=404, detail="등록되지 않은 ISBN입니다. 도서 정보를 찾을 수 없습니다.")
+    raise HTTPException(
+        status_code=404,
+        detail="등록되지 않은 ISBN입니다. 도서 정보를 찾을 수 없습니다.",
+    )
 
 
 class FasttrackRequest(BaseModel):
@@ -108,7 +128,9 @@ class FasttrackRequest(BaseModel):
     worker_id: Optional[str] = None
 
 
-@router.post("/fasttrack", summary="신품 도서 Fast-Track 0초 입고 (사진/UBCI 판정 스킵)")
+@router.post(
+    "/fasttrack", summary="신품 도서 Fast-Track 0초 입고 (사진/UBCI 판정 스킵)"
+)
 async def fasttrack_inbound(request: FasttrackRequest, db: Session = Depends(get_db)):
     """
     신품 도서를 ISBN만으로 즉시 재고에 편입한다. 사진 촬영·AI 검수(UBCI 등급 판정)를 100%
@@ -129,7 +151,9 @@ async def fasttrack_inbound(request: FasttrackRequest, db: Session = Depends(get
         meta = await lookup_book_by_isbn(isbn) or {}
         category_name = meta.get("categoryName", "")
         parts = [p.strip() for p in category_name.split(">") if p.strip()]
-        parsed_category = parts[1] if len(parts) > 1 else (parts[0] if parts else "GENERAL")
+        parsed_category = (
+            parts[1] if len(parts) > 1 else (parts[0] if parts else "GENERAL")
+        )
 
         book_kwargs: Dict[str, Any] = dict(
             isbn=isbn,
@@ -159,14 +183,18 @@ async def fasttrack_inbound(request: FasttrackRequest, db: Session = Depends(get
             db.rollback()
             book = db.exec(select(Book).where(Book.isbn == isbn)).first()
             if not book:
-                raise HTTPException(status_code=409,
-                                    detail="도서 등록이 동시 요청과 충돌했습니다. 다시 시도해 주세요.")
+                raise HTTPException(
+                    status_code=409,
+                    detail="도서 등록이 동시 요청과 충돌했습니다. 다시 시도해 주세요.",
+                )
 
     # 2) Zone A(신품존) 묶음 재고 upsert + virtual_stock 가산 + INBOUND 원장 기록.
     #    자동 발주(OrderProposal) 승인 입고와 동일한 공용 관문(fasttrack_new_stock_inbound)을 사용한다.
     from app.domains.inventory.service import fasttrack_new_stock_inbound
 
-    inv, location = fasttrack_new_stock_inbound(db, book, qty, worker_id=request.worker_id)
+    inv, location = fasttrack_new_stock_inbound(
+        db, book, qty, worker_id=request.worker_id
+    )
     db.commit()
     db.refresh(inv)
 
@@ -189,9 +217,10 @@ async def get_upload_cookie(request: UploadCookieRequest) -> Dict[str, Any]:
     """
     if not request.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
-        
+
     cookie_data = generate_signed_cookie(request.filename)
     return cookie_data
+
 
 @router.post("/evaluate")
 async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_db)):
@@ -200,20 +229,22 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
     Celery 태스크(app.worker.tasks.process_inspection - Redlock+DLQ 백엔드)로 위임합니다.
     """
     if len(request.images) < 2:
-        raise HTTPException(status_code=400, detail="At least 2 images (front, back) are required.")
+        raise HTTPException(
+            status_code=400, detail="At least 2 images (front, back) are required."
+        )
 
     # Save book to DB if it doesn't exist
     book = None
     parsed_category = "GENERAL"
     if request.book_metadata:
-        isbn = request.book_metadata.get('isbn')
+        isbn = request.book_metadata.get("isbn")
         if isbn:
             statement = select(Book).where(Book.isbn == isbn)
             book = db.exec(statement).first()
 
-            category_name = request.book_metadata.get('categoryName', '')
+            category_name = request.book_metadata.get("categoryName", "")
             if category_name:
-                parts = category_name.split('>')
+                parts = category_name.split(">")
                 if len(parts) > 1:
                     parsed_category = parts[1].strip()
                 else:
@@ -221,24 +252,33 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
 
             if not book:
                 book_kwargs = dict(
-                    barcode=isbn, # Usually we use isbn as barcode for new books
+                    barcode=isbn,  # Usually we use isbn as barcode for new books
                     isbn=isbn,
-                    title=request.book_metadata.get('title', 'Unknown Title'),
-                    author=request.book_metadata.get('author'),
-                    publisher=request.book_metadata.get('publisher'),
-                    published_date=request.book_metadata.get('pubDate'),
-                    base_price=float(request.book_metadata.get('price', 0.0) or 0.0),
-                    description=request.book_metadata.get('description'),
-                    cover_image_url=request.book_metadata.get('imageUrl'),
-                    category_type=parsed_category
+                    title=request.book_metadata.get("title", "Unknown Title"),
+                    author=request.book_metadata.get("author"),
+                    publisher=request.book_metadata.get("publisher"),
+                    published_date=request.book_metadata.get("pubDate"),
+                    base_price=float(request.book_metadata.get("price", 0.0) or 0.0),
+                    description=request.book_metadata.get("description"),
+                    cover_image_url=request.book_metadata.get("imageUrl"),
+                    category_type=parsed_category,
                 )
                 # 택배 송장 산정용 알라딘 실측 규격(GET /inbound/book-lookup에서 이미 조회되어
                 # 프론트가 book_metadata에 실어 보낸 값) - 없으면 Book 모델 기본값(신국판 표준)을 그대로 둔다.
-                for field in ("width_mm", "depth_mm", "thickness_mm", "weight_g", "page_count"):
+                for field in (
+                    "width_mm",
+                    "depth_mm",
+                    "thickness_mm",
+                    "weight_g",
+                    "page_count",
+                ):
                     value = request.book_metadata.get(field)
                     if value is not None:
                         book_kwargs[field] = value
-                if any(request.book_metadata.get(f) is not None for f in ("width_mm", "depth_mm", "thickness_mm", "weight_g")):
+                if any(
+                    request.book_metadata.get(f) is not None
+                    for f in ("width_mm", "depth_mm", "thickness_mm", "weight_g")
+                ):
                     book_kwargs["calc_source"] = "ALADIN_REAL_SPEC"
 
                 book = Book(**book_kwargs)
@@ -252,7 +292,9 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
     # 여기서도 book을 못 찾으면 return_jobs.book_id NOT NULL 위반으로 500이 난다.
     if not book and request.lpn:
         existing_item = db.exec(
-            select(InventoryUsedItem).where(InventoryUsedItem.lpn_barcode == request.lpn)
+            select(InventoryUsedItem).where(
+                InventoryUsedItem.lpn_barcode == request.lpn
+            )
         ).first()
         if existing_item:
             book = db.get(Book, existing_item.book_id)
@@ -260,7 +302,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
     if not book:
         raise HTTPException(
             status_code=422,
-            detail="도서 정보를 확인할 수 없습니다. ISBN을 다시 스캔하거나 LPN 재촬영으로 진행해주세요."
+            detail="도서 정보를 확인할 수 없습니다. ISBN을 다시 스캔하거나 LPN 재촬영으로 진행해주세요.",
         )
 
     job_id = f"job-{uuid.uuid4().hex[:8]}"
@@ -335,26 +377,36 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
     # 원장 기반으로 재큐잉하도록 PENDING 상태 그대로 둔다 — "브로커는 잃어도 원장은 잃지 않는다".
     from app.worker.tasks import process_inspection
     import time as _time
+
     for attempt in range(3):
         try:
             process_inspection.delay(str(new_job.id))
             break
         except Exception as e:
             if attempt == 2:
-                print(f"[Dispatch] 태스크 발행 3회 실패 - 스위퍼 복구 대상으로 남김: {e}")
+                print(
+                    f"[Dispatch] 태스크 발행 3회 실패 - 스위퍼 복구 대상으로 남김: {e}"
+                )
             else:
                 _time.sleep(0.5 * (attempt + 1))
 
-    return {"job_id": str(new_job.id), "lpn": request.lpn, "message": "Evaluation job queued successfully"}
+    return {
+        "job_id": str(new_job.id),
+        "lpn": request.lpn,
+        "message": "Evaluation job queued successfully",
+    }
 
 
 @router.get("/stream/{job_id}")
-async def stream_evaluation_progress(job_id: str, _user: User = Depends(require_stream_access)):
+async def stream_evaluation_progress(
+    job_id: str, _user: User = Depends(require_stream_access)
+):
     """
     [SSE] AI 작업 상태 실시간 푸시 API. Celery 워커가 Redis Pub/Sub 채널(return_job:{job_id})에
     발행하는 진행 이벤트를 구독해, 프론트엔드가 기대하는 필드 형태(job_id/progress/message/
     grade/ubci_score/defect_description)로 변환하여 그대로 중계합니다.
     """
+
     async def event_generator():
         import redis.asyncio as aioredis
         from app.core.redis_pubsub import get_return_job_channel, REDIS_URL
@@ -410,13 +462,18 @@ async def get_evaluation_result(job_id: str, db: Session = Depends(get_db)):
 
     agent_logs = job.agent_logs or {}
     defects = agent_logs.get("defects") or []
-    defect_types = sorted({d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")})
+    defect_types = sorted(
+        {d.get("type", "") for d in defects if isinstance(d, dict) and d.get("type")}
+    )
 
     # [수정 이력] job.status가 아직 PENDING/PROCESSING(진행 중)인데도 ubci_grade_from_score(None)이
     # "NORMAL"을 반환해, 폴링하는 클라이언트가 "정상 등급으로 완료됨"과 "아직 처리 중"을 구분할
     # 수 없던 버그를 수정 - 완료 상태(APPROVED/REJECTED/HITL_REQUIRED/FAILED)가 아니면 grade를
     # null로 반환하고 별도 status 필드로 진행 여부를 명시한다.
-    still_processing = job.status in (JobStatusEnum.PENDING.value, JobStatusEnum.PROCESSING.value)
+    still_processing = job.status in (
+        JobStatusEnum.PENDING.value,
+        JobStatusEnum.PROCESSING.value,
+    )
     if still_processing:
         grade = None
     elif job.status == JobStatusEnum.HITL_REQUIRED.value:
@@ -432,10 +489,14 @@ async def get_evaluation_result(job_id: str, db: Session = Depends(get_db)):
             "job_id": job_id,
             "grade": grade,
             "ubci_score": job.ubci_score,
-            "defect_description": ", ".join(defect_types) if defect_types else ("정상" if not still_processing else None),
-            "defect_coordinates": [d.get("bbox") for d in defects if isinstance(d, dict) and d.get("bbox")],
+            "defect_description": ", ".join(defect_types)
+            if defect_types
+            else ("정상" if not still_processing else None),
+            "defect_coordinates": [
+                d.get("bbox") for d in defects if isinstance(d, dict) and d.get("bbox")
+            ],
             "timestamp": (job.updated_at or job.created_at).isoformat(),
-        }
+        },
     }
 
 
@@ -461,32 +522,36 @@ async def retry_evaluation(job_id: str, db: Session = Depends(get_db)):
     db.commit()
 
     from app.worker.tasks import process_inspection
+
     try:
         process_inspection.delay(str(job.id))
     except Exception as e:
         print(f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}")
         import threading
-        threading.Thread(target=process_inspection, args=(str(job.id),), daemon=True).start()
 
-    return {"status": "queued", "job_id": job_id, "message": "재검수 작업이 큐에 등록되었습니다."}
+        threading.Thread(
+            target=process_inspection, args=(str(job.id),), daemon=True
+        ).start()
 
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "message": "재검수 작업이 큐에 등록되었습니다.",
+    }
 
 
 @router.post("/putaway", summary="현장 적치(Putaway) 랙 배치 위치 확정")
-def confirm_putaway_placement(
-    payload: dict,
-    db: Session = Depends(get_db)
-):
+def confirm_putaway_placement(payload: dict, db: Session = Depends(get_db)):
     """
     검수 완료 도서를 지정된 Zone-Bin 랙 로케이션에 물리적 적치 완료 처리
     """
     lpn_barcode = payload.get("lpn_barcode", "")
     location_id = payload.get("location_id", "Zone B-1-4")
-    
+
     print(f"Confirmed Putaway for LPN {lpn_barcode} -> Location {location_id}")
     return {
         "status": "SUCCESS",
         "message": f"LPN {lpn_barcode}가 성공적으로 {location_id} 랙에 적치되었습니다.",
         "location_id": location_id,
-        "updated_at": now_kst().isoformat()
+        "updated_at": now_kst().isoformat(),
     }
