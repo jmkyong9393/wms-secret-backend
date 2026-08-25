@@ -174,7 +174,10 @@ async def stream_notifications(request: Request, _user: User = Depends(require_s
                     ignore_subscribe_messages=True, timeout=HEARTBEAT_INTERVAL_SEC
                 )
                 if message is None:
-                    yield f"data: {json.dumps({'type': 'HEARTBEAT'})}\n\n"
+                    # 이름 붙은 이벤트로 보낸다. 기본 message로 보내면 이 규약을 모르는
+                    # 클라이언트(캐시된 구버전 번들 포함)가 일반 알림으로 취급해
+                    # 화면에 빈 알림이 쌓인다(2026-08-26 운영에서 실제로 발생).
+                    yield "event: heartbeat\ndata: {}\n\n"
                     continue
                 if message["type"] != "message":
                     continue
