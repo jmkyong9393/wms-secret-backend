@@ -3,6 +3,9 @@ import os
 from typing import Optional
 
 import boto3
+import logging
+
+logger = logging.getLogger(__name__)
 
 try:
     from app.core.config import settings
@@ -54,14 +57,18 @@ def upload_bytes_to_s3(
     aws_secret_key = _cfg("AWS_SECRET_ACCESS_KEY")
 
     if not aws_access_key or not aws_secret_key:
-        print("[S3] AWS 자격증명이 없어 업로드를 건너뜁니다 (로컬 경로로 폴백).")
+        logger.warning(
+            "[S3] AWS 자격증명이 없어 업로드를 건너뜁니다 (로컬 경로로 폴백)."
+        )
         return None
 
     aws_region = _cfg("AWS_REGION", "ap-northeast-2")
     bucket_name = _cfg("AWS_S3_BUCKET") or _cfg("S3_BUCKET_NAME")
 
     if not bucket_name:
-        print("[S3] 버킷명이 설정되지 않아 업로드를 건너뜁니다 (로컬 경로로 폴백).")
+        logger.warning(
+            "[S3] 버킷명이 설정되지 않아 업로드를 건너뜁니다 (로컬 경로로 폴백)."
+        )
         return None
 
     try:
@@ -80,17 +87,17 @@ def upload_bytes_to_s3(
             ContentType=content_type,
         )
     except Exception as e:
-        print(f"[S3] 업로드 실패 ({s3_key}): {e} - 로컬 경로로 폴백합니다.")
+        logger.warning(f"[S3] 업로드 실패 ({s3_key}): {e} - 로컬 경로로 폴백합니다.")
         return None
 
     public_url = build_public_url(s3_key)
     if not public_url:
-        print(
+        logger.warning(
             f"[S3] 업로드는 성공했으나 CLOUDFRONT_DOMAIN이 없어 공개 URL을 만들 수 없습니다 ({s3_key})."
         )
         return None
 
-    print(f"[S3] 업로드 완료 -> {public_url}")
+    logger.info(f"[S3] 업로드 완료 -> {public_url}")
     return public_url
 
 
@@ -101,6 +108,6 @@ def upload_base64_to_s3(b64_str: str, s3_key: str) -> Optional[str]:
     try:
         file_bytes = base64.b64decode(b64_str)
     except Exception as e:
-        print(f"[S3] Base64 디코딩 실패 ({s3_key}): {e}")
+        logger.warning(f"[S3] Base64 디코딩 실패 ({s3_key}): {e}")
         return None
     return upload_bytes_to_s3(file_bytes, s3_key)

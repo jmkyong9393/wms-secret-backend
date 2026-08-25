@@ -11,6 +11,9 @@ import uuid
 from app.core.aws_auth_service import generate_signed_cookies
 from app.core.security import get_current_user
 from app.models.wms import User
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -151,7 +154,7 @@ def get_presigned_url(
 
     if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
         # S3 설정이 없을 경우 임시 Mock URL 반환 (로컬 개발용) - 실제 업로드로 착각하지 않도록 명시적으로 로그
-        print(
+        logger.warning(
             f"[MOCK MODE] AWS 자격증명 미설정 - {safe_name}에 대해 가짜 업로드 URL을 반환합니다 (실제 S3 업로드 아님)."
         )
         unique_id = uuid.uuid4().hex[:8]

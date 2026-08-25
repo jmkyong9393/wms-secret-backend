@@ -347,6 +347,9 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
 
 from typing import Optional
 from pydantic import BaseModel
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class CreateLpnRequest(BaseModel):
@@ -481,7 +484,7 @@ async def cancel_lpn(lpn_barcode: str, db: Session = Depends(get_db)):
 
     db.delete(item)
     db.commit()
-    print(f"[LPN] 미부착 채번 취소: {lpn_barcode}")
+    logger.info(f"[LPN] 미부착 채번 취소: {lpn_barcode}")
     return {"status": "success", "lpn_barcode": lpn_barcode, "deleted": True}
 
 
@@ -554,7 +557,7 @@ def hard_delete_inventory_row(
             deleted["jobs"] += 1
 
         db.commit()
-        print(
+        logger.info(
             f"[재고 하드삭제] {lpn}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})"
         )
         return {"status": "success", "lpn_barcode": lpn, "deleted": deleted}
@@ -585,7 +588,7 @@ def hard_delete_inventory_row(
                 deleted["logs"] += 1
 
         db.commit()
-        print(
+        logger.info(
             f"[재고 하드삭제] 신품 book={book_id}: {deleted} (by {getattr(current_admin, 'employee_id', '?')})"
         )
         return {"status": "success", "book_id": str(book_id), "deleted": deleted}

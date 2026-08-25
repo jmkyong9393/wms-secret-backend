@@ -31,6 +31,9 @@ import base64
 import os
 from app.core.stream_auth import require_stream_access
 from app.models.wms import User
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UploadCookieRequest(BaseModel):
@@ -335,7 +338,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
         try:
             raw_bytes = base64.b64decode(b64_img)
         except Exception as e:
-            print(f"[Inbound] 이미지 base64 디코딩 실패 (idx={idx}): {e}")
+            logger.warning(f"[Inbound] 이미지 base64 디코딩 실패 (idx={idx}): {e}")
             continue
 
         img_path = os.path.join(experiment_dir, f"raw_{idx}.jpg")
@@ -344,7 +347,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
                 f.write(raw_bytes)
             local_image_paths.append(img_path)
         except Exception as e:
-            print(f"[Inbound] 로컬 이미지 저장 실패 (idx={idx}): {e}")
+            logger.warning(f"[Inbound] 로컬 이미지 저장 실패 (idx={idx}): {e}")
 
         # S3 업로드 실패 시에도 입고 자체는 막지 않는다. 공개 URL을 못 얻으면 백엔드
         # StaticFiles 마운트(/experiment_data)로 폴백해 최소한 사내망에서는 보이게 한다.
@@ -384,7 +387,7 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
             break
         except Exception as e:
             if attempt == 2:
-                print(
+                logger.error(
                     f"[Dispatch] 태스크 발행 3회 실패 - 스위퍼 복구 대상으로 남김: {e}"
                 )
             else:
@@ -526,7 +529,9 @@ async def retry_evaluation(job_id: str, db: Session = Depends(get_db)):
     try:
         process_inspection.delay(str(job.id))
     except Exception as e:
-        print(f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}")
+        logger.warning(
+            f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}"
+        )
         import threading
 
         threading.Thread(
@@ -548,7 +553,7 @@ def confirm_putaway_placement(payload: dict, db: Session = Depends(get_db)):
     lpn_barcode = payload.get("lpn_barcode", "")
     location_id = payload.get("location_id", "Zone B-1-4")
 
-    print(f"Confirmed Putaway for LPN {lpn_barcode} -> Location {location_id}")
+    logger.info(f"Confirmed Putaway for LPN {lpn_barcode} -> Location {location_id}")
     return {
         "status": "SUCCESS",
         "message": f"LPN {lpn_barcode}가 성공적으로 {location_id} 랙에 적치되었습니다.",

@@ -30,6 +30,9 @@ from app.models.wms import (
     WeeklyInsight,
     now_kst,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 검수 1건당 수작업 6분 vs AI 30초, 시급 12,000원 (결정론적 상수)
 MANUAL_MINUTES_PER_ITEM = 6.0
@@ -223,7 +226,7 @@ def generate_insight_narrative(stats: Dict[str, Any]) -> str:
         text = (result.content or "").strip()
         return text if text else fallback
     except Exception as e:
-        print(f"[Weekly Insight] LLM 서사 생성 실패, 템플릿 폴백: {e}")
+        logger.warning(f"[Weekly Insight] LLM 서사 생성 실패, 템플릿 폴백: {e}")
         return fallback
 
 
