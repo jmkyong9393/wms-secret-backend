@@ -23,6 +23,12 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"],
 # 전역 알림 브로드캐스트 채널 (job 단위가 아닌 대시보드 전역 알림용)
 NOTIFICATIONS_CHANNEL = "notifications:global"
 
+# 이벤트가 없을 때만 보내는 생존 신호 주기(초).
+# 작업이 흐르는 동안에는 0건이다 - get_message()가 메시지를 받으면 즉시 반환한다.
+# 주기를 더 늘리지 못하는 이유는 ALB·nginx의 기본 유휴 타임아웃이 60초이기
+# 때문이다. 그보다 길면 프록시가 먼저 연결을 끊어 재연결 비용이 더 크게 든다.
+HEARTBEAT_INTERVAL_SEC = 25
+
 
 @router.get("", summary="알림 목록 조회 (최신순)")
 @router.get("/", include_in_schema=False)
@@ -153,10 +159,23 @@ async def stream_notifications(request: Request, _user: User = Depends(require_s
         try:
             yield f"data: {json.dumps({'type': 'CONNECTED', 'message': '실시간 알림 채널에 연결되었습니다.'}, ensure_ascii=False)}\n\n"
 
-            async for message in pubsub.listen():
+            # 이벤트가 없어도 주기적으로 신호를 보낸다. 두 가지를 해결한다.
+            # ① 중간 프록시(ingress/ALB/dev 서버)가 백엔드로 가는 연결만 끊어지면
+            #   브라우저 쪽 소켓은 열린 채 남아 onerror가 오지 않는다. 클라이언트는
+            #   이 신호가 끊기는 것으로 죽은 연결을 판별한다(2026-08-26 실측).
+            # ② listen()은 메시지가 올 때까지 블로킹되어 그 사이 is_disconnected()가
+            #   실행되지 않았다. 떠난 클라이언트의 pubsub이 계속 남는다.
+            while True:
                 if await request.is_disconnected():
                     logger.info("SSE Client disconnected")
                     break
+
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=HEARTBEAT_INTERVAL_SEC
+                )
+                if message is None:
+                    yield f"data: {json.dumps({'type': 'HEARTBEAT'})}\n\n"
+                    continue
                 if message["type"] != "message":
                     continue
                 yield f"data: {message['data']}\n\n"
@@ -166,7 +185,20 @@ async def stream_notifications(request: Request, _user: User = Depends(require_s
             await pubsub.unsubscribe()
             await r.close()
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    # 중간 계층이 스트림을 건드리지 못하게 막는다.
+    # no-transform: 프록시의 gzip 재압축을 금지한다. 압축이 걸리면 30바이트짜리
+    #   프레임이 버퍼에 갇혀 브라우저까지 흐르지 않는다(2026-08-26 실측 - Next rewrite가
+    #   압축해 CONNECTED조차 도달하지 못했다).
+    # X-Accel-Buffering: nginx 계열 프록시의 응답 버퍼링을 끔다.
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/trigger-fds", summary="FDS 이상거래 시뮬레이션 (데모용)")
