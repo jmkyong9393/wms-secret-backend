@@ -4,7 +4,7 @@
 
 입고 검수 반려(매입 불가)로 판매 기회가 소실되거나 저재고가 감지되면, 3단계 판정 그래프를 거쳐 order_proposals 테이블에 PENDING 제안 카드를 적재한다.
 
-  ① Collector (결정론적): 30일 출고량(InventoryLog OUTBOUND), 가용 재고(신품 virtual_stock + 중고 IN_STOCK), 반려 수량을 수집하고 안전재고 산식으로 기준 수량(baseline)을 계산한다.
+  ① Collector (결정론적): 30일 출고량(InventoryLog OUTBOUND), 전 기간 출고 이력(품절 복구 판별용), 가용 재고(신품 virtual_stock + 중고 IN_STOCK), 반려 수량을 수집하고 안전재고 산식으로 기준 수량(baseline)을 계산한다. 출고 이력이 전무한 도서는 반려 트리거가 아닌 한 제안을 생성하지 않으며, 재고 0 + 출고 이력 보유 도서는 품절 복구 후보로 CRITICAL 고정.
   ② Restock Agent (gpt-4o-mini): 수집 데이터와 baseline을 앵커로 받아 최적 수량·긴급도·사유를 구조화 출력(with_structured_output)으로 제안한다.
   ③ Validator (결정론적 게이트): 제안 수량을 baseline 기준 상한으로 클램프. LLM 장애 시 baseline 그대로 fail-open (ai_source=FALLBACK_RULE).
 
@@ -86,6 +86,16 @@ def collect_restock_context(
     ).one()
     sales_30d = abs(int(outbound_sum or 0))  # OUTBOUND는 음수로 적재됨
 
+    # 전 기간 출고 이력 유무 - 품절 도서는 출고가 끊겨 30일 윈도에서 수요 신호가
+    # 사라지므로, "수요가 있었던 책인가"는 기간 무관 이력으로 판단해야 한다.
+    lifetime_outbound = db.exec(
+        select(func.count(InventoryLog.id)).where(
+            InventoryLog.book_id == book.id,
+            InventoryLog.transaction_type == "OUTBOUND",
+        )
+    ).one()
+    has_sales_history = int(lifetime_outbound or 0) > 0
+
     used_in_stock = db.exec(
         select(func.count(InventoryUsedItem.id)).where(
             InventoryUsedItem.book_id == book.id,
@@ -97,7 +107,13 @@ def collect_restock_context(
     new_stock = get_new_stock_qty(db, book.id)
     current_stock = new_stock + int(used_in_stock or 0)
 
+    # min_safety_stock은 "수요 도서의 최소 보충선"이다 - 수요 이력이 없는 도서에는
+    # 적용하지 않는다 (그런 도서는 제안 자체를 생성하지 않는다, 아래 has_sales_history).
     min_safety_stock = get_int_setting(db, SAFETY_STOCK_SETTING_KEY, DEFAULT_SAFETY_STOCK_THRESHOLD)
+
+    # 품절 복구 후보: 재고 0 + 출고 이력 존재(기간 무관). 판매 기회가 새는 중이므로
+    # 긴급도를 CRITICAL로 고정한다 (Validator에서도 강제).
+    stockout_recovery = current_stock == 0 and has_sales_history
 
     # 안전재고 산식: (리드타임+버퍼) 기간의 예상 수요를 커버할 목표 재고를 잡고, 부족분 + 이번 반려로 소실된 수량을 기준 발주량으로 삼는다.
     daily_velocity = sales_30d / 30.0
@@ -106,7 +122,7 @@ def collect_restock_context(
 
     # 재고 소진 예상일 기반 긴급도 (LLM 폴백 및 프롬프트 앵커 겸용)
     days_of_stock = (current_stock / daily_velocity) if daily_velocity > 0 else float("inf")
-    if current_stock <= 2 or days_of_stock < LEAD_TIME_DAYS:
+    if stockout_recovery or current_stock <= 2 or days_of_stock < LEAD_TIME_DAYS:
         urgency = "CRITICAL"
     elif current_stock <= 5 or days_of_stock < (LEAD_TIME_DAYS + SAFETY_DAYS):
         urgency = "HIGH"
@@ -128,6 +144,8 @@ def collect_restock_context(
         "baseline_quantity": int(baseline),
         "rule_urgency": urgency,
         "min_safety_stock": min_safety_stock,
+        "has_sales_history": has_sales_history,
+        "stockout_recovery": stockout_recovery,
     }
 
 
@@ -150,6 +168,13 @@ def run_restock_agent(context: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
         if context["rejected_quantity"] > 0
         else "- 이번 트리거는 저재고 스캔이며 반려 수량은 없습니다."
     )
+    stockout_line = (
+        "- [품절 복구 최우선] 이 도서는 과거 출고(판매) 이력이 있으나 현재 가용 재고가 0입니다. "
+        "품절로 출고가 끊겨 최근 30일 수요 신호가 실제 수요보다 작게 보일 수 있으며, "
+        "품절로 인한 판매 기회 손실이 진행 중입니다. urgency는 CRITICAL로 판단하세요."
+        if context.get("stockout_recovery")
+        else ""
+    )
     prompt = f"""당신은 B2B 도서 물류센터의 재고 보충(Restock) 담당 AI입니다.
 아래 데이터를 근거로 신품 대체 발주 수량을 제안하세요.
 
@@ -159,6 +184,7 @@ def run_restock_agent(context: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
 - 현재 가용 재고: {context['current_stock']}권 (신품 {context['new_stock']} + 중고 {context['used_in_stock']})
 - 재고 소진 예상: {context['days_of_stock'] if context['days_of_stock'] is not None else '판매 이력 없음'}일
 {reject_line}
+{stockout_line}
 - 결정론적 안전재고 산식 기준 수량: {context['baseline_quantity']}권
   (산식: 리드타임 {LEAD_TIME_DAYS}일 + 안전버퍼 {SAFETY_DAYS}일 수요 커버 목표, 최소 안전선 {context['min_safety_stock']}권)
 
@@ -186,9 +212,14 @@ def _rule_based_decision(context: Dict[str, Any]) -> Dict[str, Any]:
         f"매입 반려되어 해당 수량의 재고 편입이 무산되었습니다. "
         if context["rejected_quantity"] > 0 else ""
     )
+    stockout_part = (
+        "출고 이력이 있는 도서가 품절(가용 재고 0) 상태로, 품절로 인한 판매 기회 손실이 진행 중입니다. "
+        if context.get("stockout_recovery") else ""
+    )
     reasoning = (
         f"최근 30일 출고 {context['sales_velocity_30d']}권 대비 가용 재고가 {context['current_stock']}권"
         f"(신품 {context['new_stock']}+중고 {context['used_in_stock']})입니다. "
+        f"{stockout_part}"
         f"{reject_part}"
         f"리드타임 {LEAD_TIME_DAYS}일과 안전버퍼 {SAFETY_DAYS}일 수요를 커버하기 위해 "
         f"안전재고 산식 기준 {qty}권의 신품 대체 발주를 권장합니다."
@@ -221,6 +252,9 @@ def validate_decision(decision: Dict[str, Any], context: Dict[str, Any]) -> Dict
     urgency = decision.get("urgency")
     if urgency not in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
         urgency = context["rule_urgency"]
+    # 품절 복구 후보는 CRITICAL 고정 - 긴급도 역시 금전/우선순위에 직결되므로 LLM에 맡기지 않는다
+    if context.get("stockout_recovery"):
+        urgency = "CRITICAL"
 
     reasoning = (decision.get("reasoning") or "").strip() or _rule_based_decision(context)["reasoning"]
     return {"reorder_quantity": qty, "urgency": urgency, "reasoning": reasoning}
@@ -261,6 +295,10 @@ def generate_and_store_proposal(
         rejected_quantity=accumulated_rejected,
         reject_reason_code=reject_reason_code or (existing.reject_reason_code if existing else None),
     )
+    # 출고 이력이 전무한 도서(등록만 된 책)는 수요 근거가 없으므로 제안하지 않는다.
+    # 단 검수 반려는 그 자체가 수요 신호(주문이 있었다는 뜻)이므로 현행대로 생성한다.
+    if not context["has_sales_history"] and context["rejected_quantity"] <= 0:
+        return None
     if context["baseline_quantity"] <= 0 and context["rejected_quantity"] <= 0:
         return None
 
