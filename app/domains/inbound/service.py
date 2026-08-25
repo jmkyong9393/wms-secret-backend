@@ -13,7 +13,7 @@ from app.models.wms import now_kst
 UNKNOWN_BOOK_TITLE = "미확인 도서"
 
 # 조회 실패 사유 구분값. 호출부가 404(없는 책)와 503(조회 불가)을 나눠 응답하는 데 쓴다.
-LOOKUP_NOT_FOUND = "NOT_FOUND"      # 알라딘 정상 응답, 해당 ISBN 없음
+LOOKUP_NOT_FOUND = "NOT_FOUND"  # 알라딘 정상 응답, 해당 ISBN 없음
 LOOKUP_UNAVAILABLE = "UNAVAILABLE"  # 타임아웃·네트워크·HTTP 오류로 조회 자체 실패
 
 _ALADIN_TIMEOUT_SEC = 3.0
@@ -65,13 +65,17 @@ async def lookup_book_by_isbn_with_status(isbn: str) -> tuple[dict, str | None]:
     for attempt in range(1, _ALADIN_ATTEMPTS + 1):
         try:
             async with httpx.AsyncClient(timeout=_ALADIN_TIMEOUT_SEC) as client:
-                res = await client.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"})
+                res = await client.get(
+                    url, params=params, headers={"User-Agent": "Mozilla/5.0"}
+                )
                 res.raise_for_status()
                 data = res.json()
             break
         except Exception as e:
             last_error = e
-            print(f"[Aladin API] 조회 실패 {attempt}/{_ALADIN_ATTEMPTS} (isbn={isbn}): {type(e).__name__}: {e}")
+            print(
+                f"[Aladin API] 조회 실패 {attempt}/{_ALADIN_ATTEMPTS} (isbn={isbn}): {type(e).__name__}: {e}"
+            )
 
     if data is None:
         return {}, LOOKUP_UNAVAILABLE
@@ -143,6 +147,7 @@ def is_placeholder_book(book) -> bool:
     """조회 실패로 만들어진 자리표시자 Book 행인지 판정한다(알라딘 재조회 대상)."""
     return not book or not book.title or book.title.strip() == UNKNOWN_BOOK_TITLE
 
+
 def rsa_signer(message: bytes) -> bytes:
     """
     CloudFront Signed Cookie 생성을 위한 RSA 서명 함수입니다.
@@ -150,20 +155,32 @@ def rsa_signer(message: bytes) -> bytes:
     try:
         if "mock" in settings.CLOUDFRONT_PRIVATE_KEY:
             # 로컬 개발 및 테스트를 위한 Mock 서명 반환 - 실제 서명으로 착각하지 않도록 명시적으로 로그
-            print("[MOCK MODE] CLOUDFRONT_PRIVATE_KEY 미설정 - 가짜 서명을 반환합니다 (실제 CloudFront 서명 아님).")
+            print(
+                "[MOCK MODE] CLOUDFRONT_PRIVATE_KEY 미설정 - 가짜 서명을 반환합니다 (실제 CloudFront 서명 아님)."
+            )
             return b"mock_signature_bytes_for_local_dev"
 
-        private_key = rsa.PrivateKey.load_pkcs1(settings.CLOUDFRONT_PRIVATE_KEY.encode('utf-8'))
-        return rsa.sign(message, private_key, 'SHA-1')
+        private_key = rsa.PrivateKey.load_pkcs1(
+            settings.CLOUDFRONT_PRIVATE_KEY.encode("utf-8")
+        )
+        return rsa.sign(message, private_key, "SHA-1")
     except Exception as e:
         print(f"[MOCK MODE] RSA 서명 실패, mock으로 폴백: {e}")
         return b"mock_signature_bytes_for_local_dev"
+
 
 def _url_b64encode(data: bytes) -> str:
     """
     CloudFront 정책 및 서명 문자열 포맷팅 (Base64 URL Safe)
     """
-    return base64.b64encode(data).replace(b'+', b'-').replace(b'=', b'_').replace(b'/', b'~').decode('utf-8')
+    return (
+        base64.b64encode(data)
+        .replace(b"+", b"-")
+        .replace(b"=", b"_")
+        .replace(b"/", b"~")
+        .decode("utf-8")
+    )
+
 
 def generate_signed_cookie(filename: str) -> dict:
     """
@@ -173,24 +190,24 @@ def generate_signed_cookie(filename: str) -> dict:
     today_str = now_kst().strftime("%Y%m%d")
     unique_id = str(uuid.uuid4())[:8]
     object_key = f"inbound/{today_str}/{unique_id}_{filename}"
-    
+
     url = f"{settings.CLOUDFRONT_DOMAIN}/{object_key}"
     key_pair_id = settings.CLOUDFRONT_KEY_PAIR_ID
-    
+
     cloudfront_signer = CloudFrontSigner(key_pair_id, rsa_signer)
-    
+
     # 업로드 유효 시간: 1시간
     expire_date = now_kst() + datetime.timedelta(hours=1)
-    
-    policy = cloudfront_signer.build_policy(url, expire_date).encode('utf-8')
+
+    policy = cloudfront_signer.build_policy(url, expire_date).encode("utf-8")
     signature = cloudfront_signer.signature(policy)
-    
+
     return {
         "url": url,
         "object_key": object_key,
         "cookies": {
             "CloudFront-Policy": _url_b64encode(policy),
             "CloudFront-Signature": _url_b64encode(signature),
-            "CloudFront-Key-Pair-Id": key_pair_id
-        }
+            "CloudFront-Key-Pair-Id": key_pair_id,
+        },
     }

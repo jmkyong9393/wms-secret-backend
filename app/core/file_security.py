@@ -14,6 +14,7 @@
 **차단 목록(blacklist)을 쓰지 않는다** — 새 형식이 나올 때마다 뚫리기 때문에
 허용 목록(whitelist)만 쓴다.
 """
+
 from __future__ import annotations
 
 import io
@@ -37,22 +38,33 @@ class FileSecurityError(Exception):
 # ──────────────────────────────────────────────────────────────
 # (오프셋, 시그니처) 목록. 하나라도 맞으면 그 타입으로 본다.
 _MAGIC: Dict[str, Tuple[Tuple[int, bytes], ...]] = {
-    "jpg":  ((0, b"\xff\xd8\xff"),),
-    "png":  ((0, b"\x89PNG\r\n\x1a\n"),),
-    "webp": ((0, b"RIFF"), (8, b"WEBP")),          # 두 조건 모두 만족해야 한다
-    "heic": ((4, b"ftyp"),),                        # ftypheic / ftypheix / ftypmif1
-    "pdf":  ((0, b"%PDF-"),),
-    "zip":  ((0, b"PK\x03\x04"), (0, b"PK\x05\x06"), (0, b"PK\x07\x08")),
-    "ole":  ((0, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"),),  # 구 MS Office(.doc/.xls/.ppt) · HWP 5.0
+    "jpg": ((0, b"\xff\xd8\xff"),),
+    "png": ((0, b"\x89PNG\r\n\x1a\n"),),
+    "webp": ((0, b"RIFF"), (8, b"WEBP")),  # 두 조건 모두 만족해야 한다
+    "heic": ((4, b"ftyp"),),  # ftypheic / ftypheix / ftypmif1
+    "pdf": ((0, b"%PDF-"),),
+    "zip": ((0, b"PK\x03\x04"), (0, b"PK\x05\x06"), (0, b"PK\x07\x08")),
+    "ole": (
+        (0, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"),
+    ),  # 구 MS Office(.doc/.xls/.ppt) · HWP 5.0
 }
 
 # 확장자 → 허용되는 실제 타입. docx/xlsx/pptx는 ZIP 컨테이너다.
 _EXT_TO_TYPES: Dict[str, Set[str]] = {
-    ".jpg": {"jpg"}, ".jpeg": {"jpg"}, ".png": {"png"}, ".webp": {"webp"}, ".heic": {"heic"},
+    ".jpg": {"jpg"},
+    ".jpeg": {"jpg"},
+    ".png": {"png"},
+    ".webp": {"webp"},
+    ".heic": {"heic"},
     ".pdf": {"pdf"},
-    ".docx": {"zip"}, ".xlsx": {"zip"}, ".pptx": {"zip"},
-    ".doc": {"ole"}, ".xls": {"ole"}, ".ppt": {"ole"}, ".hwp": {"ole"},
-    ".txt": set(),   # 텍스트는 고정 시그니처가 없다 — 별도 규칙(§2)으로 검사한다
+    ".docx": {"zip"},
+    ".xlsx": {"zip"},
+    ".pptx": {"zip"},
+    ".doc": {"ole"},
+    ".xls": {"ole"},
+    ".ppt": {"ole"},
+    ".hwp": {"ole"},
+    ".txt": set(),  # 텍스트는 고정 시그니처가 없다 — 별도 규칙(§2)으로 검사한다
 }
 
 # 실행 파일 시그니처. 확장자와 무관하게 발견되면 즉시 거부한다.
@@ -70,11 +82,11 @@ def detect_file_type(head: bytes) -> Optional[str]:
     for ftype, conditions in _MAGIC.items():
         if ftype == "webp":
             # RIFF....WEBP — 두 조건을 모두 만족해야 한다
-            if all(head[off:off + len(sig)] == sig for off, sig in conditions):
+            if all(head[off : off + len(sig)] == sig for off, sig in conditions):
                 return ftype
             continue
         for off, sig in conditions:
-            if head[off:off + len(sig)] == sig:
+            if head[off : off + len(sig)] == sig:
                 return ftype
     return None
 
@@ -84,13 +96,15 @@ def verify_magic_bytes(head: bytes, ext: str) -> None:
     # 실행 파일은 확장자가 무엇이든 거부한다
     for label, sig in _EXECUTABLE_SIGNATURES:
         if head.startswith(sig):
-            raise FileSecurityError("EXECUTABLE_CONTENT", f"실행 파일 형식이 감지되었습니다 ({label}).")
+            raise FileSecurityError(
+                "EXECUTABLE_CONTENT", f"실행 파일 형식이 감지되었습니다 ({label})."
+            )
 
     allowed = _EXT_TO_TYPES.get(ext)
     if allowed is None:
         raise FileSecurityError("EXT_NOT_ALLOWED", f"허용되지 않는 확장자입니다: {ext}")
 
-    if not allowed:          # .txt — 시그니처가 없으므로 여기서는 통과, §2가 검사한다
+    if not allowed:  # .txt — 시그니처가 없으므로 여기서는 통과, §2가 검사한다
         return
 
     actual = detect_file_type(head)
@@ -112,14 +126,18 @@ def verify_magic_bytes(head: bytes, ext: str) -> None:
 def verify_text_content(head: bytes) -> None:
     """.txt로 올린 파일이 실제로 평문인지 확인한다."""
     if b"\x00" in head:
-        raise FileSecurityError("TXT_BINARY", "텍스트 파일에 바이너리 데이터가 포함되어 있습니다.")
+        raise FileSecurityError(
+            "TXT_BINARY", "텍스트 파일에 바이너리 데이터가 포함되어 있습니다."
+        )
     try:
         head.decode("utf-8")
     except UnicodeDecodeError:
         try:
             head.decode("cp949")
         except UnicodeDecodeError:
-            raise FileSecurityError("TXT_NOT_DECODABLE", "텍스트로 해석할 수 없는 내용입니다.")
+            raise FileSecurityError(
+                "TXT_NOT_DECODABLE", "텍스트로 해석할 수 없는 내용입니다."
+            )
 
 
 # ──────────────────────────────────────────────────────────────
@@ -137,25 +155,47 @@ def verify_no_macro(data: bytes, ext: str) -> None:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             names = [n.lower() for n in zf.namelist()]
     except zipfile.BadZipFile:
-        raise FileSecurityError("OOXML_BROKEN", "문서 파일이 손상되었거나 형식이 올바르지 않습니다.")
+        raise FileSecurityError(
+            "OOXML_BROKEN", "문서 파일이 손상되었거나 형식이 올바르지 않습니다."
+        )
 
     for n in names:
         if any(marker in n for marker in _MACRO_MARKERS):
-            raise FileSecurityError("MACRO_DETECTED", "매크로가 포함된 문서는 업로드할 수 없습니다.")
+            raise FileSecurityError(
+                "MACRO_DETECTED", "매크로가 포함된 문서는 업로드할 수 없습니다."
+            )
 
 
 # 압축 컨테이너 안에 있어서는 안 되는 확장자. OOXML 정상 구성물(xml·rels·이미지·폰트)에는
 # 없는 것들만 골랐다.
 _ARCHIVE_FORBIDDEN_EXTS = (
-    ".exe", ".dll", ".scr", ".com", ".pif", ".bat", ".cmd", ".msi", ".ps1",
-    ".vbs", ".vbe", ".js", ".jse", ".wsf", ".hta", ".jar", ".sh", ".lnk",
+    ".exe",
+    ".dll",
+    ".scr",
+    ".com",
+    ".pif",
+    ".bat",
+    ".cmd",
+    ".msi",
+    ".ps1",
+    ".vbs",
+    ".vbe",
+    ".js",
+    ".jse",
+    ".wsf",
+    ".hta",
+    ".jar",
+    ".sh",
+    ".lnk",
 )
 # 중첩 압축으로 폭탄을 숨기는 것을 막기 위해 한 단계 더 들어간다.
 _NESTED_ARCHIVE_EXTS = (".zip", ".docx", ".xlsx", ".pptx", ".jar")
 _ARCHIVE_MAX_DEPTH = 2
 
 
-def verify_zip_bomb(data: bytes, ext: str, max_ratio: int = 100, max_total: int = 200 * 1024 * 1024) -> None:
+def verify_zip_bomb(
+    data: bytes, ext: str, max_ratio: int = 100, max_total: int = 200 * 1024 * 1024
+) -> None:
     """ZIP 계열의 압축 폭탄과 위험한 엔트리를 차단한다 (④의 ZIP 변종).
 
     압축 해제 후 총량과 압축비를 **실제로 풀지 않고** 헤더에서 읽어 판단한다.
@@ -174,11 +214,13 @@ def _inspect_archive(data: bytes, depth: int, max_ratio: int, max_total: int) ->
 
             if total > max_total:
                 raise FileSecurityError(
-                    "ZIP_BOMB_SIZE", f"압축 해제 크기가 과도합니다 ({total // (1024*1024)}MB)."
+                    "ZIP_BOMB_SIZE",
+                    f"압축 해제 크기가 과도합니다 ({total // (1024 * 1024)}MB).",
                 )
             if len(data) > 0 and total / len(data) > max_ratio:
                 raise FileSecurityError(
-                    "ZIP_BOMB_RATIO", f"압축비가 비정상적입니다 ({total / len(data):.0f}배)."
+                    "ZIP_BOMB_RATIO",
+                    f"압축비가 비정상적입니다 ({total / len(data):.0f}배).",
                 )
 
             for info in infos:
@@ -190,22 +232,26 @@ def _inspect_archive(data: bytes, depth: int, max_ratio: int, max_total: int) ->
                 normalized = name.replace("\\", "/")
                 if normalized.startswith("/") or ".." in normalized.split("/"):
                     raise FileSecurityError(
-                        "ZIP_PATH_TRAVERSAL", f"압축 파일에 비정상 경로가 있습니다: {name}"
+                        "ZIP_PATH_TRAVERSAL",
+                        f"압축 파일에 비정상 경로가 있습니다: {name}",
                     )
 
                 if lowered.endswith(_ARCHIVE_FORBIDDEN_EXTS):
                     raise FileSecurityError(
-                        "ZIP_EXECUTABLE_ENTRY", f"압축 파일에 실행 가능한 항목이 있습니다: {name}"
+                        "ZIP_EXECUTABLE_ENTRY",
+                        f"압축 파일에 실행 가능한 항목이 있습니다: {name}",
                     )
 
-                if depth < _ARCHIVE_MAX_DEPTH and lowered.endswith(_NESTED_ARCHIVE_EXTS):
+                if depth < _ARCHIVE_MAX_DEPTH and lowered.endswith(
+                    _NESTED_ARCHIVE_EXTS
+                ):
                     if info.file_size > max_total:
                         raise FileSecurityError(
                             "ZIP_BOMB_SIZE", f"중첩 압축 항목이 과도합니다: {name}"
                         )
                     _inspect_archive(zf.read(info), depth + 1, max_ratio, max_total)
     except zipfile.BadZipFile:
-        return   # 형식 오류는 verify_no_macro가 이미 처리한다
+        return  # 형식 오류는 verify_no_macro가 이미 처리한다
 
 
 # ──────────────────────────────────────────────────────────────
@@ -242,7 +288,7 @@ def verify_pdf_active_content(data: bytes, ext: str) -> None:
 # ──────────────────────────────────────────────────────────────
 # 이미지 종료 표지 뒤에 스크립트·압축·실행파일을 이어 붙이면 매직바이트 검사를 통과한다.
 # 뷰어는 무시하지만 다른 해석기(웹서버·압축 도구)는 뒤쪽을 읽는다.
-_TRAILING_TOLERANCE = 16     # 인코더가 남기는 패딩 여유
+_TRAILING_TOLERANCE = 16  # 인코더가 남기는 패딩 여유
 
 # JPEG 후미에서만 찾는 위험 시그니처. 존재 자체를 막지 않고 **무엇이 붙었는지**로 판정한다.
 _TRAILING_DANGEROUS = (
@@ -268,10 +314,10 @@ def verify_no_trailing_payload(data: bytes, ext: str) -> None:
     if ext == ".png":
         idx = data.rfind(b"IEND")
         if idx == -1:
-            return                      # 종료 표지가 없는 잘린 파일은 다른 계층이 다룬다
-        trailing = data[idx + 8:]       # IEND + CRC 4바이트
+            return  # 종료 표지가 없는 잘린 파일은 다른 계층이 다룬다
+        trailing = data[idx + 8 :]  # IEND + CRC 4바이트
         if len(trailing) <= _TRAILING_TOLERANCE and not trailing.strip(b"\x00 \r\n\t"):
-            return                      # 패딩 수준은 허용
+            return  # 패딩 수준은 허용
         if trailing:
             raise FileSecurityError(
                 "TRAILING_PAYLOAD",
@@ -283,7 +329,7 @@ def verify_no_trailing_payload(data: bytes, ext: str) -> None:
         idx = data.rfind(b"\xff\xd9")
         if idx == -1:
             return
-        trailing = data[idx + 2:]
+        trailing = data[idx + 2 :]
         for sig, label in _TRAILING_DANGEROUS:
             if sig in trailing:
                 raise FileSecurityError(
@@ -296,7 +342,7 @@ def verify_no_trailing_payload(data: bytes, ext: str) -> None:
 # 4. 이미지 디컴프레션 폭탄 (④)
 # ──────────────────────────────────────────────────────────────
 # 5MB 제한 안에서도 픽셀 수는 수십억이 될 수 있다. 파일 크기가 아니라 **픽셀 수**로 막는다.
-MAX_IMAGE_PIXELS = 50_000_000   # 5천만 화소 (8000x6000 여유)
+MAX_IMAGE_PIXELS = 50_000_000  # 5천만 화소 (8000x6000 여유)
 
 
 def verify_image_dimensions(data: bytes, ext: str) -> None:
@@ -306,18 +352,19 @@ def verify_image_dimensions(data: bytes, ext: str) -> None:
     try:
         from PIL import Image
     except ImportError:
-        return   # Pillow가 없으면 이 계층은 건너뛴다 (다른 계층은 그대로 작동)
+        return  # Pillow가 없으면 이 계층은 건너뛴다 (다른 계층은 그대로 작동)
 
     try:
         with Image.open(io.BytesIO(data)) as im:
-            w, h = im.size          # open()은 헤더만 읽는다 — 폭탄이어도 여기서 터지지 않는다
+            w, h = im.size  # open()은 헤더만 읽는다 — 폭탄이어도 여기서 터지지 않는다
     except Exception:
         # heic 등 플러그인이 없는 형식은 매직바이트 검증으로 이미 걸러졌다
         return
 
     if w * h > MAX_IMAGE_PIXELS:
         raise FileSecurityError(
-            "IMAGE_BOMB", f"이미지 해상도가 과도합니다 ({w}x{h} = {w*h/1_000_000:.0f}M 화소)."
+            "IMAGE_BOMB",
+            f"이미지 해상도가 과도합니다 ({w}x{h} = {w * h / 1_000_000:.0f}M 화소).",
         )
 
 
@@ -342,14 +389,20 @@ def normalize_filename(name: str) -> str:
         raise FileSecurityError("EMPTY_FILENAME", "파일명이 비어 있습니다.")
     name = unicodedata.normalize("NFC", name)
     if _BIDI_CONTROLS.search(name):
-        raise FileSecurityError("FILENAME_BIDI", "파일명에 표시를 왜곡하는 제어문자가 포함되어 있습니다.")
+        raise FileSecurityError(
+            "FILENAME_BIDI", "파일명에 표시를 왜곡하는 제어문자가 포함되어 있습니다."
+        )
     # 제어문자를 조용히 지우면 확장자가 바뀐다 — "photo.png\x00.exe"가 "photo.png.exe"가 되어
     # 검사 대상 확장자 자체가 달라진다. 지우지 말고 거부한다.
     if _CONTROL_CHARS.search(name):
-        raise FileSecurityError("FILENAME_CONTROL", "파일명에 제어문자가 포함되어 있습니다.")
+        raise FileSecurityError(
+            "FILENAME_CONTROL", "파일명에 제어문자가 포함되어 있습니다."
+        )
     # 폭 없는 문자는 눈에 보이지 않으면서 파일명을 다르게 만든다.
     if _ZERO_WIDTH.search(name):
-        raise FileSecurityError("FILENAME_ZERO_WIDTH", "파일명에 보이지 않는 문자가 포함되어 있습니다.")
+        raise FileSecurityError(
+            "FILENAME_ZERO_WIDTH", "파일명에 보이지 않는 문자가 포함되어 있습니다."
+        )
     # 윈도우는 후행 점·공백을 무시한다 — "photo.png."는 실제로 "photo.png"로 열린다.
     # 확장자 판정이 갈리지 않도록 먼저 정리한다.
     name = name.rstrip(". ")
@@ -359,14 +412,18 @@ def normalize_filename(name: str) -> str:
     lowered = name.lower()
     for danger in (".exe.", ".bat.", ".cmd.", ".sh.", ".js.", ".jar.", ".ps1."):
         if danger in lowered:
-            raise FileSecurityError("FILENAME_DOUBLE_EXT", "실행 파일 확장자가 파일명에 포함되어 있습니다.")
+            raise FileSecurityError(
+                "FILENAME_DOUBLE_EXT", "실행 파일 확장자가 파일명에 포함되어 있습니다."
+            )
     return name.strip()
 
 
 # ──────────────────────────────────────────────────────────────
 # 통합 진입점
 # ──────────────────────────────────────────────────────────────
-def scan_attachment(data: bytes, ext: str, declared_size: Optional[int] = None) -> Dict[str, object]:
+def scan_attachment(
+    data: bytes, ext: str, declared_size: Optional[int] = None
+) -> Dict[str, object]:
     """첨부파일 전체 검증. 통과하면 판정 요약을 돌려준다.
 
     호출자는 이 함수가 예외를 던지지 않은 경우에만 격리 구역에서 정상 구역으로 옮긴다.
@@ -374,18 +431,26 @@ def scan_attachment(data: bytes, ext: str, declared_size: Optional[int] = None) 
     ext = (ext or "").lower()
     checks = []
 
-    verify_magic_bytes(data[:64], ext);            checks.append("magic_bytes")
+    verify_magic_bytes(data[:64], ext)
+    checks.append("magic_bytes")
     if ext == ".txt":
-        verify_text_content(data[:4096]);          checks.append("text_content")
-    verify_no_macro(data, ext);                    checks.append("macro")
-    verify_zip_bomb(data, ext);                    checks.append("zip_safety")
-    verify_pdf_active_content(data, ext);          checks.append("pdf_active_content")
-    verify_image_dimensions(data, ext);            checks.append("image_bomb")
-    verify_no_trailing_payload(data, ext);         checks.append("trailing_payload")
+        verify_text_content(data[:4096])
+        checks.append("text_content")
+    verify_no_macro(data, ext)
+    checks.append("macro")
+    verify_zip_bomb(data, ext)
+    checks.append("zip_safety")
+    verify_pdf_active_content(data, ext)
+    checks.append("pdf_active_content")
+    verify_image_dimensions(data, ext)
+    checks.append("image_bomb")
+    verify_no_trailing_payload(data, ext)
+    checks.append("trailing_payload")
 
     if declared_size is not None and declared_size != len(data):
         raise FileSecurityError(
-            "SIZE_MISMATCH", f"선언한 크기({declared_size})와 실제 크기({len(data)})가 다릅니다."
+            "SIZE_MISMATCH",
+            f"선언한 크기({declared_size})와 실제 크기({len(data)})가 다릅니다.",
         )
 
     return {

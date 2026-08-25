@@ -16,23 +16,22 @@ logger = logging.getLogger(__name__)
 # HITL 이관 이력 보관 상한. 같은 건이 재검수를 반복해도 JSONB가 무한히 커지지 않게 자른다.
 ESCALATION_HISTORY_LIMIT = 20
 
+
 # return_job_id 기준으로 ReturnJob 조회 함수
 def find_return_job_by_id(
-        session: Session,
-        return_job_id: uuid.UUID,
+    session: Session,
+    return_job_id: uuid.UUID,
 ) -> Optional[ReturnJob]:
-    statement = (
-        select(ReturnJob)
-        .where(ReturnJob.id == return_job_id)
-    )
+    statement = select(ReturnJob).where(ReturnJob.id == return_job_id)
 
     return session.exec(statement).first()
 
+
 # ReturnJob 상태 변경 함수
 def update_return_job_status(
-        session: Session,
-        job: ReturnJob,
-        status: str,
+    session: Session,
+    job: ReturnJob,
+    status: str,
 ) -> None:
     job.status = status
     job.updated_at = now_kst()
@@ -41,25 +40,23 @@ def update_return_job_status(
     session.commit()
     session.refresh(job)
 
+
 # Celery 작업 시작 시 ReturnJob을 조회하고 PROCESSING 상태로 변경하는 함수
 def prepare_processing_job(
-        return_job_id: str,
-        celery_task_id: str,
+    return_job_id: str,
+    celery_task_id: str,
 ) -> Tuple[uuid.UUID, uuid.UUID, str, List[str], Dict[str, Any]]:
-    
+
     parsed_return_job_id = uuid.UUID(return_job_id)
-    
+
     with Session(engine) as session:
-        job = find_return_job_by_id(
-            session=session,
-            return_job_id=parsed_return_job_id
-        )
+        job = find_return_job_by_id(session=session, return_job_id=parsed_return_job_id)
 
         if job is None:
             raise ValueError(
                 f"ReturnJob을 찾을 수 없습니다. return_job_id={return_job_id}"
             )
-        
+
         # task_id 저장
         if job.task_id is None:
             job.task_id = celery_task_id
@@ -75,24 +72,24 @@ def prepare_processing_job(
             status="PROCESSING",
         )
 
-        return(
+        return (
             job.id,
             job.book_id,
             str(job.order_id),
             job.image_urls or [],
             job.agent_logs or {},
         )
-    
+
 
 # LangGraph 결과와 WMS 호출 결과를 ReturnJob에 저장하는 함수
 def save_inspection_result(
-        return_job_id: uuid.UUID,
-        ai_result: Dict[str,Any],
-        final_status: str,
-        extra_logs: Dict[str, Any],
-        latency_ms: Optional[int] = None,
+    return_job_id: uuid.UUID,
+    ai_result: Dict[str, Any],
+    final_status: str,
+    extra_logs: Dict[str, Any],
+    latency_ms: Optional[int] = None,
 ) -> ReturnJob:
-    
+
     with Session(engine) as session:
         job = find_return_job_by_id(
             session=session,
@@ -103,7 +100,6 @@ def save_inspection_result(
             raise ValueError(
                 f"ReturnJob을 찾을 수 없습니다. return_job_id={return_job_id}"
             )
-        
 
         # AI 결과를 ReturnJob에 저장
         job.ubci_score = ai_result.get("ubci_score")
@@ -126,21 +122,30 @@ def save_inspection_result(
             merged = job.agent_logs
             history = list(prev_logs.get("escalations") or [])
             defects = merged.get("defects") or []
-            history.append({
-                "at": now_kst().isoformat(),
-                "by": "AI",                       # 관리자 소환은 admin_audit_logs에 남는다
-                "reason_code": merged.get("reason_code"),
-                "ubci_score": ai_result.get("ubci_score"),
-                "final_grade": ai_result.get("final_grade"),
-                "defect_count": len(defects) if isinstance(defects, list) else 0,
-                "defect_types": sorted({
-                    d.get("type") for d in defects
-                    if isinstance(d, dict) and d.get("type")
-                }),
-                "rationale": merged.get("supervisor_rationale") or merged.get("critic_text"),
-                "retry_count": job.retry_count,
-            })
-            job.agent_logs = {**merged, "escalations": history[-ESCALATION_HISTORY_LIMIT:]}
+            history.append(
+                {
+                    "at": now_kst().isoformat(),
+                    "by": "AI",  # 관리자 소환은 admin_audit_logs에 남는다
+                    "reason_code": merged.get("reason_code"),
+                    "ubci_score": ai_result.get("ubci_score"),
+                    "final_grade": ai_result.get("final_grade"),
+                    "defect_count": len(defects) if isinstance(defects, list) else 0,
+                    "defect_types": sorted(
+                        {
+                            d.get("type")
+                            for d in defects
+                            if isinstance(d, dict) and d.get("type")
+                        }
+                    ),
+                    "rationale": merged.get("supervisor_rationale")
+                    or merged.get("critic_text"),
+                    "retry_count": job.retry_count,
+                }
+            )
+            job.agent_logs = {
+                **merged,
+                "escalations": history[-ESCALATION_HISTORY_LIMIT:],
+            }
         # HITL 수동 검수 대기 건에 대한 AI 재검수인 경우, 사람 관리자의 결재 전까지 HITL_REQUIRED 상태를 보존합니다!
         if job.status == "HITL_REQUIRED":
             job.status = "HITL_REQUIRED"
@@ -159,25 +164,33 @@ def save_inspection_result(
         session.commit()
         session.refresh(job)
 
-        # [Supervisor Agent 최종 판정 승인 완료 시점] 
+        # [Supervisor Agent 최종 판정 승인 완료 시점]
         # Critic Agent ➔ Supervisor Agent 합의가 이의 없이 끝났을 때만 창고 보관 랙(Zone A-E) 최종 할당 실행!
         if final_status in ["COMPLETED", "APPROVED"]:
-            from app.domains.inventory.service import assign_rack_location_after_inspection
+            from app.domains.inventory.service import (
+                assign_rack_location_after_inspection,
+            )
+
             final_grade = ai_result.get("final_grade") or "MINT"
             lpn_barcode = ai_result.get("lpn_barcode")
             if lpn_barcode:
                 try:
-                    assign_rack_location_after_inspection(session, lpn_barcode, final_grade)
+                    assign_rack_location_after_inspection(
+                        session, lpn_barcode, final_grade
+                    )
                 except Exception as e:
-                    logger.warning(f"Supervisor 승인 후 랙 위치 자동 할당 건너뜀/오류: {e}")
+                    logger.warning(
+                        f"Supervisor 승인 후 랙 위치 자동 할당 건너뜀/오류: {e}"
+                    )
 
         return job
-    
+
+
 # 최종 실패시 예외 처리 (재시도 이후 실패 또는 Langraph 실행 오류 등)
 def save_inspection_failed(
-        return_job_id: uuid.UUID,
-        celery_task_id: str,
-        error: Exception,
+    return_job_id: uuid.UUID,
+    celery_task_id: str,
+    error: Exception,
 ) -> Optional[ReturnJob]:
     with Session(engine) as session:
         job = find_return_job_by_id(

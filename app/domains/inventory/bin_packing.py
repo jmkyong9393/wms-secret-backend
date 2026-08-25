@@ -21,7 +21,9 @@ def resolve_book_format(book_meta: Dict[str, Any]) -> Dict[str, float]:
     return BOOK_FORMATS[format_size]
 
 
-def estimate_book_thickness_mm(pages: int, is_color: bool = False, is_hardcover: bool = False) -> float:
+def estimate_book_thickness_mm(
+    pages: int, is_color: bool = False, is_hardcover: bool = False
+) -> float:
     """
     페이지 수 기반 두께 추정 (SSOT 수식):
     t = pages x (컬러 0.08 | 흑백 0.05) + (양장 +6.0mm), 하한 3.0mm
@@ -93,7 +95,9 @@ def recommend_optimal_box(books: List[Dict[str, Any]]) -> str:
         )
 
     # 부피 오름차순 전수 탐색 → 3중 제약 만족하는 최소 박스 선택
-    sorted_boxes = sorted(BOX_CATALOG, key=lambda b: b["length"] * b["width"] * b["height"])
+    sorted_boxes = sorted(
+        BOX_CATALOG, key=lambda b: b["length"] * b["width"] * b["height"]
+    )
     for box in sorted_boxes:
         box_volume = box["length"] * box["width"] * box["height"]
         if (

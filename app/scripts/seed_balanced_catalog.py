@@ -25,6 +25,7 @@ LPN 채번:
   Zone A는 실촬영 검수 영역이라 침범하지 않는다. B·C·D·E를 순환 배정하며 존별
   기존 최대 순번을 이어받으므로 여러 번 돌려도 충돌하지 않는다.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,7 +45,15 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.db.session import engine
-from app.models.wms import Book, ConditionGradeEnum, Inventory, InventoryUsedItem, Location, ReturnJob, now_kst
+from app.models.wms import (
+    Book,
+    ConditionGradeEnum,
+    Inventory,
+    InventoryUsedItem,
+    Location,
+    ReturnJob,
+    now_kst,
+)
 
 ALADIN_LIST_URL = "https://www.aladin.co.kr/ttb/api/ItemList.aspx"
 TOP_N = 30  # 분류별 베스트셀러 상위 몇 권을 모집단으로 쓸지
@@ -79,17 +88,17 @@ NOT_STOCKED = ("HITL_PENDING", "HITL_REQUIRED", "PENDING_INSPECTION")
 
 # ── UBCI 감점표 (policy_agent와 동일) ────────────────────────────────────
 DEFECT_POOL: list[tuple[str, str, int]] = [
-    ("DMG_EDGE_WEAR",      "모서리 마모",        5),
-    ("DMG_EXT_SCRATCH",    "표지 긁힘/스크래치", 2),
-    ("DMG_EXT_STICKER",    "스티커/바코드 자국", 3),
-    ("DMG_EXT_CRUSH",      "표지 모서리 찍힘",   5),
-    ("DMG_INT_DISCOLOR",   "내지 황변/빛바램",   2),
-    ("DMG_INT_STAIN",      "내지 오염/이물질",   5),
-    ("DMG_EXT_TEAR",       "커버 찢어짐",        10),
-    ("DMG_INT_DOODLE",     "내부 손글씨/낙서",   10),
-    ("DMG_SPINE_CRACK",    "책등 갈라짐",        10),
-    ("DMG_INT_STAIN_M",    "내지 오염(중간)",    10),
-    ("DMG_INT_DISCOLOR_H", "내지 황변(심함)",    10),
+    ("DMG_EDGE_WEAR", "모서리 마모", 5),
+    ("DMG_EXT_SCRATCH", "표지 긁힘/스크래치", 2),
+    ("DMG_EXT_STICKER", "스티커/바코드 자국", 3),
+    ("DMG_EXT_CRUSH", "표지 모서리 찍힘", 5),
+    ("DMG_INT_DISCOLOR", "내지 황변/빛바램", 2),
+    ("DMG_INT_STAIN", "내지 오염/이물질", 5),
+    ("DMG_EXT_TEAR", "커버 찢어짐", 10),
+    ("DMG_INT_DOODLE", "내부 손글씨/낙서", 10),
+    ("DMG_SPINE_CRACK", "책등 갈라짐", 10),
+    ("DMG_INT_STAIN_M", "내지 오염(중간)", 10),
+    ("DMG_INT_DISCOLOR_H", "내지 황변(심함)", 10),
 ]
 
 # 등급별 목표 감점 폭 (UBCI 경계: MINT>=95, GOOD>=85, NORMAL>=65).
@@ -126,12 +135,14 @@ def build_defects_for_grade(target: str) -> tuple[list[dict], int]:
         if total + ded <= hi:
             # confidence는 파이프라인과 같은 0~1 실수다. 이 값이 없으면 검수 이력의
             # AI 신뢰도 열이 전부 "미기록"이 된다(평균 낼 근거가 없으므로).
-            picked.append({
-                "type": code,
-                "label": label,
-                "deduction": ded,
-                "confidence": round(random.uniform(0.62, 0.97), 4),
-            })
+            picked.append(
+                {
+                    "type": code,
+                    "label": label,
+                    "deduction": ded,
+                    "confidence": round(random.uniform(0.62, 0.97), 4),
+                }
+            )
             total += ded
         if total >= lo and picked and random.random() < 0.45:
             break
@@ -174,17 +185,21 @@ async def fetch_top_bestsellers() -> dict[str, list[dict]]:
                 if not isbn or isbn in seen_isbn:
                     continue
                 seen_isbn.add(isbn)
-                books.append({
-                    "isbn": isbn,
-                    "title": it.get("title") or "제목 미상",
-                    "author": it.get("author"),
-                    "publisher": it.get("publisher"),
-                    "pubDate": it.get("pubDate"),
-                    "price": int(it.get("priceStandard") or it.get("priceSales") or 0),
-                    "cover": it.get("cover"),
-                    "description": it.get("description"),
-                    "category": cname,
-                })
+                books.append(
+                    {
+                        "isbn": isbn,
+                        "title": it.get("title") or "제목 미상",
+                        "author": it.get("author"),
+                        "publisher": it.get("publisher"),
+                        "pubDate": it.get("pubDate"),
+                        "price": int(
+                            it.get("priceStandard") or it.get("priceSales") or 0
+                        ),
+                        "cover": it.get("cover"),
+                        "description": it.get("description"),
+                        "category": cname,
+                    }
+                )
             result[cname] = books
             print(f"  cid={cid:<6} {cname:<14} {len(books):>3}권")
     return result
@@ -196,15 +211,17 @@ def next_lpn_seq(db: Session) -> dict[str, int]:
     재고 테이블만 보면 안 된다 - 검수 이력의 LPN은 return_jobs.agent_logs(JSON) 안에 있어
     컬럼 스캔에 잡히지 않는다. 두 테이블 합집합에서 최대값을 구한다.
     """
-    rows = db.exec(text(
-        r"SELECT substring(lpn from '([A-Z])[0-9]+$') AS z,"
-        r"       max(substring(lpn from '[A-Z]([0-9]+)$')::int) AS mx FROM ("
-        r"  SELECT lpn_barcode AS lpn FROM inventory_used_items"
-        r"  UNION ALL"
-        r"  SELECT agent_logs->>'lpn_barcode' FROM return_jobs"
-        r"   WHERE agent_logs->>'lpn_barcode' IS NOT NULL"
-        r") x WHERE lpn ~ '[A-Z][0-9]+$' GROUP BY 1"
-    )).all()
+    rows = db.exec(
+        text(
+            r"SELECT substring(lpn from '([A-Z])[0-9]+$') AS z,"
+            r"       max(substring(lpn from '[A-Z]([0-9]+)$')::int) AS mx FROM ("
+            r"  SELECT lpn_barcode AS lpn FROM inventory_used_items"
+            r"  UNION ALL"
+            r"  SELECT agent_logs->>'lpn_barcode' FROM return_jobs"
+            r"   WHERE agent_logs->>'lpn_barcode' IS NOT NULL"
+            r") x WHERE lpn ~ '[A-Z][0-9]+$' GROUP BY 1"
+        )
+    ).all()
     seq = {z: 0 for z in SEED_ZONES}
     for z, mx in rows:
         if z in seq:
@@ -214,28 +231,48 @@ def next_lpn_seq(db: Session) -> dict[str, int]:
 
 def current_totals(db: Session) -> tuple[dict[str, int], dict[str, int]]:
     """카테고리별 현재 보유량 (중고 건수, 신품 수량)."""
-    used = dict(db.exec(text(
-        "SELECT coalesce(b.category_type,'미분류'), count(*) "
-        "FROM inventory_used_items u JOIN books b ON b.id = u.book_id "
-        "WHERE u.item_status IS NULL OR u.item_status NOT IN "
-        "      ('HITL_PENDING','HITL_REQUIRED','PENDING_INSPECTION') "
-        "GROUP BY 1"
-    )).all())
-    new = dict(db.exec(text(
-        "SELECT coalesce(b.category_type,'미분류'), coalesce(sum(i.quantity),0) "
-        "FROM inventory i JOIN books b ON b.id = i.book_id GROUP BY 1"
-    )).all())
+    used = dict(
+        db.exec(
+            text(
+                "SELECT coalesce(b.category_type,'미분류'), count(*) "
+                "FROM inventory_used_items u JOIN books b ON b.id = u.book_id "
+                "WHERE u.item_status IS NULL OR u.item_status NOT IN "
+                "      ('HITL_PENDING','HITL_REQUIRED','PENDING_INSPECTION') "
+                "GROUP BY 1"
+            )
+        ).all()
+    )
+    new = dict(
+        db.exec(
+            text(
+                "SELECT coalesce(b.category_type,'미분류'), coalesce(sum(i.quantity),0) "
+                "FROM inventory i JOIN books b ON b.id = i.book_id GROUP BY 1"
+            )
+        ).all()
+    )
     return defaultdict(int, used), defaultdict(int, new)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="카테고리 균형 카탈로그 시드")
-    ap.add_argument("--new-target", type=int, default=140, help="카테고리별 신품 목표 수량")
-    ap.add_argument("--used-target", type=int, default=28, help="카테고리별 중고 목표 건수")
-    ap.add_argument("--reject-jobs", type=int, default=38,
-                    help="반려 검수 이력 건수 (재고에는 편입되지 않음)")
-    ap.add_argument("--hitl-jobs", type=int, default=22,
-                    help="HITL 이관 검수 이력 건수 (등급 미확정이라 재고 편입 안 됨)")
+    ap.add_argument(
+        "--new-target", type=int, default=140, help="카테고리별 신품 목표 수량"
+    )
+    ap.add_argument(
+        "--used-target", type=int, default=28, help="카테고리별 중고 목표 건수"
+    )
+    ap.add_argument(
+        "--reject-jobs",
+        type=int,
+        default=38,
+        help="반려 검수 이력 건수 (재고에는 편입되지 않음)",
+    )
+    ap.add_argument(
+        "--hitl-jobs",
+        type=int,
+        default=22,
+        help="HITL 이관 검수 이력 건수 (등급 미확정이라 재고 편입 안 됨)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="DB 변경 없이 계획만 출력")
     args = ap.parse_args()
 
@@ -289,7 +326,9 @@ def main() -> None:
             return
 
         # (book_id, location_id) 유니크 제약이 있으므로 기존 행은 수량을 더한다.
-        inv_index = {(i.book_id, i.location_id): i for i in db.exec(select(Inventory)).all()}
+        inv_index = {
+            (i.book_id, i.location_id): i for i in db.exec(select(Inventory)).all()
+        }
         new_added: dict[str, int] = {}
 
         # 목표를 넘긴 카테고리는 줄인다. 채우기만 하면 이미 많은 쪽이 그대로 남아
@@ -297,9 +336,7 @@ def main() -> None:
         # 감축 대상은 **해당 카테고리의 모든 도서**다. 베스트셀러 풀로 좁히면 이전 시드나
         # AUTO_PO 승인으로 들어온 다른 도서의 재고가 남아 목표에 도달하지 못한다.
         book_ids_by_cat: dict[str, set] = defaultdict(set)
-        for bid, cat in db.exec(
-            select(Book.id, Book.category_type)
-        ).all():
+        for bid, cat in db.exec(select(Book.id, Book.category_type)).all():
             book_ids_by_cat[cat or "미분류"].add(bid)
         new_trimmed: dict[str, int] = {}
         for cname in pool:
@@ -368,12 +405,16 @@ def main() -> None:
                     continue
                 # LPN 순번은 3자리다. 넘기면 형식이 깨져 파싱·정렬이 모두 어긋난다.
                 if seq[zone] >= 999:
-                    print(f"      [중단] Zone {zone} 일일 순번 999 소진 - 목표를 낮추거나 날짜를 나누세요.")
+                    print(
+                        f"      [중단] Zone {zone} 일일 순번 999 소진 - 목표를 낮추거나 날짜를 나누세요."
+                    )
                     break
                 seq[zone] += 1
 
                 target = random.choice(GRADE_PLAN)
-                _defects, score = build_defects_for_grade(target)  # agent_logs에 그대로 기록
+                _defects, score = build_defects_for_grade(
+                    target
+                )  # agent_logs에 그대로 기록
                 grade = {
                     "MINT": ConditionGradeEnum.MINT,
                     "GOOD": ConditionGradeEnum.GOOD,
@@ -413,21 +454,23 @@ def main() -> None:
                 # flush 없이 두면 autoflush 순서에 따라 재고가 먼저 나가 FK 위반이 난다.
                 db.flush()
 
-                db.add(InventoryUsedItem(
-                    id=uuid4(),
-                    book_id=book.id,
-                    location_id=random.choice(loc_by_zone[zone]).id,
-                    lpn_barcode=lpn,
-                    condition_grade=grade.value,
-                    ubci_score=score,
-                    item_status="IN_STOCK",
-                    source_job_id=job.id,
-                    inspection_source="AI_AUTO",
-                    inspected_by=SEED_INSPECTOR,
-                    inspected_at=inspected,
-                    created_at=inspected,
-                    updated_at=inspected,
-                ))
+                db.add(
+                    InventoryUsedItem(
+                        id=uuid4(),
+                        book_id=book.id,
+                        location_id=random.choice(loc_by_zone[zone]).id,
+                        lpn_barcode=lpn,
+                        condition_grade=grade.value,
+                        ubci_score=score,
+                        item_status="IN_STOCK",
+                        source_job_id=job.id,
+                        inspection_source="AI_AUTO",
+                        inspected_by=SEED_INSPECTOR,
+                        inspected_at=inspected,
+                        created_at=inspected,
+                        updated_at=inspected,
+                    )
+                )
             used_added[cname] = deficit
 
         # 반려·HITL 이력 생성.
@@ -440,57 +483,76 @@ def main() -> None:
 
         for _ in range(max(0, args.reject_jobs)):
             code, label = random.choice(FATAL_POOL)
-            moment = today - timedelta(days=random.randint(0, 13), hours=random.randint(0, 23))
-            db.add(ReturnJob(
-                id=uuid4(),
-                book_id=random.choice(all_seed_books).id,
-                status="REJECTED",
-                mode="INBOUND",
-                ubci_score=0,
-                image_urls=[],
-                agent_logs={
-                    "defects": [{"type": code, "label": label, "deduction": 100,
-                                 "fatal": True, "confidence": round(random.uniform(0.78, 0.99), 4)}],
-                    "reason_code": code,
-                    "inbound_worker_id": SEED_WORKER_ID,
-                    "seed": True,
-                },
-                created_at=moment,
-                updated_at=moment,
-            ))
+            moment = today - timedelta(
+                days=random.randint(0, 13), hours=random.randint(0, 23)
+            )
+            db.add(
+                ReturnJob(
+                    id=uuid4(),
+                    book_id=random.choice(all_seed_books).id,
+                    status="REJECTED",
+                    mode="INBOUND",
+                    ubci_score=0,
+                    image_urls=[],
+                    agent_logs={
+                        "defects": [
+                            {
+                                "type": code,
+                                "label": label,
+                                "deduction": 100,
+                                "fatal": True,
+                                "confidence": round(random.uniform(0.78, 0.99), 4),
+                            }
+                        ],
+                        "reason_code": code,
+                        "inbound_worker_id": SEED_WORKER_ID,
+                        "seed": True,
+                    },
+                    created_at=moment,
+                    updated_at=moment,
+                )
+            )
             extra_jobs += 1
 
         for _ in range(max(0, args.hitl_jobs)):
             code, detail = random.choice(HITL_REASONS)
-            moment = today - timedelta(days=random.randint(0, 13), hours=random.randint(0, 23))
+            moment = today - timedelta(
+                days=random.randint(0, 13), hours=random.randint(0, 23)
+            )
             # 커버리지 미달 건은 점수를 내지 않는다(파이프라인이 None으로 남긴다).
             score = None if code == "NO_VALID_IMAGE_HITL" else random.randint(58, 66)
-            db.add(ReturnJob(
-                id=uuid4(),
-                book_id=random.choice(all_seed_books).id,
-                status="HITL_REQUIRED",
-                mode="INBOUND",
-                ubci_score=score,
-                image_urls=[],
-                agent_logs={
-                    "defects": [],
-                    "reason_code": code,
-                    "reason_detail": detail,
-                    "inbound_worker_id": SEED_WORKER_ID,
-                    "seed": True,
-                },
-                retry_count=random.randint(0, 2),
-                created_at=moment,
-                updated_at=moment,
-            ))
+            db.add(
+                ReturnJob(
+                    id=uuid4(),
+                    book_id=random.choice(all_seed_books).id,
+                    status="HITL_REQUIRED",
+                    mode="INBOUND",
+                    ubci_score=score,
+                    image_urls=[],
+                    agent_logs={
+                        "defects": [],
+                        "reason_code": code,
+                        "reason_detail": detail,
+                        "inbound_worker_id": SEED_WORKER_ID,
+                        "seed": True,
+                    },
+                    retry_count=random.randint(0, 2),
+                    created_at=moment,
+                    updated_at=moment,
+                )
+            )
             extra_jobs += 1
 
-        print(f"[3/4] 반려 {args.reject_jobs}건 · HITL {args.hitl_jobs}건 이력 생성 (재고 미편입)")
+        print(
+            f"[3/4] 반려 {args.reject_jobs}건 · HITL {args.hitl_jobs}건 이력 생성 (재고 미편입)"
+        )
         print("      채울 수량 (목표 - 현재)")
         print(f"      {'카테고리':<16}{'신품+':>8}{'신품-':>8}{'중고+':>8}")
         for cname in sorted(pool):
-            print(f"      {cname:<16}{new_added.get(cname, 0):>8}"
-                  f"{new_trimmed.get(cname, 0):>8}{used_added.get(cname, 0):>8}")
+            print(
+                f"      {cname:<16}{new_added.get(cname, 0):>8}"
+                f"{new_trimmed.get(cname, 0):>8}{used_added.get(cname, 0):>8}"
+            )
 
         if args.dry_run:
             db.rollback()
@@ -501,21 +563,23 @@ def main() -> None:
 
         # 중고와 신품을 각각 집계한 뒤 합친다. 한 쿼리에서 두 테이블을 동시에 조인하면
         # 카테시안 곱이 생겨 수량이 부풀려진다.
-        rows = db.exec(text(
-            "WITH u AS ("
-            "  SELECT coalesce(b.category_type,'미분류') AS c, count(*) AS n"
-            "    FROM inventory_used_items i JOIN books b ON b.id = i.book_id"
-            "   WHERE i.item_status IS NULL OR i.item_status NOT IN"
-            "         ('HITL_PENDING','HITL_REQUIRED','PENDING_INSPECTION')"
-            "   GROUP BY 1"
-            "), v AS ("
-            "  SELECT coalesce(b.category_type,'미분류') AS c, sum(i.quantity) AS n"
-            "    FROM inventory i JOIN books b ON b.id = i.book_id GROUP BY 1"
-            ")"
-            "SELECT coalesce(u.c, v.c), coalesce(u.n,0), coalesce(v.n,0),"
-            "       coalesce(u.n,0) + coalesce(v.n,0) AS total"
-            "  FROM u FULL OUTER JOIN v ON u.c = v.c ORDER BY 4 DESC"
-        )).all()
+        rows = db.exec(
+            text(
+                "WITH u AS ("
+                "  SELECT coalesce(b.category_type,'미분류') AS c, count(*) AS n"
+                "    FROM inventory_used_items i JOIN books b ON b.id = i.book_id"
+                "   WHERE i.item_status IS NULL OR i.item_status NOT IN"
+                "         ('HITL_PENDING','HITL_REQUIRED','PENDING_INSPECTION')"
+                "   GROUP BY 1"
+                "), v AS ("
+                "  SELECT coalesce(b.category_type,'미분류') AS c, sum(i.quantity) AS n"
+                "    FROM inventory i JOIN books b ON b.id = i.book_id GROUP BY 1"
+                ")"
+                "SELECT coalesce(u.c, v.c), coalesce(u.n,0), coalesce(v.n,0),"
+                "       coalesce(u.n,0) + coalesce(v.n,0) AS total"
+                "  FROM u FULL OUTER JOIN v ON u.c = v.c ORDER BY 4 DESC"
+            )
+        ).all()
         print("\n[4/4] 반영 후 카테고리 분포")
         print(f"      {'카테고리':<16}{'중고':>8}{'신품':>8}{'합계':>8}")
         for c, used, new, total in rows:

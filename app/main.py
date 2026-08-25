@@ -2,6 +2,7 @@
 FastAPI 애플리케이션의 진입점(Entrypoint) 파일입니다.
 앱 초기화, 데이터베이스 테이블 생성 트리거, 그리고 도메인별 API 라우터를 마운트하는 역할을 합니다.
 """
+
 from fastapi import FastAPI
 from app.domains.auth import router as auth
 from app.domains.dashboard import router as dashboard
@@ -33,7 +34,7 @@ from app.core.middleware import LoggingMiddleware
 app = FastAPI(
     title="Nexus",
     description="다중 에이전트 기반 B2B 물류 자동화 플랫폼 Nexus Backend",
-    version="2.15.0.1"
+    version="2.15.0.1",
 )
 
 # ==========================================
@@ -90,6 +91,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         headers={"Retry-After": "60"},
     )
 
+
 # ==========================================
 # 미들웨어(Middleware) 등록
 # ==========================================
@@ -136,10 +138,12 @@ async def sign_cloudfront_urls(request, call_next):
         media_type="application/json",
     )
 
+
 # ==========================================
 # 글로벌 에러 핸들러 (Global Exception Handlers)
 # ==========================================
 from fastapi import HTTPException
+
 
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
@@ -151,7 +155,7 @@ async def custom_http_exception_handler(request: Request, exc: HTTPException):
         "error_code": getattr(exc, "error_code", "UNKNOWN"),
         "message": exc.detail,
         "path": request.url.path,
-        "timestamp": now_kst().isoformat() + "Z"
+        "timestamp": now_kst().isoformat() + "Z",
     }
     # 로그인 실패 시 남은 시도 횟수처럼, 사용자가 자기 상태를 파악하는 데 필요한 값은
     # 문구에 섞지 않고 별도 필드로 내려 화면이 원하는 형태로 조립할 수 있게 한다.
@@ -166,6 +170,7 @@ async def custom_http_exception_handler(request: Request, exc: HTTPException):
         headers=getattr(exc, "headers", None),
     )
 
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """예상치 못한 일반 Exception(500 서버 에러) 처리"""
@@ -177,9 +182,11 @@ async def global_exception_handler(request: Request, exc: Exception):
             "message": "Internal Server Error",
             "detail": str(exc),
             "path": request.url.path,
-            "timestamp": now_kst().isoformat() + "Z"
+            "timestamp": now_kst().isoformat() + "Z",
         },
     )
+
+
 @app.on_event("startup")
 def on_startup():
     """
@@ -197,22 +204,28 @@ def on_startup():
             users_list = session.exec(select(User)).all()
             if len(users_list) == 0:
                 from datetime import datetime
+
                 yymm = now_kst().strftime("%y%m")
                 dynamic_master_id = f"WM{yymm}001"
-                print(f"[Startup] DB가 비어있습니다. 최초 MASTER 계정 ({dynamic_master_id} 장문경)을 자동 시딩합니다...")
+                print(
+                    f"[Startup] DB가 비어있습니다. 최초 MASTER 계정 ({dynamic_master_id} 장문경)을 자동 시딩합니다..."
+                )
                 master_user = User(
                     employee_id=dynamic_master_id,
                     name="장문경",
                     password_hash=pwd_context.hash("1234"),
                     role=UserRoleEnum.MASTER,
                     status=UserStatusEnum.ACTIVE,
-                    must_change_password=False
+                    must_change_password=False,
                 )
                 session.add(master_user)
                 session.commit()
-                print(f"[Startup] 최초 MASTER 계정 ({dynamic_master_id} / 비밀번호: 1234) 생성 완료!")
+                print(
+                    f"[Startup] 최초 MASTER 계정 ({dynamic_master_id} / 비밀번호: 1234) 생성 완료!"
+                )
     except Exception as e:
         print("[Startup] 최초 MASTER 계정 자동 시딩 중 에러:", e)
+
 
 # ==========================================
 # 라우터 등록 (도메인별 API 분리)
@@ -238,10 +251,14 @@ app.include_router(system_settings.router, prefix=settings.API_V1_STR)
 import os
 from fastapi.staticfiles import StaticFiles
 from app.models.wms import now_kst
+
 base_dir = os.path.dirname(os.path.abspath(__file__))
 experiment_dir = os.path.join(base_dir, "experiment_data")
 os.makedirs(experiment_dir, exist_ok=True)
-app.mount("/experiment_data", StaticFiles(directory=experiment_dir), name="experiment_data")
+app.mount(
+    "/experiment_data", StaticFiles(directory=experiment_dir), name="experiment_data"
+)
+
 
 @app.get("/health")
 def health_check():
@@ -249,6 +266,7 @@ def health_check():
     로드밸런서(K8s Ingress 등) 또는 KEDA 스케일링을 위한 서버 헬스 체크 엔드포인트입니다.
     """
     return {"status": "ok", "version": "2.15.0.1"}
+
 
 @app.get("/db-check")
 def db_check(session: Session = Depends(get_db)):

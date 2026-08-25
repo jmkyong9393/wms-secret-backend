@@ -14,10 +14,10 @@ admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 # ADMIN이 자신의 이상 승인 패턴을 스스로 조회할 수 있게 되는 걸 막기 위해 MASTER 전용 유지.
 master_only = RoleChecker([UserRoleEnum.MASTER])
 
+
 @router.get("/export-dataset")
 def export_mlops_dataset(
-    session: Session = Depends(get_db),
-    current_admin = Depends(admin_only)
+    session: Session = Depends(get_db), current_admin=Depends(admin_only)
 ):
     """
     MLOps용 BBox 좌표 데이터셋 추출기 (SCI 논문용)
@@ -28,12 +28,14 @@ def export_mlops_dataset(
     # AttributeError('str' object has no attribute '_isnull')로 항상 500을 냈다 - 이 엔드포인트가
     # 한 번도 정상 동작한 적이 없었다는 뜻이다. target_id(str 컬럼)와 ReturnJob.id(UUID 컬럼)를
     # 비교하려면 SQLAlchemy cast() 함수로 UUID를 String으로 명시 변환해야 한다.
-    statement = select(AdminAuditLog, ReturnJob).join(
-        ReturnJob, AdminAuditLog.target_id == cast(ReturnJob.id, String)
-    ).where(AdminAuditLog.defect_coordinates != None)
-    
+    statement = (
+        select(AdminAuditLog, ReturnJob)
+        .join(ReturnJob, AdminAuditLog.target_id == cast(ReturnJob.id, String))
+        .where(AdminAuditLog.defect_coordinates != None)
+    )
+
     results = session.exec(statement).all()
-    
+
     dataset = []
     for audit, job in results:
         # BBox가 유효한 경우만 추출
@@ -47,32 +49,31 @@ def export_mlops_dataset(
                 if not isinstance(group, dict):
                     continue
                 boxes = [
-                    b for b in (group.get("bboxes") or [])
+                    b
+                    for b in (group.get("bboxes") or [])
                     if isinstance(b, dict) and not b.get("hitl_excluded")
                 ]
                 if boxes:
                     filtered_groups.append({**group, "bboxes": boxes})
             if not filtered_groups:
                 continue
-            dataset.append({
-                "image_url": job.image_urls[0] if job.image_urls else None,
-                "target_grade": audit.target_grade,
-                "primary_reason": audit.primary_reason_code,
-                "bboxes": filtered_groups,  # 이미지별 {image_index, image_url, bboxes:[{xmin,ymin,xmax,ymax,...}]}
-                "verified_by": str(audit.admin_id),
-                "verified_at": audit.created_at.isoformat()
-            })
-            
-    return {
-        "status": "success",
-        "total_records": len(dataset),
-        "dataset": dataset
-    }
+            dataset.append(
+                {
+                    "image_url": job.image_urls[0] if job.image_urls else None,
+                    "target_grade": audit.target_grade,
+                    "primary_reason": audit.primary_reason_code,
+                    "bboxes": filtered_groups,  # 이미지별 {image_index, image_url, bboxes:[{xmin,ymin,xmax,ymax,...}]}
+                    "verified_by": str(audit.admin_id),
+                    "verified_at": audit.created_at.isoformat(),
+                }
+            )
+
+    return {"status": "success", "total_records": len(dataset), "dataset": dataset}
+
 
 @router.get("/fds-report")
 def generate_fds_report(
-    session: Session = Depends(get_db),
-    current_admin = Depends(master_only)
+    session: Session = Depends(get_db), current_admin=Depends(master_only)
 ):
     """
     작업자 신뢰성 및 모럴 해저드 방어를 위한 FDS 리포트 (관리자별 결재 행태 분석).
@@ -115,21 +116,24 @@ def generate_fds_report(
             and fast_ratio >= BLIND_APPROVAL_MIN_FAST_RATIO
         )
 
-        report.append({
-            "admin_id": str(admin_id),
-            "total_reviews": total,
-            "fast_reviews": len(fast),
-            "fast_ratio_pct": round(fast_ratio * 100, 1),
-            "median_duration_ms": sorted(durations)[total // 2],
-            "min_duration_ms": min(durations),
-            "max_duration_ms": max(durations),
-            "is_suspicious": is_suspicious,
-            "alert_message": (
-                f"Warning: {len(fast)}/{total} reviews under "
-                f"{BLIND_APPROVAL_THRESHOLD_MS}ms. High risk of blind approval."
-                if is_suspicious else "Normal"
-            ),
-        })
+        report.append(
+            {
+                "admin_id": str(admin_id),
+                "total_reviews": total,
+                "fast_reviews": len(fast),
+                "fast_ratio_pct": round(fast_ratio * 100, 1),
+                "median_duration_ms": sorted(durations)[total // 2],
+                "min_duration_ms": min(durations),
+                "max_duration_ms": max(durations),
+                "is_suspicious": is_suspicious,
+                "alert_message": (
+                    f"Warning: {len(fast)}/{total} reviews under "
+                    f"{BLIND_APPROVAL_THRESHOLD_MS}ms. High risk of blind approval."
+                    if is_suspicious
+                    else "Normal"
+                ),
+            }
+        )
 
     return {
         "status": "success",
@@ -141,7 +145,9 @@ def generate_fds_report(
     }
 
 
-@router.get("/hitl-recheck-list", summary="HITL 결재를 거친 도서 LPN 목록 (재검수 전수조사용)")
+@router.get(
+    "/hitl-recheck-list", summary="HITL 결재를 거친 도서 LPN 목록 (재검수 전수조사용)"
+)
 def list_hitl_reviewed_items(
     only_recalled: bool = False,
     session: Session = Depends(get_db),
@@ -170,16 +176,27 @@ def list_hitl_reviewed_items(
         lpn = logs.get("lpn_barcode")
         if not lpn:
             continue
-        rec = by_lpn.setdefault(lpn, {
-            "lpn": lpn, "job_id": str(job.id), "actions": 0,
-            "recalled": False, "bbox_edited": False,
-        })
+        rec = by_lpn.setdefault(
+            lpn,
+            {
+                "lpn": lpn,
+                "job_id": str(job.id),
+                "actions": 0,
+                "recalled": False,
+                "bbox_edited": False,
+            },
+        )
         rec["actions"] += 1
         rec["last_action"] = audit.action
         rec["last_reason"] = audit.primary_reason_code
         rec["last_grade"] = audit.target_grade
-        rec["last_at"] = audit.created_at.strftime("%Y-%m-%d %H:%M") if audit.created_at else None
-        if audit.action == "RECALL_TO_HITL" or audit.primary_reason_code == "ADMIN_RECALL":
+        rec["last_at"] = (
+            audit.created_at.strftime("%Y-%m-%d %H:%M") if audit.created_at else None
+        )
+        if (
+            audit.action == "RECALL_TO_HITL"
+            or audit.primary_reason_code == "ADMIN_RECALL"
+        ):
             rec["recalled"] = True
         if audit.defect_coordinates:
             rec["bbox_edited"] = True
@@ -210,6 +227,7 @@ def list_hitl_reviewed_items(
         x["title"] = None
         if it and getattr(it, "book_id", None):
             from app.models.wms import Book
+
             b = session.get(Book, it.book_id)
             x["title"] = b.title if b else None
 

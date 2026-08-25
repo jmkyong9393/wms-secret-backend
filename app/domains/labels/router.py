@@ -11,6 +11,7 @@ Raw TCP 직결 출력을 제공한다.
   label_print_jobs 테이블에 적재만 하고, 창고 PC의 프린트 브리지 에이전트
   (scripts/print_bridge_agent.py)가 폴링해 로컬 프린터로 중계한다.
 """
+
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Optional
@@ -89,7 +90,11 @@ def print_label(
         job = LabelPrintJob(lpn=body.lpn, mode=body.mode, zpl=zpl)
         session.add(job)
         return LabelPrintResponse(
-            sent=False, skipped=False, queued=True, bytes_sent=0, zpl=zpl,
+            sent=False,
+            skipped=False,
+            queued=True,
+            bytes_sent=0,
+            zpl=zpl,
         )
 
     try:
@@ -112,6 +117,7 @@ def print_label(
 # ------------------------------------------------------------------
 # 프린트 브리지 에이전트용 API (창고 PC에서 폴링)
 # ------------------------------------------------------------------
+
 
 class PendingPrintJob(BaseModel):
     id: UUID
@@ -144,7 +150,11 @@ def list_pending_print_jobs(
     ).all()
     return [
         PendingPrintJob(
-            id=j.id, lpn=j.lpn, mode=j.mode, zpl=j.zpl, created_at=j.created_at,
+            id=j.id,
+            lpn=j.lpn,
+            mode=j.mode,
+            zpl=j.zpl,
+            created_at=j.created_at,
         )
         for j in jobs
     ]

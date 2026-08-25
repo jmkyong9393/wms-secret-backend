@@ -2,6 +2,7 @@
 
 쿠키를 실을 수 없는 클라이언트가 쿼리스트링으로 넘겨 인증하는 경로다.
 """
+
 import json
 import secrets
 from typing import Any, Optional

@@ -13,14 +13,22 @@
 호출한다. API는 조회만 하되, 크론이 실패했거나 첫 배포 직후라 행이 없으면 같은 함수로 폴백해
 생성한다(자기치유).
 """
+
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 from sqlmodel import Session, func, select
 
 from app.models.wms import (
-    Book, Inventory, InventoryUsedItem, JobStatusEnum, Location, Order,
-    ReturnJob, WeeklyInsight, now_kst,
+    Book,
+    Inventory,
+    InventoryUsedItem,
+    JobStatusEnum,
+    Location,
+    Order,
+    ReturnJob,
+    WeeklyInsight,
+    now_kst,
 )
 
 # 검수 1건당 수작업 6분 vs AI 30초, 시급 12,000원 (결정론적 상수)
@@ -63,11 +71,14 @@ def build_weekly_insight(
         return existing, False
 
     # 1) 주간 검수 건수 -> 절감 인건비 추정
-    week_inspections = session.exec(
-        select(func.count(ReturnJob.id)).where(
-            ReturnJob.created_at >= week_start, ReturnJob.created_at < week_end
-        )
-    ).one() or 0
+    week_inspections = (
+        session.exec(
+            select(func.count(ReturnJob.id)).where(
+                ReturnJob.created_at >= week_start, ReturnJob.created_at < week_end
+            )
+        ).one()
+        or 0
+    )
     saved_minutes = MANUAL_MINUTES_PER_ITEM - AI_MINUTES_PER_ITEM
     saved_labor_cost = int(week_inspections * saved_minutes / 60 * HOURLY_WAGE_KRW)
 
@@ -85,7 +96,9 @@ def build_weekly_insight(
         .limit(3)
     ).all()
     top_publishers = {
-        "items": [{"publisher": p or "미상", "reject_count": int(c)} for p, c in pub_rows]
+        "items": [
+            {"publisher": p or "미상", "reject_count": int(c)} for p, c in pub_rows
+        ]
     }
 
     # 3) 창고 Zone 점유 핫스팟 (중고 재고 기준 - 시점 스냅샷이라 주 경계와 무관)
@@ -99,29 +112,38 @@ def build_weekly_insight(
 
     # 4) 반품 예측 (최근 4주 반품 요청 단순 이동평균 - 결정론적)
     four_weeks_ago = week_end - timedelta(days=28)
-    recent_returns = session.exec(
-        select(func.count(Order.id)).where(
-            Order.status == "RETURN_REQUESTED",
-            Order.created_at >= four_weeks_ago,
-            Order.created_at < week_end,
-        )
-    ).one() or 0
+    recent_returns = (
+        session.exec(
+            select(func.count(Order.id)).where(
+                Order.status == "RETURN_REQUESTED",
+                Order.created_at >= four_weeks_ago,
+                Order.created_at < week_end,
+            )
+        ).one()
+        or 0
+    )
     predicted_returns = round(recent_returns / 4)
 
     # 5) 주간 물류 처리량 (입고/출고)
-    week_inbound = session.exec(
-        select(func.count(InventoryUsedItem.id)).where(
-            InventoryUsedItem.created_at >= week_start,
-            InventoryUsedItem.created_at < week_end,
-        )
-    ).one() or 0
-    week_orders = session.exec(
-        select(func.count(Order.id)).where(
-            Order.created_at >= week_start,
-            Order.created_at < week_end,
-            Order.type != "AUTO_PO",
-        )
-    ).one() or 0
+    week_inbound = (
+        session.exec(
+            select(func.count(InventoryUsedItem.id)).where(
+                InventoryUsedItem.created_at >= week_start,
+                InventoryUsedItem.created_at < week_end,
+            )
+        ).one()
+        or 0
+    )
+    week_orders = (
+        session.exec(
+            select(func.count(Order.id)).where(
+                Order.created_at >= week_start,
+                Order.created_at < week_end,
+                Order.type != "AUTO_PO",
+            )
+        ).one()
+        or 0
+    )
     logistics = {
         "week_inbound": int(week_inbound),
         "week_orders": int(week_orders),
@@ -182,7 +204,9 @@ def generate_insight_narrative(stats: Dict[str, Any]) -> str:
         formatted = dict(stats)
         formatted["saved_labor_cost_krw"] = f"{stats['saved_labor_cost_krw']:,}원"
         formatted["week_inspections"] = f"{stats['week_inspections']}건"
-        formatted["predicted_returns_next_week"] = f"{stats['predicted_returns_next_week']}건"
+        formatted["predicted_returns_next_week"] = (
+            f"{stats['predicted_returns_next_week']}건"
+        )
         formatted["week_inbound"] = f"{stats['week_inbound']}건"
         formatted["week_orders"] = f"{stats['week_orders']}건"
 
