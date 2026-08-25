@@ -4,6 +4,11 @@ FastAPI 애플리케이션의 진입점(Entrypoint) 파일입니다.
 """
 
 from fastapi import FastAPI
+
+import logging
+
+logger = logging.getLogger(__name__)
+
 from app.domains.auth import router as auth
 from app.domains.dashboard import router as dashboard
 from app.domains.inbound import router as inbound
@@ -53,9 +58,9 @@ try:
     trace.set_tracer_provider(provider)
 
     FastAPIInstrumentor.instrument_app(app)
-    print("OpenTelemetry FastAPI Instrumentation enabled.")
+    logger.info("OpenTelemetry FastAPI Instrumentation enabled.")
 except ImportError:
-    print("OpenTelemetry not installed. Skipping tracing setup.")
+    logger.info("OpenTelemetry not installed. Skipping tracing setup.")
 
 # ==========================================
 # SlowAPI (Rate Limiter) 전역 설정
@@ -130,7 +135,7 @@ async def sign_cloudfront_urls(request, call_next):
         signed = sign_payload(_json.loads(body))
         body = _json.dumps(signed, ensure_ascii=False).encode("utf-8")
     except Exception as exc:
-        print(f"[CloudFront] 응답 서명 건너뜀: {exc}")
+        logger.warning(f"[CloudFront] 응답 서명 건너뜀: {exc}")
     return _Response(
         content=body,
         status_code=response.status_code,
@@ -207,7 +212,7 @@ def on_startup():
 
                 yymm = now_kst().strftime("%y%m")
                 dynamic_master_id = f"WM{yymm}001"
-                print(
+                logger.info(
                     f"[Startup] DB가 비어있습니다. 최초 MASTER 계정 ({dynamic_master_id} 장문경)을 자동 시딩합니다..."
                 )
                 master_user = User(
@@ -220,11 +225,11 @@ def on_startup():
                 )
                 session.add(master_user)
                 session.commit()
-                print(
-                    f"[Startup] 최초 MASTER 계정 ({dynamic_master_id} / 비밀번호: 1234) 생성 완료!"
+                logger.info(
+                    f"[Startup] 최초 MASTER 계정 ({dynamic_master_id}) 생성 완료 - 초기 비밀번호는 시딩 코드를 참조할 것"
                 )
     except Exception as e:
-        print("[Startup] 최초 MASTER 계정 자동 시딩 중 에러:", e)
+        logger.exception(f"[Startup] 최초 MASTER 계정 자동 시딩 중 에러: {e}")
 
 
 # ==========================================

@@ -14,6 +14,9 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 
 from app.core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_trusted_networks() -> List[ipaddress._BaseNetwork]:
@@ -26,7 +29,9 @@ def _parse_trusted_networks() -> List[ipaddress._BaseNetwork]:
             nets.append(ipaddress.ip_network(raw, strict=False))
         except ValueError:
             # 설정 오타 하나로 서버가 뜨지 못하게 만들지 않는다 - 해당 항목만 버린다.
-            print(f"[Limiter] TRUSTED_PROXY_CIDRS 항목 파싱 실패, 무시함: {raw!r}")
+            logger.warning(
+                f"[Limiter] TRUSTED_PROXY_CIDRS 항목 파싱 실패, 무시함: {raw!r}"
+            )
     return nets
 
 

@@ -5,6 +5,9 @@ from typing import List
 from app.db.session import get_db
 from app.models.wms import ReturnJob, JobStatusEnum
 from uuid import UUID
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ReturnService:
@@ -40,7 +43,9 @@ class ReturnService:
 
             process_inspection.delay(str(new_job.id))
         except Exception as e:
-            print(f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}")
+            logger.warning(
+                f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}"
+            )
             import threading
             from app.worker.tasks import process_inspection
 
