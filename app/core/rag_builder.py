@@ -28,6 +28,9 @@ except Exception:
 import re
 
 import yaml
+import logging
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 KB_DIR = BASE_DIR / "docs" / "ai_knowledge_base"
@@ -114,7 +117,7 @@ def load_sop_documents():
     """
     sop_path = next((KB_DIR / n for n in SOP_CANDIDATES if (KB_DIR / n).exists()), None)
     if sop_path is None:
-        print(f"[RAG] 표준 운영 정책서를 찾을 수 없어 건너뜁니다: {KB_DIR}")
+        logger.warning(f"[RAG] 표준 운영 정책서를 찾을 수 없어 건너뜁니다: {KB_DIR}")
         return [], [], []
 
     text = sop_path.read_text(encoding="utf-8")

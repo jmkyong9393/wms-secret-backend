@@ -822,7 +822,7 @@ def process_order_picking(order_id: str, db: Session = Depends(get_db)):
     """
     출고 지시서에 명시된 랙 위치에서 도서 피킹 작업 완료 처리
     """
-    print(f"Processed Picking for Order {order_id}")
+    logger.info(f"Processed Picking for Order {order_id}")
     return {
         "status": "PICKED",
         "order_id": order_id,

@@ -21,6 +21,9 @@ import rsa
 from botocore.signers import CloudFrontSigner
 
 from app.core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 서명 URL 기본 유효 시간. 관리자 화면 체류와 QR 보증서 열람을 함께 감당하는 값이다.
 DEFAULT_EXPIRE_MINUTES = 60
@@ -41,7 +44,7 @@ def _load_private_key() -> Optional[rsa.PrivateKey]:
     try:
         return rsa.PrivateKey.load_pkcs1(raw.encode("utf-8"))
     except Exception as exc:
-        print(f"[CloudFront] 개인키 로드 실패 - 서명 없이 진행합니다: {exc}")
+        logger.warning(f"[CloudFront] 개인키 로드 실패 - 서명 없이 진행합니다: {exc}")
         return None
 
 
@@ -76,7 +79,7 @@ def _fast_sign_key():
 
         return load_pem_private_key(raw.encode("utf-8"), password=None)
     except Exception as exc:
-        print(f"[CloudFront] cryptography 키 로드 실패 - rsa 폴백: {exc}")
+        logger.warning(f"[CloudFront] cryptography 키 로드 실패 - rsa 폴백: {exc}")
         return None
 
 
@@ -109,7 +112,7 @@ def _sign_cached(url: str, expire_minutes: int, _bucket: int) -> str:
         )
         return signer.generate_presigned_url(url, date_less_than=expire_at)
     except Exception as exc:
-        print(f"[CloudFront] 서명 실패 - 원본 URL로 진행합니다 ({url}): {exc}")
+        logger.warning(f"[CloudFront] 서명 실패 - 원본 URL로 진행합니다 ({url}): {exc}")
         return url
 
 
