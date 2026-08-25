@@ -51,8 +51,9 @@ CloudFront 서명(`cloudfront_signing.py`), SSE 티켓(`sse_ticket_service.py`) 
 | 작업 유실 방지 | Celery `acks_late` + DLQ. 카오스 테스트(워커 강제 종료)에서 4/4건 전량 복구 — 유실 0 |
 | 판정 재현성 | 결정론 엔진 동일 입력 270회 반복 오차 0 |
 | 동시성 | Redis Lock 중복 처리 차단 · 1,000건 동시 입고 부하 실측 |
-| 인증 | HttpOnly Secure 쿠키 JWT · SSE는 1회용 티켓(EventSource는 커스텀 헤더를 못 붙인다) |
+| 인증 | HttpOnly Secure 쿠키 JWT. SSE도 같은 쿠키로 인가한다(EventSource는 커스텀 헤더를 못 붙인다). 쿠키를 쓸 수 없는 호출자를 위한 1회용 티켓 경로가 있으나 현재 프론트는 쓰지 않는다 |
 | 인가 | 역할별 RBAC + 전 엔드포인트 무인증 런타임 프로빙 — 노출 경로 17건 발견 → 전량 차단(잔여 0) |
+| 실시간 스트림 | `no-transform`·`X-Accel-Buffering: no`로 중간 프록시의 압축·버퍼링을 차단하고, 이벤트가 없는 구간에만 25초 하트비트를 보낸다. 압축에 갇혀 이벤트가 브라우저에 **전혀 도달하지 못하던** 결함을 2026-08-26 실측으로 발견해 막았다 |
 | 객체 열람 | S3 Block Public Access + CloudFront 서명 URL만 허용 |
 | 첨부 업로드 | presign → 격리 구역(`quarantine/`) 업로드 → 서버가 실제 바이트 검사 → 정상 구역 승격. 매직바이트·중첩 아카이브·PDF 액티브 콘텐츠·후미 페이로드 등 10계층 검사, 소유권은 키 접두사로 결속 |
 | 개인정보 | KISA 권고 전수 대조 · 감사 추적(판정 100% 기록 보존) |
@@ -63,7 +64,7 @@ CloudFront 서명(`cloudfront_signing.py`), SSE 티켓(`sse_ticket_service.py`) 
 ## 실행
 
 ```bash
-uv sync                                  # 의존성 (Python 3.12+, uv 기준)
+uv sync                                  # 의존성 (Python 3.11, uv 기준)
 docker compose up -d                     # Postgres · Redis 로컬 기동
 alembic upgrade head                     # 스키마 마이그레이션 (Migration as Code)
 uvicorn app.main:app --reload            # API 서버
