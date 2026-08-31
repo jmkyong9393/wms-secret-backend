@@ -21,3 +21,10 @@
 - `celery-worker-keda.yaml`은 2026-08-26에 **제거**됐다(존재하지 않는 namespace·대상 참조).
   KEDA 스케일러는 `worker-scaledobject.yaml`·`ai-worker-scaledobject.yaml`이 정본이다.
   경위: `archive/2026-08-26_k8s_dead_scaledobject/README.md`
+
+## 백업된 배포 워크플로 (2026-09-01)
+
+`deploy-k8s-workflow.yml.bak` — 컷오버 전 `.github/workflows/deploy.yml` 원본 전체.
+빌드+ECR push에 더해 **마이그레이션 Job 게이트·kubectl 롤링 업데이트·배포 검증**
+(2026-08-10 사고 3건의 방어 로직 포함)을 담고 있다. 복귀 시 이 파일을
+`.github/workflows/deploy.yml`로 되돌리면 k8s 배포 파이프라인이 그대로 살아난다.
