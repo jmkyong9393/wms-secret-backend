@@ -1,0 +1,25 @@
+# 로컬 리허설 override — 원격에 올리기 전에 프로덕션 compose를 통째로 예행연습한다.
+#
+#   docker build -t rehearsal/nexus-backend:main .            (레포 루트에서)
+#   docker build -t rehearsal/nexus-frontend:main ...         (프론트 레포에서)
+#   docker compose -f docker-compose.prod.yml -f docker-compose.rehearsal.yml up -d
+#
+# base와의 차이는 셋뿐이다 - 이미지 출처(ECR→로컬 빌드), Caddy 사이트 주소(도메인→:80),
+# 호스트 포트(80/443→8080). 배선·헬스체크·메모리 상한·의존 순서는 전부 base 그대로 탄다.
+
+services:
+  api:
+    image: rehearsal/nexus-backend:main
+  worker:
+    image: rehearsal/nexus-backend:main
+  beat:
+    image: rehearsal/nexus-backend:main
+  frontend:
+    image: rehearsal/nexus-frontend:main
+  caddy:
+    volumes:
+      - ./Caddyfile.rehearsal:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports: !override
+      - "8080:80"

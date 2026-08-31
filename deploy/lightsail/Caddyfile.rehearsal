@@ -1,0 +1,9 @@
+# 로컬 리허설 전용 - 도메인·TLS 없이 배선만 검증한다.
+# 프로덕션(Caddyfile)과의 차이는 사이트 주소(:80)뿐이며 프록시 설정은 동일하게 유지한다.
+# 여기서도 encode(압축)를 넣지 않는다 - SSE 압축 결함 방지 (Caddyfile 주석 참조).
+
+:80 {
+	reverse_proxy frontend:3000 {
+		flush_interval -1
+	}
+}
