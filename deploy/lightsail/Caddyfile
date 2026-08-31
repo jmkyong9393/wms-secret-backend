@@ -1,0 +1,13 @@
+# TLS 종료 + 리버스 프록시. 기존 ALB의 역할을 대체한다.
+# 인증서는 Let's Encrypt 자동 발급·갱신 (DNS가 이 박스를 가리키고 80/443이 열려 있어야 한다).
+#
+# [압축을 켜지 말 것] encode 지시어를 추가하면 SSE(text/event-stream)가 압축 버퍼에
+# 갇혀 이벤트가 브라우저에 도달하지 않는다 — Next rewrite 프록시에서 실제로 겪은 결함이다
+# (2026-08-26, 92번 트러블슈팅 아카이브). Next가 자체 압축을 하므로 여기서는 하지 않는다.
+
+nexus-wms.p-e.kr {
+	reverse_proxy frontend:3000 {
+		# SSE 프레임을 버퍼링 없이 즉시 흘린다
+		flush_interval -1
+	}
+}

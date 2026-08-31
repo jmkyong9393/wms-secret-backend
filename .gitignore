@@ -102,3 +102,4 @@ CLAUDE.md
 
 # HITL 정답지 추출 산출물 (개인정보·내부 판단 포함 — 커밋 금지)
 _groundtruth_export/
+deploy/lightsail/.env
