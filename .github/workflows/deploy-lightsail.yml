@@ -1,0 +1,50 @@
+# Lightsail 박스에 새 이미지 태그를 반영한다.
+#
+# 빌드·ECR 푸시는 기존 deploy.yml(main push)이 계속 담당한다 - 이 워크플로는
+# "어느 SHA를 박스에 올릴지"만 다룬다. 컷오버 전까지는 수동 트리거(workflow_dispatch)
+# 전용으로 두어, main push가 아직 살아 있는 k8s 클러스터 배포를 깨지 않게 한다.
+# 컷오버 후: deploy.yml의 k8s 단계를 내리고 이 워크플로에 push 트리거를 옮긴다.
+#
+# 필요한 GitHub Secrets:
+#   LIGHTSAIL_HOST     - 박스 고정 IP 또는 호스트명
+#   LIGHTSAIL_SSH_KEY  - 배포용 개인키 (박스 ~/.ssh/authorized_keys에 공개키 등록)
+
+name: Deploy to Lightsail
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_tag:
+        description: "배포할 백엔드 이미지 태그 (git SHA, 기본 latest)"
+        default: "latest"
+      frontend_tag:
+        description: "배포할 프론트 이미지 태그 (git SHA, 기본 latest)"
+        default: "latest"
+
+concurrency:
+  group: lightsail-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ubuntu
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd ~/wms-secret-backend/deploy/lightsail
+            # 태그만 갱신 - 나머지 .env 값은 박스에 있는 그대로 둔다
+            sed -i "s/^BACKEND_TAG=.*/BACKEND_TAG=${{ inputs.backend_tag }}/" .env
+            sed -i "s/^FRONTEND_TAG=.*/FRONTEND_TAG=${{ inputs.frontend_tag }}/" .env
+            aws ecr get-login-password --region ap-northeast-2 \
+              | docker login --username AWS --password-stdin "$(grep '^ECR_REGISTRY=' .env | cut -d= -f2)"
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --wait
+            docker image prune -f
+            # 배포 후 즉시 검증 - 실패하면 워크플로가 빨간불이 된다
+            curl -fsS --max-time 15 http://localhost:8000/health
