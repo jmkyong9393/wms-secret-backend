@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 
-
 logger = logging.getLogger(__name__)
 
 

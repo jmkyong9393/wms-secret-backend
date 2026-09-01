@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 from functools import lru_cache
 from typing import Any, Optional
 
@@ -21,7 +22,6 @@ import rsa
 from botocore.signers import CloudFrontSigner
 
 from app.core.config import settings
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ def _sign_cached(url: str, expire_minutes: int, _bucket: int) -> str:
     if signer is None:
         return url
     try:
-        expire_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+        expire_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
             minutes=expire_minutes
         )
         return signer.generate_presigned_url(url, date_less_than=expire_at)
@@ -124,7 +124,7 @@ def sign_url(url: str, expire_minutes: int = DEFAULT_EXPIRE_MINUTES) -> str:
     """
     if not _is_cdn_url(url) or "Signature=" in url:
         return url
-    bucket = int(datetime.datetime.now(datetime.timezone.utc).timestamp() // 1800)
+    bucket = int(datetime.datetime.now(datetime.UTC).timestamp() // 1800)
     return _sign_cached(url, expire_minutes, bucket)
 
 

@@ -15,11 +15,11 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage
 
-from app.ai.state import WMSInspectionState
-from app.core import ubci_matrix as UM
 from app.ai.agents.common import DEFECT_TRANSLATION_MAP
 from app.ai.agents.llm import llm_mini
 from app.ai.agents.schemas import ReturnPolicyVerdict
+from app.ai.state import WMSInspectionState
+from app.core import ubci_matrix as UM
 
 
 def _effective_ratio(d: Dict[str, Any], default: int = 5) -> int:
@@ -680,7 +680,7 @@ def policy_agent(state: WMSInspectionState) -> WMSInspectionState:
         score_unverified = (
             bool(defects) and total_deduction == 0 and bool(suspect_excluded)
         )
-        if score_unverified:  # noqa: SIM102 - 아래 분기들이 이 플래그를 함께 읽는다
+        if score_unverified:
             grade_str = "판정 보류 (증거 대조 전건 반려)"
             decision_str = "HITL"
 

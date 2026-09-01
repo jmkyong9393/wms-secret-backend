@@ -1,38 +1,22 @@
 import logging
 import random
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, status, Query, HTTPException, Response
-from sqlmodel import Session, select
-from typing import List, Dict, Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
+from sqlmodel import Session, select
+
+from app.ai.bin_packing_agent import bin_packing_agent
+from app.core.security import RoleChecker, get_current_user
 from app.db.session import get_db
-from app.core.security import get_current_user, RoleChecker
-from app.models.wms import UserRoleEnum
-from app.models.wms import (
-    Order,
-    OrderItem,
-    OrderStatusEnum,
-    InventoryUsedItem,
-    ItemStatusEnum,
-    Book,
-    Inventory,
-    InventoryLog,
-    PickingInstruction,
-    PickingInstructionItem,
-    now_kst,
-)
 from app.domains.inventory.bin_packing import recommend_optimal_box
-from app.domains.orders.service import (
-    calculate_b2b_price,
-    calculate_dynamic_discount_rate,
-    calculate_price_elasticity_revenue_optimization,
-    calculate_line_price,
-    calculate_order_pricing,
-    # 라우터에 있던 업무 규칙을 service로 이관. 라우터는 HTTP 입출력만 맡는다.
-    fetch_aladin_real_packing_spec,
-    _issue_waybill_no,
-    _resolve_order_lines,
+from app.domains.orders.picking import (
+    create_picking_instruction,
+    delete_picking_instruction,
+    publish_outbound_notification,
+    serialize_instruction,
 )
 from app.domains.orders.schemas import (
     AcceptInstructionRequest,
@@ -45,13 +29,31 @@ from app.domains.orders.schemas import (
     OutboundCompleteRequest,
     PickingScanRequest,
 )
-from app.domains.orders.picking import (
-    create_picking_instruction,
-    delete_picking_instruction,
-    serialize_instruction,
-    publish_outbound_notification,
+from app.domains.orders.service import (
+    _issue_waybill_no,
+    _resolve_order_lines,
+    calculate_b2b_price,
+    calculate_dynamic_discount_rate,
+    calculate_line_price,
+    calculate_order_pricing,
+    calculate_price_elasticity_revenue_optimization,
+    # 라우터에 있던 업무 규칙을 service로 이관. 라우터는 HTTP 입출력만 맡는다.
+    fetch_aladin_real_packing_spec,
 )
-from app.ai.bin_packing_agent import bin_packing_agent
+from app.models.wms import (
+    Book,
+    Inventory,
+    InventoryLog,
+    InventoryUsedItem,
+    ItemStatusEnum,
+    Order,
+    OrderItem,
+    OrderStatusEnum,
+    PickingInstruction,
+    PickingInstructionItem,
+    UserRoleEnum,
+    now_kst,
+)
 
 logger = logging.getLogger(__name__)
 # 라우터 전체에 인증을 건다. 엔드포인트마다 붙이면 새 경로를 추가할 때 또 빠뜨린다 -
@@ -970,7 +972,6 @@ CATEGORY_DEFAULT_SPECS = {
 }
 
 from functools import lru_cache
-from app.models.wms import now_kst
 
 
 @lru_cache(maxsize=512)
@@ -990,7 +991,6 @@ def get_available_books(
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
-    from datetime import datetime
 
     output = []
     now = now_kst()

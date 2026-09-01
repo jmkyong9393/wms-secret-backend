@@ -15,7 +15,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.constants import BOX_CATALOG
 

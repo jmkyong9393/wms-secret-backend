@@ -22,7 +22,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
-from sqlmodel import Session, select, func
+from sqlmodel import Session, func, select
 
 from app.core.constants import format_worker_label
 from app.models.wms import (

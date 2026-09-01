@@ -14,6 +14,7 @@
 생성한다(자기치유).
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
@@ -30,7 +31,6 @@ from app.models.wms import (
     WeeklyInsight,
     now_kst,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -197,9 +197,10 @@ def generate_insight_narrative(stats: Dict[str, Any]) -> str:
         f"다음 주 반품은 약 {stats['predicted_returns_next_week']}건으로 예상됩니다."
     )
     try:
-        from langchain_openai import ChatOpenAI
-        from langchain_core.messages import HumanMessage
         import json as _json
+
+        from langchain_core.messages import HumanMessage
+        from langchain_openai import ChatOpenAI
 
         # [수정 이력] 수치를 raw 정수로 주면 LLM이 단위를 오해해 부풀리는 사고가 실제로
         # 발생했다 (절감액 8,800원 -> "8,800,000원"으로 서술). 금액/수량을 단위까지 붙인

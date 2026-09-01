@@ -24,12 +24,12 @@ import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from pathlib import Path
 from ultralytics import YOLO
-from typing import List, Dict, Any, Tuple, Optional
 
 # 컨테이너 TZ가 UTC라 datetime.now()는 UTC를 준다. 크롭 산출물 시각은 KST로 남긴다.
 # app.models.wms를 import하면 AI 모듈이 DB 모델에 의존하게 되므로 여기서 직접 만든다.
@@ -264,6 +264,7 @@ def ensure_model_weights() -> None:
         return
 
     import boto3
+
     from app.core.config import settings
 
     if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
@@ -414,7 +415,7 @@ class WBFBookDefectDetector:
     """WBF 앙상블 도서 결함 픽셀 추론 엔진 (3-Model Hybrid Ensemble)"""
 
     def __init__(self):
-        print(f"[WBF Detector] Loading 3-Model Ensemble Pipeline...")
+        print("[WBF Detector] Loading 3-Model Ensemble Pipeline...")
         ensure_model_weights()
         self.model_recall = None
         self.model_precision = None
