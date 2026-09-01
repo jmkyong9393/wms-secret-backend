@@ -37,14 +37,16 @@ jobs:
           key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
           script_stop: true
           script: |
+            set -eo pipefail                 # 파이프 중간 실패(ECR 로그인 등)도 즉시 중단
+            export PATH="$PATH:/snap/bin"    # 비인터랙티브 셸에는 snap 경로가 없다 - aws가 여기 있다 (첫 실전 실패 원인)
             cd ~/wms-secret-backend/deploy/lightsail
             # 태그만 갱신 - 나머지 .env 값은 박스에 있는 그대로 둔다
             sed -i "s/^BACKEND_TAG=.*/BACKEND_TAG=${{ inputs.backend_tag }}/" .env
             sed -i "s/^FRONTEND_TAG=.*/FRONTEND_TAG=${{ inputs.frontend_tag }}/" .env
-            aws ecr get-login-password --region ap-northeast-2 \
-              | docker login --username AWS --password-stdin "$(grep '^ECR_REGISTRY=' .env | cut -d= -f2)"
+            aws ecr get-login-password --region ap-northeast-2               | docker login --username AWS --password-stdin "$(grep '^ECR_REGISTRY=' .env | cut -d= -f2)"
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --wait
             docker image prune -f
-            # 배포 후 즉시 검증 - 실패하면 워크플로가 빨간불이 된다
-            curl -fsS --max-time 15 http://localhost:8000/health
+            # 배포 후 즉시 검증 - 호스트에는 8000이 열려 있지 않다(Caddy만 노출) →
+            # 컨테이너 안에서 친다. 실패하면 워크플로가 빨간불이 된다.
+            docker compose -f docker-compose.prod.yml exec -T api python -c "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/health', timeout=10).read().decode(); print(r); sys.exit(0 if 'ok' in r else 1)"
