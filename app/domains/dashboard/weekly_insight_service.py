@@ -113,19 +113,22 @@ def build_weekly_insight(
     ).all()
     location_hotspots = {"zones": [{"zone": z, "count": int(c)} for z, c in zone_rows]}
 
-    # 4) 반품 예측 (최근 4주 반품 요청 단순 이동평균 - 결정론적)
+    # 4) 다음 주 출고 예측 (최근 4주 출고 주문 단순 이동평균 - 결정론적)
+    # 종전에는 Order.status == "RETURN_REQUESTED"를 셌는데, 그 상태를 만드는 반품 접수
+    # 기능이 없어 항상 0이었다 - 화면이 "0건의 반품 예측"을 영원히 말하던 원인.
+    # 반품 기능 도입 시 별도 지표로 부활시킨다 (57번 고도화 백로그).
     four_weeks_ago = week_end - timedelta(days=28)
-    recent_returns = (
+    recent_outbound = (
         session.exec(
             select(func.count(Order.id)).where(
-                Order.status == "RETURN_REQUESTED",
+                Order.type != "AUTO_PO",
                 Order.created_at >= four_weeks_ago,
                 Order.created_at < week_end,
             )
         ).one()
         or 0
     )
-    predicted_returns = round(recent_returns / 4)
+    predicted_outbound = round(recent_outbound / 4)
 
     # 5) 주간 물류 처리량 (입고/출고)
     week_inbound = (
@@ -159,7 +162,7 @@ def build_weekly_insight(
         "saved_labor_cost_krw": saved_labor_cost,
         "top_defective_publishers": top_publishers["items"],
         "zone_hotspots": location_hotspots["zones"][:3],
-        "predicted_returns_next_week": predicted_returns,
+        "predicted_outbound_next_week": predicted_outbound,
         "week_inbound": int(week_inbound),
         "week_orders": int(week_orders),
     }
@@ -170,7 +173,8 @@ def build_weekly_insight(
         existing.top_defective_publishers = top_publishers
         existing.location_hotspots = location_hotspots
         existing.logistics_hotspots = logistics
-        existing.predicted_returns = predicted_returns
+        # 컬럼명 predicted_returns는 레거시다 - 저장값은 출고 예측 (리네임은 57번 백로그)
+        existing.predicted_returns = predicted_outbound
         existing.ai_narrative = narrative
         insight = existing
     else:
@@ -180,7 +184,7 @@ def build_weekly_insight(
             top_defective_publishers=top_publishers,
             location_hotspots=location_hotspots,
             logistics_hotspots=logistics,
-            predicted_returns=predicted_returns,
+            predicted_returns=predicted_outbound,  # 컬럼명 레거시 - 값은 출고 예측
             ai_narrative=narrative,
         )
     session.add(insight)
@@ -194,7 +198,7 @@ def generate_insight_narrative(stats: Dict[str, Any]) -> str:
     fallback = (
         f"{stats['report_week']} 주간: AI 검수 {stats['week_inspections']}건 처리로 "
         f"약 {stats['saved_labor_cost_krw']:,}원의 검수 인건비를 절감했습니다. "
-        f"다음 주 반품은 약 {stats['predicted_returns_next_week']}건으로 예상됩니다."
+        f"다음 주 출고는 약 {stats['predicted_outbound_next_week']}건으로 예상됩니다."
     )
     try:
         import json as _json
@@ -208,8 +212,8 @@ def generate_insight_narrative(stats: Dict[str, Any]) -> str:
         formatted = dict(stats)
         formatted["saved_labor_cost_krw"] = f"{stats['saved_labor_cost_krw']:,}원"
         formatted["week_inspections"] = f"{stats['week_inspections']}건"
-        formatted["predicted_returns_next_week"] = (
-            f"{stats['predicted_returns_next_week']}건"
+        formatted["predicted_outbound_next_week"] = (
+            f"{stats['predicted_outbound_next_week']}건"
         )
         formatted["week_inbound"] = f"{stats['week_inbound']}건"
         formatted["week_orders"] = f"{stats['week_orders']}건"
@@ -238,7 +242,8 @@ def serialize_weekly_insight(w: WeeklyInsight, cached: bool) -> Dict[str, Any]:
         "top_defective_publishers": w.top_defective_publishers or {"items": []},
         "location_hotspots": w.location_hotspots or {"zones": []},
         "logistics": w.logistics_hotspots or {},
-        "predicted_returns": w.predicted_returns,
+        # 응답 키는 실의미(출고 예측)로 노출한다 - DB 컬럼명만 레거시
+        "predicted_outbound": w.predicted_returns,
         "ai_narrative": w.ai_narrative,
         "generated_at": w.created_at.isoformat() if w.created_at else None,
         "cached": cached,
