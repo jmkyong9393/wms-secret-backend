@@ -40,6 +40,10 @@ jobs:
             set -eo pipefail                 # 파이프 중간 실패(ECR 로그인 등)도 즉시 중단
             export PATH="$PATH:/snap/bin"    # 비인터랙티브 셸에는 snap 경로가 없다 - aws가 여기 있다 (첫 실전 실패 원인)
             cd ~/wms-secret-backend/deploy/lightsail
+            # ECR 인증은 박스 로컬 .env의 앱 키로 한다 - 이 export가 없으면
+            # 인스턴스 역할(Lightsail 내부 계정)로 폴백해 AccessDenied가 난다 (2차 실전 실패 원인)
+            export AWS_ACCESS_KEY_ID="$(grep '^AWS_ACCESS_KEY_ID=' .env | cut -d= -f2)"
+            export AWS_SECRET_ACCESS_KEY="$(grep '^AWS_SECRET_ACCESS_KEY=' .env | cut -d= -f2)"
             # 태그만 갱신 - 나머지 .env 값은 박스에 있는 그대로 둔다
             sed -i "s/^BACKEND_TAG=.*/BACKEND_TAG=${{ inputs.backend_tag }}/" .env
             sed -i "s/^FRONTEND_TAG=.*/FRONTEND_TAG=${{ inputs.frontend_tag }}/" .env
