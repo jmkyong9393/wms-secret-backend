@@ -37,10 +37,19 @@ jobs:
       - name: Format Check (Ruff)
         run: uv run ruff format --check app/
         
+      # 타입 정리는 별도 건 - 2026-09-01 실측 377건/59파일이라 즉시 하드화하면
+      # 전면 적색이다. ruff 전례("정리 → 하드화")를 따라 그때까지 소프트 유지.
       - name: Type Check (Mypy)
         run: |
-          uv run mypy app/ || echo "Warning - Mypy failed, check types later"
+          uv run mypy app/ || echo "Warning - Mypy 377건(2026-09-01 실측), 정리 후 하드화 예정"
 
-      - name: Run Tests (Pytest)
-        run: |
-          uv run pytest || echo "Warning - No tests written yet or tests failed"
+      # DB 비의존 스위트는 하드 게이트다 (2026-09-01 복원 - 종전에는 conftest의
+      # app.main import가 OPENAI_API_KEY 부재로 죽어 전체 pytest가 7초 만에
+      # 실패했고 || echo가 그것을 삼키고 있었다).
+      # tests/api·tests/integration은 실 DB+시드 의존이라 services 셋업과 함께 후속.
+      - name: Run Tests (Pytest, DB-free suites)
+        env:
+          # bin_packing_agent가 import 시점에 OpenAI 클라이언트를 만든다(프리즈 인접).
+          # 이 스위트는 LLM을 호출하지 않으므로 더미 키로 import만 통과시킨다.
+          OPENAI_API_KEY: ci-dummy-key
+        run: uv run pytest tests/unit tests/test_ubci_matrix_equivalence.py
