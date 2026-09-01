@@ -76,8 +76,14 @@ celery -A app.core.celery_app worker -l info   # AI 워커
 
 ## 배포
 
-`k8s/` 매니페스트 기준 — kubeadm 2노드, ALB/ACM HTTPS 단일 개방, KEDA(Redis 큐 길이
-기반 워커 오토스케일), GitHub Actions OIDC 무중단 롤링 배포, CloudWatch + Sentry 관측.
+**현행 (2026-09-01~)**: Lightsail 단일 박스 + docker compose (`deploy/lightsail/`).
+Caddy가 TLS(Let's Encrypt)를 맡고, 배포는 GitHub Actions "Deploy to Lightsail"
+(빌드+ECR push는 main push 자동, 반영은 수동 트리거 — 롤백은 직전 SHA 입력).
+평가 종료 후 비용 최적화 이전이며, 검증 절차는 `deploy/lightsail/README.md`·smoke-test.sh.
+
+**평가 기간 운영(보존)**: `k8s/` 매니페스트 — kubeadm 2노드, ALB/ACM HTTPS 단일 개방,
+KEDA(Redis 큐 길이 기반 워커 오토스케일), GitHub Actions OIDC 무중단 롤링 배포,
+CloudWatch + Sentry 관측. 복귀 절차는 `k8s/RETURN.md`.
 
 ## 문서
 
