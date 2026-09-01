@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.security import get_current_user
-from app.domains.uploads import router as uploads_router
+from app.domains.uploads import service as uploads_service
 from app.models.wms import User, UserRoleEnum, UserStatusEnum
 
 USER_A_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -70,7 +70,7 @@ class FakeS3:
 @pytest.fixture
 def s3(monkeypatch):
     fake = FakeS3()
-    monkeypatch.setattr(uploads_router, "_attachment_s3_client", lambda: fake)
+    monkeypatch.setattr(uploads_service, "_attachment_s3_client", lambda: fake)
     return fake
 
 
@@ -254,7 +254,7 @@ def test_경로이탈_키는_조용히_제외된다(as_a, s3):
 
 
 def test_발급_개수_상한이_강제된다(as_a, s3):
-    keys = [f"attachments/{i}.png" for i in range(uploads_router.ATTACHMENT_DOWNLOAD_MAX_KEYS + 1)]
+    keys = [f"attachments/{i}.png" for i in range(uploads_service.ATTACHMENT_DOWNLOAD_MAX_KEYS + 1)]
     r = as_a.post("/api/v1/uploads/attachment/download-urls", json={"object_keys": keys})
     assert r.status_code == 400
 
@@ -291,7 +291,7 @@ def test_크기초과_객체는_서버에서도_거부된다(as_a, s3):
     """S3가 1차로 막지만, 정책 없이 적재된 객체가 있어도 서버가 다시 막는지 확인한다."""
     r = as_a.post("/api/v1/uploads/attachment/presign", params={"file_name": "big.png", "file_type": "image/png"})
     key = r.json()["object_key"]
-    s3.objects[key] = b"\x00" * (uploads_router.ATTACHMENT_MAX_BYTES + 1)
+    s3.objects[key] = b"\x00" * (uploads_service.ATTACHMENT_MAX_BYTES + 1)
 
     r2 = as_a.post("/api/v1/uploads/attachment/verify", params={"object_key": key})
     assert r2.status_code == 400
