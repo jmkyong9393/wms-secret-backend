@@ -1,6 +1,18 @@
 import uuid
 
-from app.ai.wbf_detector import MODEL_RECALL_PATH, MODEL_PRECISION_PATH, MODEL_DOODLE_PATH
+import pytest
+
+# wbf_detector는 import 시점에 가중치 실존을 검사한다 (프리즈 구역 - 수정 불가).
+# 가중치(.pt)는 레포 미포함 로컬 자산이라, 없는 환경(CI 러너)에서는 파일 전체를 건너뛴다.
+try:
+    from app.ai.wbf_detector import (
+        MODEL_DOODLE_PATH,
+        MODEL_PRECISION_PATH,
+        MODEL_RECALL_PATH,
+    )
+except RuntimeError as e:
+    pytest.skip(f"YOLO 가중치 미보유 환경 - 로컬 전용 스위트: {e}", allow_module_level=True)
+
 from app.ai.agents import DefectDetail, VisionResult
 from app.models.wms import ReturnJob
 
