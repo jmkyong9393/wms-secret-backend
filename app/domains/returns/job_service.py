@@ -5,11 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlmodel import Session, select
 
-
 from app.db.session import engine
-from app.models.wms import ReturnJob
-from app.models.wms import now_kst
-
+from app.models.wms import ReturnJob, now_kst
 
 logger = logging.getLogger(__name__)
 

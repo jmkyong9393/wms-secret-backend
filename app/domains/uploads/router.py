@@ -1,17 +1,18 @@
-from typing import Dict, List, Set
-
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status, Response
-import boto3
-from botocore.config import Config as BotoConfig
-from botocore.exceptions import ClientError
-from app.core.config import settings
+import logging
 import os
 import re
 import uuid
+from typing import Dict, List, Set
+
+import boto3
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+
 from app.core.aws_auth_service import generate_signed_cookies
+from app.core.config import settings
 from app.core.security import get_current_user
 from app.models.wms import User
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ def authorize_cloudfront_upload(
     )
     sanitize_upload_filename(file_name, allowed_extensions)
     # 임시 URL (실제로는 CDN 주소 매핑)
-    resource_url = f"https://cdn.wms-ai.com/uploads/*"
+    resource_url = "https://cdn.wms-ai.com/uploads/*"
 
     try:
         cookies = generate_signed_cookies(resource_url=resource_url, expire_minutes=15)
@@ -132,7 +133,7 @@ def authorize_cloudfront_upload(
         return {"message": "CloudFront Signed Cookies have been set successfully."}
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to generate signed cookies: {str(e)}"
+            status_code=500, detail=f"Failed to generate signed cookies: {e!s}"
         )
 
 

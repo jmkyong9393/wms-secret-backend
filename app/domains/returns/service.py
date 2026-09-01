@@ -1,11 +1,12 @@
-from sqlmodel import Session
-from fastapi import Depends
+import logging
 from typing import List
+from uuid import UUID
+
+from fastapi import Depends
+from sqlmodel import Session
 
 from app.db.session import get_db
-from app.models.wms import ReturnJob, JobStatusEnum
-from uuid import UUID
-import logging
+from app.models.wms import JobStatusEnum, ReturnJob
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class ReturnService:
                 f"[Celery/Docker Offline Fallback] Direct in-process execution: {e}"
             )
             import threading
+
             from app.worker.tasks import process_inspection
 
             threading.Thread(

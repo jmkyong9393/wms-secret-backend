@@ -1,24 +1,25 @@
-from fastapi import APIRouter, Depends, Request, Response
-from sqlmodel import Session
 from datetime import timedelta
 
-from app.db.session import get_db
+from fastapi import APIRouter, Depends, Request, Response
+from sqlmodel import Session
+
+from app.core import password_policy
 from app.core.config import settings
-from app.core.limiter import limiter
-from app.core.security import get_current_user
 from app.core.exceptions import (
     BadRequestException,
-    InvalidCredentialsException,
     InactiveAccountException,
+    InvalidCredentialsException,
     TooManyLoginAttemptsException,
 )
+from app.core.limiter import limiter
+from app.core.security import get_current_user
 from app.core.sse_ticket_service import issue_sse_ticket
+from app.db.session import get_db
 from app.domains.auth import throttle
-from app.core import password_policy
 from app.domains.auth.schemas import (
+    ChangePasswordRequest,
     LoginRequest,
     LoginResponse,
-    ChangePasswordRequest,
     PasswordPolicyResponse,
     PrivacyConsentRequest,
 )

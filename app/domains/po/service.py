@@ -2,7 +2,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlmodel import Session, select, func
+from sqlmodel import Session, func, select
 
 from app.core.exceptions import BadRequestException
 from app.core.settings_service import (

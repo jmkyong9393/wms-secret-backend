@@ -88,6 +88,7 @@ def _publish_to_channel(payload: Dict[str, Any]) -> None:
     """Redis Pub/Sub 채널에 발행한다. 실패해도 조용히 넘어간다."""
     try:
         import redis as sync_redis
+
         from app.core.redis_pubsub import REDIS_URL
 
         client = sync_redis.Redis.from_url(REDIS_URL, decode_responses=True)
@@ -159,6 +160,7 @@ def emit(
             session.flush()  # id 확보 (commit은 호출자 트랜잭션에 맡긴다)
         else:
             from sqlmodel import Session
+
             from app.db.session import engine
 
             with Session(engine) as own_session:

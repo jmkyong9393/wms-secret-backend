@@ -1,10 +1,12 @@
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, Depends
+from sqlalchemy import String, cast, func
 from sqlmodel import Session, select
-from typing import List, Dict, Any
-from sqlalchemy import func, cast, String
-from app.db.session import get_db
-from app.models.wms import AdminAuditLog, UserRoleEnum, ReturnJob
+
 from app.core.security import RoleChecker
+from app.db.session import get_db
+from app.models.wms import AdminAuditLog, ReturnJob, UserRoleEnum
 
 router = APIRouter(prefix="/research", tags=["Research & Analytics"])
 
@@ -84,6 +86,8 @@ def generate_fds_report(
     판정 기준을 `app/domains/fds/service.py`의 R1과 **동일한 정의**로 통일한다 —
     같은 현상을 두 화면이 다르게 판정하면 어느 쪽도 신뢰할 수 없기 때문이다.
     """
+    from datetime import timedelta
+
     from app.domains.fds.service import (
         BLIND_APPROVAL_MIN_FAST_RATIO,
         BLIND_APPROVAL_MIN_SAMPLES,
@@ -91,7 +95,6 @@ def generate_fds_report(
         BLIND_APPROVAL_WINDOW_DAYS,
     )
     from app.models.wms import now_kst
-    from datetime import timedelta
 
     since = now_kst() - timedelta(days=BLIND_APPROVAL_WINDOW_DAYS)
     rows = session.exec(

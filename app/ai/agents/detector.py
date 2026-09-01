@@ -11,7 +11,6 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import AIMessage
 
-from app.ai.state import WMSInspectionState
 from app.ai.agents.common import (
     DEFECT_TRANSLATION_MAP,
     INNER_PAGE_EXCLUDED_TYPES,
@@ -20,6 +19,7 @@ from app.ai.agents.common import (
     _ensure_local_path,
     _is_inner_page,
 )
+from app.ai.state import WMSInspectionState
 
 
 # ==========================================

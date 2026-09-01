@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Vision Agent 판독기 A/B — 현행 GPT-4o vs Claude Sonnet 5.
 
@@ -36,8 +35,8 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.db.session import engine
 from app.ai.agents import VisionResult
+from app.db.session import engine
 
 MODEL = "claude-sonnet-5"  # 조장 지정. 기본값은 opus지만 이번 비교 대상은 sonnet이다.
 
@@ -109,6 +108,7 @@ def main() -> None:
         )
 
     import anthropic
+
     from app.ai.agents import (
         VISION_PROMPT_BASE,
         build_yolo_hint,

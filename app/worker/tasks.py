@@ -4,7 +4,6 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
-from app.models.wms import now_kst
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
@@ -14,15 +13,15 @@ from pottery.exceptions import QuorumNotAchieved
 from redis import Redis
 from sqlmodel import Session
 
-from app.models.wms import ReturnJob
-from app.core.celery_app import celery_app
 from app.ai.langgraph_wrapper import LangGraphInspectionWrapper
+from app.core.celery_app import celery_app
 from app.core.redis_pubsub import publish_return_job_event
 from app.domains.returns.job_service import (
     prepare_processing_job,
     save_inspection_failed,
     save_inspection_result,
 )
+from app.models.wms import ReturnJob, now_kst
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +29,8 @@ logger = logging.getLogger(__name__)
 # OpenTelemetry Celery 분산 추적 (SCI 논문 데이터 수집용)
 # ==========================================
 try:
-    from opentelemetry.instrumentation.celery import CeleryInstrumentor
     from opentelemetry import trace
+    from opentelemetry.instrumentation.celery import CeleryInstrumentor
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
@@ -93,7 +92,7 @@ def push_to_dlq(task_id: str, return_job_id: str, error_msg: str, retries: int) 
     except Exception as e:
         # 최악의 경우 Redis마저 뻗었다면 시스템 치명적 결함이므로 로그로 흔적을 짙게 남김
         logger.critical(
-            f"FATAL: Failed to push DLQ! task={task_id}, job={return_job_id}, err={str(e)}"
+            f"FATAL: Failed to push DLQ! task={task_id}, job={return_job_id}, err={e!s}"
         )
 
 
@@ -162,7 +161,7 @@ def publish_failed_event(
             "task_id": celery_task_id,
             "status": "FAILED",
             "progress": 100,
-            "message": f"에러: {str(error)}",
+            "message": f"에러: {error!s}",
             "grade": "ERROR",
             "ubci_score": 0,
             "error_message": str(error),
@@ -286,9 +285,9 @@ def generate_restock_proposal(return_job_id: str) -> Dict[str, Any]:
     order_proposals에 PENDING 제안 카드를 적재한다. ReturnJob 1건 = 도서 1권이므로
     반려 수량은 1로 집계한다 (동일 도서 반복 반려 시 기존 PENDING 카드에 누적).
     """
+    from app.ai.agents.restock import generate_and_store_proposal
     from app.db.session import engine
     from app.models.wms import Book
-    from app.ai.agents.restock import generate_and_store_proposal
 
     try:
         parsed_job_id = uuid.UUID(return_job_id)
@@ -359,8 +358,8 @@ def generate_hitl_certificate(
     등급 확정·랙 배정·재고 편입까지는 라우터가 동기로 끝내고 보증서 생성만 워커로
     넘긴다 (판정/집행 분리 - 등급 확정과 보증서 문서화는 별개 관심사).
     """
-    from app.db.session import engine
     from app.ai.agents import build_certificate_document
+    from app.db.session import engine
 
     try:
         parsed_job_id = uuid.UUID(return_job_id)
@@ -466,8 +465,10 @@ def _requeue_stale_pending_inspections() -> int:
     반환값은 재큐잉한 건수다.
     """
     from datetime import timedelta
-    from app.db.session import engine
+
     from sqlmodel import Session, select
+
+    from app.db.session import engine
 
     try:
         pending_cutoff = now_kst() - timedelta(minutes=2)
@@ -797,7 +798,7 @@ def process_inspection(
             backoff_delay = 2**retries
             logger.warning(
                 f"[Rate Limit / API Error] Retrying task {celery_task_id} in {backoff_delay}s... "
-                f"({retries + 1}/{self.max_retries}) | Err: {str(error)}"
+                f"({retries + 1}/{self.max_retries}) | Err: {error!s}"
             )
             # 예외를 던지며 retry 큐로 재진입 (이때 finally 블록이 실행되며 락 해제됨)
             raise self.retry(exc=error, countdown=backoff_delay)

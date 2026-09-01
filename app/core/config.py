@@ -3,7 +3,7 @@
 pydantic-settings를 사용하여 .env 파일의 값을 자동으로 읽고 타입 검증(Type Validation)을 수행합니다.
 """
 
-from typing import Optional, Literal
+from typing import Literal, Optional
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict

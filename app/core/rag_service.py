@@ -13,10 +13,10 @@ UBCI 점수·등급은 UBCI_Specification 매트릭스 산식이 결정론적으
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from typing import Any, Dict, List, Optional
-import logging
 
 logger = logging.getLogger(__name__)
 
