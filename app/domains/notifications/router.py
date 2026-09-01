@@ -6,11 +6,10 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
-from app.db.session import get_db
 from app.core.security import get_current_user
-from app.models.wms import Notification, now_kst
 from app.core.stream_auth import require_stream_access
-from app.models.wms import User
+from app.db.session import get_db
+from app.models.wms import Notification, User, now_kst
 
 logger = logging.getLogger(__name__)
 
@@ -54,19 +53,19 @@ def list_notifications(
 
     stmt = select(Notification)
     if unread_only:
-        stmt = stmt.where(Notification.is_read == False)  # noqa: E712
+        stmt = stmt.where(Notification.is_read == False)
     if role:
         # target_role이 비어 있으면 전체 공개 알림이다.
         stmt = stmt.where(
-            (Notification.target_role == None) | (Notification.target_role == role)  # noqa: E711
+            (Notification.target_role == None) | (Notification.target_role == role)
         )
 
     rows = db.exec(stmt.order_by(Notification.created_at.desc()).limit(limit)).all()
 
-    unread_stmt = select(Notification).where(Notification.is_read == False)  # noqa: E712
+    unread_stmt = select(Notification).where(Notification.is_read == False)
     if role:
         unread_stmt = unread_stmt.where(
-            (Notification.target_role == None) | (Notification.target_role == role)  # noqa: E711
+            (Notification.target_role == None) | (Notification.target_role == role)
         )
     unread_count = len(db.exec(unread_stmt).all())
 
@@ -81,6 +80,7 @@ def mark_notification_read(
     notification_id: str, db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     from uuid import UUID
+
     from app.core.exceptions import BadRequestException, NotFoundException
 
     try:
@@ -106,10 +106,10 @@ def mark_all_notifications_read(
     role: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    stmt = select(Notification).where(Notification.is_read == False)  # noqa: E712
+    stmt = select(Notification).where(Notification.is_read == False)
     if role:
         stmt = stmt.where(
-            (Notification.target_role == None) | (Notification.target_role == role)  # noqa: E711
+            (Notification.target_role == None) | (Notification.target_role == role)
         )
 
     rows = db.exec(stmt).all()
@@ -138,7 +138,7 @@ def clear_all_notifications(
     stmt = select(Notification)
     if role:
         stmt = stmt.where(
-            (Notification.target_role == None) | (Notification.target_role == role)  # noqa: E711
+            (Notification.target_role == None) | (Notification.target_role == role)
         )
 
     rows = db.exec(stmt).all()
@@ -162,6 +162,7 @@ async def stream_notifications(
 
     async def event_generator():
         import redis.asyncio as aioredis
+
         from app.core.redis_pubsub import REDIS_URL
 
         r = aioredis.Redis.from_url(REDIS_URL, decode_responses=True)
@@ -226,8 +227,8 @@ async def trigger_fds_notification():
     남기지 않아, fds_reports 테이블이 영구히 0건이었다.
     """
     from app.db.session import engine
-    from app.models.wms import FdsReport
     from app.domains.notifications.service import emit
+    from app.models.wms import FdsReport
 
     description = "비정상적인 야간 대량 주문 패턴이 감지되었습니다."
 

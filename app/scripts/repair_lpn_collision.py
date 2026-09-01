@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 LPN 오연결 복구 — 검수이력이 '다른 도서'의 재고 LPN을 가리키는 건을 끊어낸다.
 
@@ -20,8 +19,8 @@ LPN으로 이력↔재고를 조인하는 화면에서 엉뚱한 책의 검수 �
 멱등하다 - 오연결이 없으면 아무것도 하지 않는다.
 """
 
-import sys
 import re
+import sys
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

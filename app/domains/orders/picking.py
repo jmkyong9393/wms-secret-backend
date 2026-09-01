@@ -334,9 +334,10 @@ def generate_llm_narrative(
 ) -> Dict[str, str]:
     """gpt-4o-mini로 피킹 동선 요약과 작업자 지시문을 생성한다. 실패 시 템플릿 폴백."""
     try:
-        from langchain_openai import ChatOpenAI
         from langchain_core.prompts import ChatPromptTemplate
-        from pydantic import BaseModel, Field as PydField
+        from langchain_openai import ChatOpenAI
+        from pydantic import BaseModel
+        from pydantic import Field as PydField
 
         class PickingNarrative(BaseModel):
             route_summary: str = PydField(

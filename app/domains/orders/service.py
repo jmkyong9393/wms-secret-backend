@@ -1,18 +1,19 @@
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-# [수정 이력] 이 모듈에 CATEGORY_BASE_RATE / calculate_b2b_price /
-# calculate_dynamic_discount_rate가 pricing.py와 **완전히 중복 정의**되어 있었다.
-# orders/router.py는 pricing.py 쪽을 import하고 이 파일은 자기 사본을 쓰는 이중 상태여서,
-# 요율을 한쪽만 고치면 경로에 따라 서로 다른 가격이 나오는 구조였다.
-# 단일 소스(pricing.py)로 통일하고 여기서는 재노출만 한다.
-from app.ml.pricing_predictor import predict_p_sold_batch, model_label
-from app.domains.orders.pricing import (  # noqa: F401  (기존 import 경로 호환 유지)
+from app.domains.orders.pricing import (
     CATEGORY_BASE_RATE,
     CATEGORY_SEASONALITY,
     calculate_b2b_price,
     calculate_dynamic_discount_rate,
     normalize_category,
 )
+
+# [수정 이력] 이 모듈에 CATEGORY_BASE_RATE / calculate_b2b_price /
+# calculate_dynamic_discount_rate가 pricing.py와 **완전히 중복 정의**되어 있었다.
+# orders/router.py는 pricing.py 쪽을 import하고 이 파일은 자기 사본을 쓰는 이중 상태여서,
+# 요율을 한쪽만 고치면 경로에 따라 서로 다른 가격이 나오는 구조였다.
+# 단일 소스(pricing.py)로 통일하고 여기서는 재노출만 한다.
+from app.ml.pricing_predictor import model_label, predict_p_sold_batch
 
 
 def calculate_price_elasticity_revenue_optimization(
@@ -197,6 +198,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
+from app.domains.orders.schemas import OrderLineRequest
 from app.models.wms import (
     Book,
     InventoryUsedItem,
@@ -204,7 +206,6 @@ from app.models.wms import (
     PickingInstruction,
     now_kst,
 )
-from app.domains.orders.schemas import OrderLineRequest
 
 
 def _resolve_order_lines(
@@ -285,8 +286,9 @@ def fetch_aladin_real_packing_spec(isbn: str) -> dict:
     """
     1순위: 알라딘 TTB Open API에서 실제 물리 규격(가로, 세로, 두께, 무게, 페이지) 최우선 조회 (0ms 메모리 캐시 파이프라인)
     """
-    import urllib.request
     import json
+    import urllib.request
+
     from app.core.config import settings
 
     # [수정 이력] 이 키는 설정값(settings.ALADIN_TTB_KEY)과 다른 하드코딩된 키를 쓰고 있어

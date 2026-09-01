@@ -12,10 +12,10 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.ai.state import WMSInspectionState
 from app.ai.agents.common import DEFECT_TRANSLATION_MAP
 from app.ai.agents.llm import llm_mini
 from app.ai.agents.schemas import CriticVerdict
+from app.ai.state import WMSInspectionState
 
 
 def critic_stage_a_integrity_check(defects: list, image_count: int, score) -> list[str]:

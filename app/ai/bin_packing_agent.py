@@ -1,9 +1,10 @@
 import logging
 import re
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
+from typing import Any, Dict, List, Optional
+
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
 
 from app.core.constants import BOX_CATALOG
 from app.domains.inventory.bin_packing import (

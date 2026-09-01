@@ -98,7 +98,7 @@ def train(verbose: bool = True) -> dict:
         print(
             f"[학습 데이터] 표본 {N_SAMPLES:,}건 (train {split:,} / valid {len(X) - split:,})"
         )
-        print(f"[특징] discount_rate, ubci_score, seasonality, dwell_days")
+        print("[특징] discount_rate, ubci_score, seasonality, dwell_days")
         print(f"[하이퍼파라미터] n_estimators=400, max_depth=5, lr=0.06, seed={SEED}")
         print("[학습 시작]")
     model.fit(

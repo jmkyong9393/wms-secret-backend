@@ -1,9 +1,9 @@
 import base64
+import logging
 import os
 from typing import Optional
 
 import boto3
-import logging
 
 logger = logging.getLogger(__name__)
 

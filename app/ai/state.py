@@ -1,7 +1,8 @@
 import operator
-from typing import TypedDict, List, Annotated, Literal, Optional
-from langgraph.graph.message import add_messages
+from typing import Annotated, List, Literal, Optional, TypedDict
+
 from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
 # Critic 에이전트가 뱉어낼 수 있는 명시적 에러 코드 (Reason Code)
 ReasonCode = Literal[

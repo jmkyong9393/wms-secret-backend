@@ -17,11 +17,11 @@ import sys
 from sqlmodel import Session, select
 
 from app.db.session import engine
-from app.models.wms import Book, Inventory, InventoryLog, now_kst
 from app.domains.inventory.service import (
     get_or_create_location,
     recommend_optimal_warehouse_zone,
 )
+from app.models.wms import Book, Inventory, InventoryLog, now_kst
 
 
 def migrate(apply: bool = False) -> int:

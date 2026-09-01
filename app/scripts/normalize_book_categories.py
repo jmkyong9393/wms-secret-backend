@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 books.category_type 정규화 — 알라딘 실조회 기반.
 

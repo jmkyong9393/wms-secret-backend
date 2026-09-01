@@ -16,13 +16,12 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from app.ai.state import WMSInspectionState
 from app.ai.agents.common import (
     DEFECT_TRANSLATION_MAP,
     INNER_PAGE_EXCLUDED_TYPES,
     TRACK1_IMAGE_COUNT,
-    YOLO_TO_UBCI_TYPE,
     VLM_MAX_IMAGE_EDGE,
+    YOLO_TO_UBCI_TYPE,
     _downscale_for_vlm,
     _ensure_local_path,
     _is_inner_page,
@@ -34,6 +33,7 @@ from app.ai.agents.detector import build_yolo_hint
 # Vision Agent는 GPT-4o만 쓴다 — 1차 판독(llm_vlm) + 증거 대조 검증(llm_verify).
 from app.ai.agents.llm import llm_verify, llm_vlm
 from app.ai.agents.schemas import CriticVerdict, DefectEvidenceVerdict, VisionResult
+from app.ai.state import WMSInspectionState
 
 VISION_PROMPT_BASE = """당신은 WMS 디지털 품질 검수 센터의 수석 AI 비전(VLM) 검수원입니다.
 현장 작업자가 스마트폰으로 촬영한 도서 이미지(앞표지, 뒷표지, 속지)입니다. 별도 보정 없이 촬영 원본이므로 조명·기울기·초점 편차가 있을 수 있습니다. 이미지를 시각적으로 정밀 분석하여 결함 및 BBox(0~1000 상대좌표)를 검출하세요.
@@ -453,7 +453,8 @@ def vision_agent(state: WMSInspectionState) -> WMSInspectionState:
                 continue
 
             import cv2
-            from app.ai.wbf_detector import wbf_detector, detect_page_region
+
+            from app.ai.wbf_detector import detect_page_region, wbf_detector
 
             img = cv2.imread(local_path)
             if img is None:
@@ -787,9 +788,10 @@ def _crop_around_bbox(
     (설계 배경: `90_코드_변경이력_설계배경_아카이브` 2026-08-08 추가분 §4)
     """
     try:
-        from PIL import Image
         import base64
         import io
+
+        from PIL import Image
 
         local = _ensure_local_path(path_or_url)
         if not local:

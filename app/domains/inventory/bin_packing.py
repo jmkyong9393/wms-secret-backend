@@ -1,14 +1,15 @@
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from app.core.constants import (
     BOOK_FORMATS,
+    BOX_CATALOG,
     CATEGORY_FALLBACK,
-    PAGE_THICKNESS_MM,
-    HARDCOVER_EXTRA_MM,
-    MIN_BOOK_THICKNESS_MM,
-    PAPER_GRAMMAGE_GSM,
     COVER_WEIGHT_G,
     CUSHION_MARGIN_RATIO,
-    BOX_CATALOG,
+    HARDCOVER_EXTRA_MM,
+    MIN_BOOK_THICKNESS_MM,
+    PAGE_THICKNESS_MM,
+    PAPER_GRAMMAGE_GSM,
 )
 
 
