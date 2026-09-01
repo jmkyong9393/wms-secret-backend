@@ -119,7 +119,7 @@ def list_inspections(
         # 관리자도 scope=mine이면 본인 것만 본다.
         worker_id = current_user.employee_id
     # 관리자가 scope 없이 worker_id를 지정하면 그 담당자 것을 그대로 조회한다.
-    from app.domains.inventory.router import resolve_inspector
+    from app.domains.inventory.read_service import resolve_inspector
     from app.models.wms import Book, InventoryUsedItem, ReturnJob, ubci_grade_from_score
 
     stmt = select(ReturnJob)
