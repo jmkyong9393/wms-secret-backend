@@ -1,37 +1,39 @@
+import base64
+import datetime
+import json
+import logging
+import os
+import uuid
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
-from uuid import UUID
-import json
-import uuid
-import datetime
-from app.db.session import get_db
+
 from app.core.security import get_current_user
-from app.models.wms import (
-    now_kst,
-    InboundJob,
-    Book,
-    ReturnJob,
-    InventoryUsedItem,
-    JobStatusEnum,
-    ubci_grade_from_score,
-)
+from app.core.stream_auth import require_stream_access
+from app.db.session import get_db
 from app.domains.inbound.service import (
+    LOOKUP_UNAVAILABLE,
+    book_row_to_lookup_payload,
     generate_signed_cookie,
+    is_placeholder_book,
     lookup_book_by_isbn,
     lookup_book_by_isbn_with_status,
-    book_row_to_lookup_payload,
-    is_placeholder_book,
-    LOOKUP_UNAVAILABLE,
 )
-import base64
-import os
-from app.core.stream_auth import require_stream_access
-from app.models.wms import User
-import logging
+from app.models.wms import (
+    Book,
+    InboundJob,
+    InventoryUsedItem,
+    JobStatusEnum,
+    ReturnJob,
+    User,
+    now_kst,
+    ubci_grade_from_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -378,8 +380,9 @@ async def start_evaluation(request: EvaluateRequest, db: Session = Depends(get_d
     # 태스크 발행: 브로커 순단 대비 3회 재시도. 그래도 실패하면 조용한 인프로세스
     # 폴백(추적 불가·유실 위험) 대신 워커의 기동 시 스위퍼(requeue_stale_pending_jobs)가
     # 원장 기반으로 재큐잉하도록 PENDING 상태 그대로 둔다 — "브로커는 잃어도 원장은 잃지 않는다".
-    from app.worker.tasks import process_inspection
     import time as _time
+
+    from app.worker.tasks import process_inspection
 
     for attempt in range(3):
         try:
@@ -412,7 +415,8 @@ async def stream_evaluation_progress(
 
     async def event_generator():
         import redis.asyncio as aioredis
-        from app.core.redis_pubsub import get_return_job_channel, REDIS_URL
+
+        from app.core.redis_pubsub import REDIS_URL, get_return_job_channel
 
         r = aioredis.Redis.from_url(REDIS_URL, decode_responses=True)
         pubsub = r.pubsub()

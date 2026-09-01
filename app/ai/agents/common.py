@@ -88,6 +88,7 @@ def _downscale_for_vlm(data: bytes) -> bytes:
     """
     try:
         import io
+
         from PIL import Image
 
         with Image.open(io.BytesIO(data)) as img:
@@ -108,11 +109,11 @@ def _load_image_as_base64(path_or_url: str) -> Optional[str]:
 
     전송 직전 _downscale_for_vlm으로 긴 변 1536px 상한을 적용한다 (원본 파일은 불변).
     """
-    import base64
 
     try:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             import urllib.request
+
             from app.core.cloudfront_signing import sign_url
 
             req = urllib.request.Request(
@@ -134,8 +135,9 @@ def _ensure_local_path(path_or_url: str) -> Optional[str]:
     if not (path_or_url.startswith("http://") or path_or_url.startswith("https://")):
         return path_or_url if os.path.exists(path_or_url) else None
     try:
-        import urllib.request
         import tempfile
+        import urllib.request
+
         from app.core.cloudfront_signing import sign_url
 
         req = urllib.request.Request(

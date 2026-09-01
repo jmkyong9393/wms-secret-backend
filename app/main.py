@@ -3,37 +3,38 @@ FastAPI 애플리케이션의 진입점(Entrypoint) 파일입니다.
 앱 초기화, 데이터베이스 테이블 생성 트리거, 그리고 도메인별 API 라우터를 마운트하는 역할을 합니다.
 """
 
-from fastapi import FastAPI
-
 import logging
+
+from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
-from app.domains.auth import router as auth
-from app.domains.dashboard import router as dashboard
-from app.domains.inbound import router as inbound
-from app.domains.inventory import router as inventory
-from app.domains.orders import router as orders
-from app.domains.po import router as po
-from app.domains.returns import router as returns
-from app.domains.users import router as users
-from app.domains.uploads import router as uploads
-from app.domains.admin.router import router as admin
-from app.domains.research.router import router as research
-from app.domains.notifications import router as notifications
-from app.domains.fds import router as fds
-from app.domains.labels import router as labels
-from app.domains.board import router as board
-from app.domains.settings import router as system_settings
+import datetime
+
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlmodel import Session
-import datetime
 
-from app.db.session import get_db
 from app.core.config import settings
 from app.core.middleware import LoggingMiddleware
+from app.db.session import get_db
+from app.domains.admin.router import router as admin
+from app.domains.auth import router as auth
+from app.domains.board import router as board
+from app.domains.dashboard import router as dashboard
+from app.domains.fds import router as fds
+from app.domains.inbound import router as inbound
+from app.domains.inventory import router as inventory
+from app.domains.labels import router as labels
+from app.domains.notifications import router as notifications
+from app.domains.orders import router as orders
+from app.domains.po import router as po
+from app.domains.research.router import router as research
+from app.domains.returns import router as returns
+from app.domains.settings import router as system_settings
+from app.domains.uploads import router as uploads
+from app.domains.users import router as users
 
 # FastAPI 앱 객체 생성 및 메타데이터(Swagger 문서 등) 설정
 app = FastAPI(
@@ -46,8 +47,8 @@ app = FastAPI(
 # OpenTelemetry 분산 추적 (SCI 논문 데이터 수집용)
 # ==========================================
 try:
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry import trace
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
@@ -66,6 +67,7 @@ except ImportError:
 # SlowAPI (Rate Limiter) 전역 설정
 # ==========================================
 from slowapi.errors import RateLimitExceeded
+
 from app.core.limiter import limiter
 
 app.state.limiter = limiter
@@ -119,7 +121,9 @@ app.add_middleware(LoggingMiddleware)
 @app.middleware("http")
 async def sign_cloudfront_urls(request, call_next):
     import json as _json
+
     from fastapi.responses import Response as _Response
+
     from app.core.cloudfront_signing import is_signing_enabled, sign_payload
 
     response = await call_next(request)
@@ -197,10 +201,11 @@ def on_startup():
     """
     서버 시작 시 DB에 사용자가 0명일 경우, 최초 MASTER 계정(WM2608001 장문경)을 자동으로 시딩합니다.
     """
-    from app.db.session import engine
-    from sqlmodel import Session, select
-    from app.models.wms import User, UserRoleEnum, UserStatusEnum
     from passlib.context import CryptContext
+    from sqlmodel import Session, select
+
+    from app.db.session import engine
+    from app.models.wms import User, UserRoleEnum, UserStatusEnum
 
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -254,7 +259,9 @@ app.include_router(board.router, prefix=settings.API_V1_STR)
 app.include_router(system_settings.router, prefix=settings.API_V1_STR)
 
 import os
+
 from fastapi.staticfiles import StaticFiles
+
 from app.models.wms import now_kst
 
 base_dir = os.path.dirname(os.path.abspath(__file__))

@@ -32,6 +32,25 @@ from app.ai.agents.common import (
     _is_inner_page,
     _load_image_as_base64,
 )
+from app.ai.agents.critic import critic_agent, critic_stage_a_integrity_check
+from app.ai.agents.detector import build_yolo_hint, detector_node
+from app.ai.agents.llm import llm_mini, llm_verify, llm_vlm
+from app.ai.agents.policy import (
+    BINDING_AUTHORITY,
+    _edge_wear_profile,
+    _effective_ratio,
+    evaluate_return_policy,
+    policy_agent,
+)
+from app.ai.agents.report import (
+    _LIABILITY_WORDS,
+    _fallback_certificate,
+    _grade_label,
+    _sanitize_policy_basis,
+    build_certificate_document,
+    human_node,
+    report_agent,
+)
 from app.ai.agents.schemas import (
     CertificateDocument,
     CriticResult,
@@ -46,9 +65,8 @@ from app.ai.agents.schemas import (
     ReturnPolicyVerdict,
     VisionResult,
 )
-from app.ai.agents.llm import llm_mini, llm_verify, llm_vlm
-from app.ai.agents.detector import build_yolo_hint, detector_node
 from app.ai.agents.vision import (
+    UNCLEAR_EXCLUDES_DEDUCTION,
     VERIFY_CROP_EXPAND,
     VERIFY_CROP_MAX_ASPECT,
     VERIFY_CROP_MAX_LONG,
@@ -57,29 +75,11 @@ from app.ai.agents.vision import (
     VERIFY_CROP_SIZE,
     VERIFY_EXEMPT_CONF,
     VISION_PROMPT_BASE,
-    UNCLEAR_EXCLUDES_DEDUCTION,
     WEAR_AUTO_ADOPT,
     _bbox_iou,
     _crop_around_bbox,
     verify_defects_with_images,
     vision_agent,
-)
-from app.ai.agents.policy import (
-    BINDING_AUTHORITY,
-    _edge_wear_profile,
-    _effective_ratio,
-    evaluate_return_policy,
-    policy_agent,
-)
-from app.ai.agents.critic import critic_agent, critic_stage_a_integrity_check
-from app.ai.agents.report import (
-    _LIABILITY_WORDS,
-    _fallback_certificate,
-    _grade_label,
-    _sanitize_policy_basis,
-    build_certificate_document,
-    human_node,
-    report_agent,
 )
 
 __all__ = [

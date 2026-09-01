@@ -19,12 +19,12 @@ IP 기준 리밋만으로는 브루트포스를 제대로 막지도, 정상 사�
    (동일 원칙: Critic Stage B, Vision 검증 함수)
 """
 
+import logging
 from typing import Optional, Tuple
 
 import redis
 
 from app.core.config import settings
-import logging
 
 logger = logging.getLogger(__name__)
 

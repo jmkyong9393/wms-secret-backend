@@ -1,22 +1,24 @@
-from fastapi import APIRouter, Depends, Query
-from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
-from sqlalchemy import or_, cast, String
-from sqlmodel import Session, select, func
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import String, cast, or_
+from sqlmodel import Session, func, select
+
+from app.core.security import RoleChecker, UserRoleEnum
 from app.db.session import get_db
 from app.models.wms import (
-    ReturnJob,
-    InventoryUsedItem,
+    AdminAuditLog,
+    Book,
     Inventory,
+    InventoryUsedItem,
+    JobStatusEnum,
     Order,
     OrderItem,
-    Book,
-    JobStatusEnum,
+    ReturnJob,
+    now_kst,
     ubci_grade_from_score,
-    AdminAuditLog,
 )
-from app.core.security import RoleChecker, UserRoleEnum
-from app.models.wms import now_kst
 
 router = APIRouter(
     prefix="/dashboard",
@@ -569,7 +571,7 @@ def get_weekly_insights_history(
 
 
 # 직렬화/서사 생성은 weekly_insight_service가 단일 정의를 갖는다 (크론과 공유).
-from app.domains.dashboard.weekly_insight_service import (  # noqa: E402
+from app.domains.dashboard.weekly_insight_service import (
     serialize_weekly_insight as _serialize_weekly_insight,
 )
 

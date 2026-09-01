@@ -13,15 +13,15 @@
 """
 
 import json
+import logging
 import math
 from datetime import timedelta
-import logging
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, Field
-from sqlmodel import Session, select, func
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
+from sqlmodel import Session, func, select
 
 from app.core.settings_service import (
     DEFAULT_SAFETY_STOCK_THRESHOLD,

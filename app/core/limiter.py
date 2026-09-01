@@ -7,6 +7,7 @@ Next.js의 rewrites 프록시 뒤에 있어서, 컨테이너가 보는 peer IP�
 """
 
 import ipaddress
+import logging
 from typing import List
 
 from slowapi import Limiter
@@ -14,7 +15,6 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 
 from app.core.config import settings
-import logging
 
 logger = logging.getLogger(__name__)
 

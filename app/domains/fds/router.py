@@ -6,8 +6,8 @@ FDS(이상거래 탐지) 관제 API. MASTER/ADMIN 전용.
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
-from app.db.session import get_db
 from app.core.security import RoleChecker, UserRoleEnum
+from app.db.session import get_db
 from app.domains.fds.service import fds_service
 
 router = APIRouter(

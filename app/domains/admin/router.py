@@ -1,17 +1,18 @@
 import logging
 
 logger = logging.getLogger(__name__)
-from fastapi import APIRouter, Depends
-from sqlmodel import Session, select
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field
 
-from app.db.session import get_db
-from app.models.wms import ReturnJob, AdminAuditLog, UserRoleEnum, JobStatusEnum
-from app.core.security import get_current_user, RoleChecker
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlmodel import Session, select
+
 from app.core.constants import format_worker_label
-from app.core.exceptions import NotFoundException, BadRequestException
+from app.core.exceptions import BadRequestException, NotFoundException
+from app.core.security import RoleChecker, get_current_user
+from app.db.session import get_db
+from app.models.wms import AdminAuditLog, JobStatusEnum, ReturnJob, UserRoleEnum
 
 # Admin 전용 권한 체커
 admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
@@ -262,7 +263,7 @@ def preview_score_with_edits(
     )
     scored = [d for d in defects if not d.get("hitl_excluded")]
 
-    from app.ai.agents import policy_agent, critic_stage_a_integrity_check
+    from app.ai.agents import critic_stage_a_integrity_check, policy_agent
 
     result = policy_agent(
         {"defects": scored, "book_title": logs.get("book_title") or ""}
@@ -803,8 +804,8 @@ def get_hitl_assist_briefing(
 
     LLM은 결재를 대신 결정하지 않는다. 최종 판단 권한은 관리자에게 있으며, 응답의 disclaimer 필드가 이를 명시한다.
     """
-    from app.models.wms import Book
     from app.core.rag_service import build_hitl_briefing
+    from app.models.wms import Book
 
     try:
         job_uuid = UUID(job_id)

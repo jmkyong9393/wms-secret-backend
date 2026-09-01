@@ -1,5 +1,7 @@
-from sqlmodel import Session, create_engine
 from typing import Generator
+
+from sqlmodel import Session, create_engine
+
 from app.core.config import settings
 
 # SQL 원문 로그는 기본 꺼짐(SQL_ECHO). 켜면 쿼리 파라미터가 로그 수집기까지 흘러간다.

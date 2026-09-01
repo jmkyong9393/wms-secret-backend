@@ -25,10 +25,10 @@ try:
 except Exception:
     pass
 
+import logging
 import re
 
 import yaml
-import logging
 
 logger = logging.getLogger(__name__)
 

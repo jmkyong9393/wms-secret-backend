@@ -15,10 +15,10 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.ai.state import WMSInspectionState
 from app.ai.agents.common import DEFECT_TRANSLATION_MAP, now_kst
 from app.ai.agents.llm import llm_mini
 from app.ai.agents.schemas import CertificateDocument
+from app.ai.state import WMSInspectionState
 
 
 def _grade_label(ubci_score: int) -> str:

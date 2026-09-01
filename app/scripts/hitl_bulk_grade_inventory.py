@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 HITL 승인 대기 합성테스트데이터 일괄 등급확정 - 재고 편입 (2026-08-08)
 
@@ -37,11 +36,11 @@ from sqlmodel import Session, select
 from app.core.constants import format_worker_label
 from app.db.session import engine
 from app.models.wms import (
-    ReturnJob,
     AdminAuditLog,
+    JobStatusEnum,
+    ReturnJob,
     User,
     UserRoleEnum,
-    JobStatusEnum,
     clamp_ubci_score_to_grade,
 )
 

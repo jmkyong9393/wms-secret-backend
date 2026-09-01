@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.db.session import get_db
+
 from app.core.security import RoleChecker, get_current_user
+from app.db.session import get_db
 from app.domains.inventory.service import generate_lpn, get_all_lpn
 
 # Inventory 도메인 라우터: 새 상품 및 중고/반품 도서들의 통합 재고 관리를 담당합니다.
@@ -21,10 +23,11 @@ from app.models.wms import UserRoleEnum
 _admin_only = RoleChecker([UserRoleEnum.MASTER, UserRoleEnum.ADMIN])
 
 
-from sqlmodel import select
-from app.models.wms import InventoryUsedItem, Book, Location, now_kst
+from datetime import timedelta, timezone
 
-from datetime import datetime, timezone, timedelta
+from sqlmodel import select
+
+from app.models.wms import Book, InventoryUsedItem, Location, now_kst
 
 KST = timezone(timedelta(hours=9))
 
@@ -167,7 +170,8 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     # 신품 입고 작업자·입고 일시. 신품은 ReturnJob을 타지 않으므로 입고 원장(InventoryLog)에서 읽는다.
     # 같은 책이 여러 번 입고되면 가장 최근 입고를 그 재고 행의 작업자·입고 일시로 본다.
     # (Inventory.updated_at은 출고 차감 시에도 갱신되므로 입고 일시로 쓸 수 없다.)
-    from app.models.wms import InventoryLog, User as _User
+    from app.models.wms import InventoryLog
+    from app.models.wms import User as _User
 
     new_worker_by_book: Dict[Any, str] = {}
     new_inbound_at_by_book: Dict[Any, Any] = {}
@@ -345,9 +349,10 @@ def get_inventory(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     return output
 
 
-from typing import Optional
-from pydantic import BaseModel
 import logging
+from typing import Optional
+
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -370,13 +375,13 @@ async def create_lpn(req: CreateLpnRequest, db: Session = Depends(get_db)):
     하므로, 도서가 없으면 알라딘 조회로 최소 메타데이터를 만들어 등록한다.
     (`/inbound/fasttrack`이 이미 쓰는 것과 동일한 패턴)
     """
-    from app.models.wms import Book
     from app.domains.inbound.service import (
-        lookup_book_by_isbn,
+        UNKNOWN_BOOK_TITLE,
         book_row_to_lookup_payload,
         is_placeholder_book,
-        UNKNOWN_BOOK_TITLE,
+        lookup_book_by_isbn,
     )
+    from app.models.wms import Book
 
     isbn = (req.isbn or "").strip()
 
@@ -629,7 +634,8 @@ def get_inventory_detail(item_id: str, db: Session = Depends(get_db)):
     재고 개별 상세 정보 (신품 Inventory 또는 중고 InventoryUsedItem) 조회
     """
     from uuid import UUID
-    from app.models.wms import ReturnJob, Inventory, Book, Location
+
+    from app.models.wms import Book, Inventory, Location, ReturnJob
 
     # 1. 신품 Inventory 테이블 검색 (UUID, string ID, ISBN 순차 검색)
     new_inv = None
