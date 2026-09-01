@@ -28,3 +28,12 @@
 빌드+ECR push에 더해 **마이그레이션 Job 게이트·kubectl 롤링 업데이트·배포 검증**
 (2026-08-10 사고 3건의 방어 로직 포함)을 담고 있다. 복귀 시 이 파일을
 `.github/workflows/deploy.yml`로 되돌리면 k8s 배포 파이프라인이 그대로 살아난다.
+
+## 클러스터 운영 워크플로 (2026-09-01 이동)
+
+클러스터 대상 워크플로 13개는 `k8s/workflows/`로 옮겼다 (분류와 사유는 그 폴더
+README). **복귀 1단계에서 되돌릴 것은 3개다**: `cluster-rebuild.yml`(재구축) ·
+`cluster-teardown.yml`(정리) · `cluster-diagnostics.yml`(진단) —
+`.github/workflows/`로 복사하면 Actions에 다시 나타난다. 프론트 레포는
+`k8s/workflows/cluster-apply-manifests.yml` 하나를 같은 방식으로 되돌린다.
+나머지(핫픽스·리소스 조정·1회성 실측류)는 당시 상황 전용이라 되돌리지 않는다.
