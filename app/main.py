@@ -40,7 +40,7 @@ from app.domains.users import router as users
 app = FastAPI(
     title="Nexus",
     description="다중 에이전트 기반 B2B 물류 자동화 플랫폼 Nexus Backend",
-    version="2.15.1.0",
+    version="2.15.2.0",
 )
 
 # ==========================================
@@ -290,7 +290,7 @@ def health_check():
 
     return {
         "status": "ok",
-        "version": "2.15.1.0",
+        "version": "2.15.2.0",
         "pricing_model": "xgboost" if is_model_active() else "rule_fallback",
     }
 
