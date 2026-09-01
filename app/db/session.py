@@ -5,7 +5,13 @@ from sqlmodel import Session, create_engine
 from app.core.config import settings
 
 # SQL 원문 로그는 기본 꺼짐(SQL_ECHO). 켜면 쿼리 파라미터가 로그 수집기까지 흘러간다.
-engine = create_engine(settings.DATABASE_URL, echo=settings.SQL_ECHO)
+# pre_ping: DB 재시작·유휴 순단 후 죽은 커넥션 재사용으로 500이 나는 것을 방지 (장기 무인 운영 대비)
+engine = create_engine(
+    settings.DATABASE_URL,
+    echo=settings.SQL_ECHO,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+)
 
 
 def get_db() -> Generator[Session, None, None]:
