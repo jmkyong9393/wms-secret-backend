@@ -1,8 +1,9 @@
 """
-LPN/UBCI 열전사 라벨 출력 API.
+LPN/UBCI 열전사 라벨 출력 API — HTTP 스키마·권한과 배선 전용.
 
 브라우저 window.print() 경로(LpnPrintModal)와 별개로, Xprinter XP-423B
-Raw TCP 직결 출력을 제공한다.
+Raw TCP 직결 출력을 제공한다. 모드 분기·큐 적재·멱등 전이 등 업무 규칙은
+service.py, ZPL 생성·전송은 core 계층이 담당한다 (2026-09-01 계층 정리).
 
 인쇄 경로는 LABEL_PRINT_MODE 설정으로 갈라진다:
 - DIRECT (기본): 백엔드가 프린터 LAN IP:9100으로 즉시 전송 (로컬/온프레미스).
@@ -17,22 +18,13 @@ from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from app.core.config import settings
-from app.core.label_printer_service import (
-    LabelPrinterError,
-    send_zpl_to_label_printer,
-)
 from app.core.security import RoleChecker
-from app.core.zpl_label_service import (
-    build_lpn_label_zpl,
-    build_ubci_label_zpl,
-)
 from app.db.session import get_db
-from app.models.wms import LabelPrintJob, now_kst
+from app.domains.labels import service
 
 router = APIRouter(prefix="/labels", tags=["Labels"])
 
@@ -67,51 +59,17 @@ def print_label(
     session: Session = Depends(get_db),
 ) -> LabelPrintResponse:
     """ZPL 라벨을 생성해 직접 전송(DIRECT)하거나 브리지 큐에 적재(QUEUE)한다."""
-    if body.mode == "UBCI":
-        if not body.condition_grade:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="UBCI 모드에는 condition_grade가 필요합니다.",
-            )
-        zpl = build_ubci_label_zpl(
-            lpn_barcode=body.lpn,
-            condition_grade=body.condition_grade,
-            ubci_score=body.ubci_score,
-        )
-    else:
-        zpl = build_lpn_label_zpl(
-            lpn_barcode=body.lpn,
-            book_title=body.book_title or "",
-            isbn=body.isbn or "",
-            worker_id=body.worker_id or "",
-        )
-
-    if settings.LABEL_PRINT_MODE == "QUEUE":
-        job = LabelPrintJob(lpn=body.lpn, mode=body.mode, zpl=zpl)
-        session.add(job)
-        return LabelPrintResponse(
-            sent=False,
-            skipped=False,
-            queued=True,
-            bytes_sent=0,
-            zpl=zpl,
-        )
-
-    try:
-        result = send_zpl_to_label_printer(zpl)
-    except LabelPrinterError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-
-    return LabelPrintResponse(
-        sent=result.sent,
-        skipped=result.skipped,
-        queued=False,
-        bytes_sent=result.bytes_sent,
-        zpl=zpl,
+    result = service.print_label(
+        session,
+        lpn=body.lpn,
+        mode=body.mode,
+        book_title=body.book_title,
+        isbn=body.isbn,
+        worker_id=body.worker_id,
+        condition_grade=body.condition_grade,
+        ubci_score=body.ubci_score,
     )
+    return LabelPrintResponse(**result)
 
 
 # ------------------------------------------------------------------
@@ -142,12 +100,7 @@ def list_pending_print_jobs(
     session: Session = Depends(get_db),
 ) -> list[PendingPrintJob]:
     """브리지 에이전트가 가져갈 대기 인쇄 작업 목록 (오래된 순)."""
-    jobs = session.exec(
-        select(LabelPrintJob)
-        .where(LabelPrintJob.status == "PENDING")
-        .order_by(LabelPrintJob.created_at.asc())
-        .limit(min(max(limit, 1), 100))
-    ).all()
+    jobs = service.list_pending_jobs(session, limit)
     return [
         PendingPrintJob(
             id=j.id,
@@ -170,18 +123,4 @@ def ack_print_job(
     session: Session = Depends(get_db),
 ) -> dict:
     """브리지 에이전트의 인쇄 결과 보고. 성공=PRINTED, 실패=FAILED(사유 보존)."""
-    job = session.get(LabelPrintJob, job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="인쇄 작업을 찾을 수 없습니다.",
-        )
-    if job.status != "PENDING":
-        # 이미 처리된 작업 재보고는 멱등 처리 (브리지 재시작 대비)
-        return {"status": job.status, "idempotent": True}
-
-    job.status = "PRINTED" if body.success else "FAILED"
-    job.error = None if body.success else (body.error or "unknown")
-    job.printed_at = now_kst()
-    session.add(job)
-    return {"status": job.status, "idempotent": False}
+    return service.ack_job(session, job_id, success=body.success, error=body.error)
